@@ -4,35 +4,97 @@ NGUAdvisor is an automation platform for the steam version of NGU Idle. It reads
 
 > **Fair-use / ToS note:** this is a third-party tool that injects into the Steam build of NGU Idle. Use it at your own risk.
 
-## Screens
+# The interface
 
-The whole tool lives in one window — a sidebar of sections on the left, a status bar along the bottom, and the selected screen in the middle.
+NGU Advisor is one window: a **sidebar** of sections on the left, a **status bar** pinned along the bottom (Auto · Gear · Stage · Rebirth · Profile · Resources · Current Goal · Next Goal), and the selected screen in the middle.
 
-| Advisors › Status | Advisors › Top Actions |
+Set it to **Auto** and the advisor drives every system, explaining each decision as it goes — or open any section to take manual control. Key hotkeys: **F1** opens the window, **F2** pauses/resumes all automation, **F9** opens the Profile Editor (full list [below](#hotkeys)).
+
+## Advisors
+
+Your home base. **Status** is the at-a-glance health board — state tiles across the top, a growth graph, and the auto-profile the advisor is currently running. **Top Actions** is one prioritized to-do list spanning every system, with a green **AUTO** badge on anything the advisor already handles for you.
+
+| Status | Top Actions |
 |---|---|
-| At-a-glance health board and the auto-profile it's running | One prioritized to-do list across every system |
-| ![Status](media/screenshots/advisors-status.png) | ![Top Actions](media/screenshots/advisors-top-actions.png) |
+| ![Advisors Status](media/screenshots/advisors-status.png) | ![Advisors Top Actions](media/screenshots/advisors-top-actions.png) |
 
-| Combat | Settings |
+## Combat
+
+The current target with idle vs. next-version kill odds, champion toggles, zone routing (Zones / ITOPOD / Blacklist), boost-farm advice, and the combat style row (Combat / Beast Mode / Bosses Only / Fallthrough) — over a live tail of the combat log.
+
+![Combat](media/screenshots/combat.png)
+
+## Economy
+
+Gold in and gold out: zone-snipe state, the Time Machine counterfeit, the titan bank, money-pit tosses with reward prediction, and a gold-drain breakdown (diggers / blood rituals / augments) over a live pit-spin log.
+
+![Economy](media/screenshots/economy.png)
+
+## Systems
+
+Per-system detail, one sub-tab each.
+
+| Yggdrasil — fruit harvest grid | Quests — progress + banking |
 |---|---|
-| Targets, zone routing, champions, live combat log | Every subsystem on/off — the master switchboard |
-| ![Combat](media/screenshots/combat.png) | ![Settings](media/screenshots/settings.png) |
+| ![Systems Yggdrasil](media/screenshots/systems-yggdrasil.png) | ![Systems Quests](media/screenshots/systems-quests.png) |
 
-More screens — Economy, Systems (Yggdrasil / Quests / Boosts / Inventory / Blood), Loadouts, Logs, Cards, and the Profile Editor — are in [`media/screenshots/`](media/screenshots/).
+| Boosts — order + transforms | Inventory — keep vs. trash |
+|---|---|
+| ![Systems Boosts](media/screenshots/systems-boosts.png) | ![Systems Inventory](media/screenshots/systems-inventory.png) |
+
+**Blood** — the Iron Pill worthwhile meter, spell routing (Number / Spaghetti / Counterfeit), and every pill / guffin threshold.
+
+![Systems Blood](media/screenshots/systems-blood.png)
+
+## Loadouts
+
+Gear sets the advisor optimises live and swaps in at the right moment — each with a source, an objective, and the exact items that will be equipped. **Titan / Gold / Quest / Yggdrasil** are advisor-optimised; **Cooking / Shockwave** are manual (you enter the gear IDs).
+
+| Titan | Gold | Quest |
+|---|---|---|
+| ![Loadouts Titan](media/screenshots/loadouts-titan.png) | ![Loadouts Gold](media/screenshots/loadouts-gold.png) | ![Loadouts Quest](media/screenshots/loadouts-quest.png) |
+
+| Yggdrasil | Cooking (manual) | Shockwave (manual) |
+|---|---|---|
+| ![Loadouts Yggdrasil](media/screenshots/loadouts-yggdrasil.png) | ![Loadouts Cooking](media/screenshots/loadouts-cooking.png) | ![Loadouts Shockwave](media/screenshots/loadouts-shockwave.png) |
+
+## Logs
+
+The receipts, filterable and live. **Advisor** is the decision log (why it did what it did), **Loot** is the drop feed, **Session** is the raw running log for deep debugging.
+
+| Advisor | Loot | Session |
+|---|---|---|
+| ![Logs Advisor](media/screenshots/logs-advisor.png) | ![Logs Loot](media/screenshots/logs-loot.png) | ![Logs Session](media/screenshots/logs-session.png) |
+
+## Settings
+
+The master switchboard — four columns of subsystem toggles (Manage / Auto / Swap Gear For / Combat + ITOPOD) plus Misc controls and Reload / Unload. The fine detail (loadout IDs, zones, thresholds, priorities) lives in the sections above; turning the top-left toggle off stops the advisor entirely.
+
+![Settings](media/screenshots/settings.png)
+
+## Cards
+
+**Cards** handles casting, sort order, and the auto-trash rarity/cost table. **Wishes** sets wish priorities, a blacklist, and the energy / magic / R3 split.
+
+| Cards | Wishes |
+|---|---|
+| ![Cards](media/screenshots/cards.png) | ![Cards Wishes](media/screenshots/cards-wishes.png) |
+
+## Profile Editor (F9)
+
+A separate window where the auto-profiles are built: time breakpoints along the rebirth, and within each a prioritised list per system (Energy, Magic, R3, Gear, Diggers, Beards, Wandoos+Diff, Misc). The advisor applies the latest breakpoint whose time has passed. The token grammar these lists use is documented under [Allocation](#allocation).
+
+![Profile Editor](media/screenshots/profile-editor.png)
 
 # Instructions
 
-Releases can be found in the releases section of the github page [here](https://github.com/Glowey-Glow/NGUAdvisor/releases). Do not download the source code archive, instead download the zip file with the release version in the name (dist_4.1.0.zip for example). Extract the downloaded archive to a directory of your choice. To start automation, run 'Run NGU Advisor.bat' in the extracted folder when NGU Idle is open.
+Releases can be found in the [releases section](https://github.com/Glowey-Glow/NGUAdvisor/releases) of this repo. Do not download the "Source code" archive — download the zip with the release version in the name (`dist_1.0.0.zip`, for example). Extract it anywhere, launch NGU Idle, then run `Run NGU Advisor.bat` from the extracted folder.
 
-You'll know the injection has worked if you see the following in the upper left portion of NGU.
+You'll know injection worked when the overlay appears in the upper-left corner of the game. Open the window with **F1** and start on **Advisors › Status**.
 
-![Injected](https://i.imgur.com/9liKClh.png)
-
-To upgrade to a new release, unload the injector from the General Settings page and then inject the new version.
+To upgrade to a new release, unload from the **Settings** section (**Unload Advisor**), then inject the new version — or, with the recommended launcher, just use **Reload Advisor** without restarting the game.
 
 # Configuration
-
-**IMPORTANT NOTE** For those upgrading from an older version of NGUAdvisor (< 4.1.0), your profiles using "Rebirth" section will need to be updated according to the new format. See the allocation section for more information.
 
 After injecting the dll, a new folder will be created in your AppData directory called NGUAdvisor (full path is %UserProfile%\AppData\LocalLow\NGUAdvisor). Settings files will be automatically written to this directory. The following files are of interest:
 
@@ -45,269 +107,26 @@ A profiles folder will be created with the following files:
 
 More profiles can be added to this folder at your discretion.
 
-A logs folder will also be created with the following files:
+A logs folder will also be created. You can read these live in the **Logs** section of the window (Advisor / Loot / Session tabs); they're also written to disk:
 
-- **loot.log** - Logs all the loot dropped by enemies.
-- **inject.log** - Logs general information about the injector
-- **combat.log** - Logs information from the combat algorithm
-- **allocation.log** - Logs information about allocating energy/magic/gear/diggers
-- **pitspin.log** - Logs important things like fruit harvests, money pit, daily spin. This log file will not be overwritten.
-- **cards.log** - Logs information about cast and trashed cards. This log file will not be overwritten.
-- **debug.log** - Logs information about errors. If your settings profile does not work, check this file.
+- **inject.log** - General advisor/injector activity and decisions.
+- **loot.log** - All loot dropped by enemies.
+- **combat.log** - Output from the combat algorithm.
+- **pitspin.log** - Fruit harvests, money pit, and daily spin results. Not overwritten across sessions.
+- **cards.log** - Cast and trashed cards. Not overwritten across sessions.
+- **debug.log** - Errors. If something isn't working, check this file first.
 
-Saving settings.json, zoneOverrides.json, or any profile will automatically reload the settings in the Injector. Reloading the game isn't necessary
+Saving settings.json, zoneOverrides.json, or any profile automatically reloads it in the advisor. Reloading the game isn't necessary.
 
 # Settings.json Configurations
 
 Settings in the GUI can be managed directly in the underlying settings file if desired. This can be helpful when pasting in loadouts from the Gear Optimizer. To access these settings, open the **settings.json** file in your AppData NGUAdvisor folder mentioned above.
 
-# Log Parsing
-
-Discord user WookieeNo1 has made a PowerShell script to prettify the log files. If you are interested in this, check out the github here: https://github.com/WookieeNo1/NGUIdleInjector-Pretty-Print
-
-This is what it looks like once you set it up:
-![loot.log](https://i.imgur.com/68fVGk7.png)
-![pitspin.log](https://i.imgur.com/nTMJ5jP.png)
-![inject.log](https://i.imgur.com/7tlf4qH.png)
-
-# Settings Configuration
-
-An in game menu can be opened using the F1 button.
-
-![General](https://i.imgur.com/TTogTHu.png)
-
-- **Master Switch** - If turned off, will disable all automation
-- **Disable Overlay** - If switched on, will disable the in-game overlay.
-
-- **Money Pit Run Mode** - This mode automatically tosses gold into the Money Pit and performs rebirths to maximize the levels gained from the Money Pit.
-- **Auto Fight Bosses** - Automatically nuke/fight bosses.
-- **Auto Buy Energy/Magic/R3** - Automatically spend EXP on Energy/Magic/R3 based on the custom caps set by the user on their respective tabs. Will buy stats all at once after the total of all custom caps are met (including Adventure Stats if enabled).
-- **Auto Buy Adventure Stats** - Automatically spend EXP on Adventure Atats based on the custom caps set by the user in the "Adventure Stats" tab. Will buy stats all at once after the total of all custom caps are met (including Energy/Magic/R3 if enabled).
-
-- **Auto Buy Consumables** - Set this to true to have the injector auto purchase any consumables your profile is configured to use that you do not own. Will only buy consumables if you have the AP to purchase them.
-- **Use Consumables if already running** - If this is false, consumables in the consumable breakpoint will NOT be used if the consumable in question has time remaining. See section on Consumables below for more details.
-
-- **Auto Daily Save** - Automatically create save files as soon as AP reward is available. Will award AP. The files are stored in the default location for saves files and have "(NGU Injector)" in their name.
-
-- **Open Settings Folder** - Opens a folder to the NGUAdvisor folder which contains the settings, profiles and logs.
-
-- **Unload** - Allows you to unload the injector from the game. Check the box next to the unload button and then hit unload.
-
-![Allocation](https://i.imgur.com/91Gfpq9.png)
-
-- **Allocation Profile** - Allows you to quickly switch allocation profiles. Any profiles stored in the profiles folder will be listed here. Press "Change profile" to load the profile selected in the dropdown. Press "Edit" to open the selected profile in a text editor. Press "Open Profile Folder" to open the folder containing all profiles.
-
-- **Manage Energy** - Manage energy based on breakpoints in your selected allocation file.
-- **Manage Magic** - Manage magic based on breakpoints in your selected allocation file.
-- **Manage R3** - Manage resource 3 based on breakpoints in your selected allocation file.
-
-- **Manage Wandoos OS** - Manage wandoos OS based on breakpoints in your selected allocation file.
-- **Manage NGU Difficulty** - Manage NGU difficulty based on breakpoints in your selected allocation file.
-- **Manage Beards** - Manage beards based on breakpoints in your selected allocation file.
-
-- **Manage Diggers** - Manage diggers based on breakpoints in your selected allocation file.
-- **Auto Upgrade Diggers** - Automatically upgrades your cheapest diggers when you have money available. Respects your money pit threshold and wont buy underneath it.
-- **Limit Diggers to X % of GPS** - Percent of Gross GPS to use on diggers.
-
-- **Manage Gear** - Manage gear based on breakpoints in your selected allocation file.
-- **Manage Consumables** - Set this to true to have injector manage consumables via breakpoints in your allocation file. See section on Consumables below for more details.
-
-- **Auto Rebirth** - Automatically rebirth after the time in your selected allocation file is reached.
-
-- **Change Auto Spells** - Manage Spoopy Spell casting.
-- **Spaghetti %** - Percent to cast Blood Spaghetti until.
-- **Number Bonus** - Number to cast Blood NUMBER Boost until.
-- **Counterfeit %** - Percent to cast Counterfeit Gold until.
-
-- **Cast Blood Spells** - Cast blood spells automatically. Will try every 10 seconds or at rebirth.
-- **Iron Pill** - Amount of +stats to cast Iron Pill at.
-- **Guff A** - Number of +levels to cast Guff A at.
-- **Guff B** - Number of +levels to cast Guff B at.
-- **Cast on Rebirth Options** - If selected will use all available blood on the selected options if cooldown and threshold requirements are met. Priority is Guff B > Guff A > Iron Pill. Will use remaining blood on Number if any remains.
-
-![Yggdrasil](https://i.imgur.com/bKlO2fU.png)
-
-- **Manage Yggdrasil** - Automatically harvest fruits. Can harvest Guff B Fruit and Quirk Fruit at below maximum tier, in case it's optimal.
-- **Swap Diggers** - If checked, activate PP and EXP diggers before harvesting.
-- **Swap Beards** - If checked, activate the Golden Beard before harvesting.
-- **Swap Loadout for Yggdrasil** - If checked, equip the loadout specified in Yggdrasil loadout before harvesting.
-- **Activate Fruits** - Reactivate fruits you haven't bought the exp perk for.
-- **Minimum Fruit Level for Swap** - Don't equip Yggdrasil loadout for fruits below this level.
-- **Loadout** - Edit the loadout used for harvest Yggdrasil. Add items using the box in the bottom.
-- **Harvest All Now** - Allows you to do a Yggdrasil swap and immediately harvest all fruits. Check the box next to the button to enable it. Good for manual rebirths.
-
-![Inventory](https://i.imgur.com/aaXGdyw.png)
-
-- **Manage Inventory** - When enabled, the following features will be enabled:
-  - **Auto Boost Merging** - If a boost is locked, boosts will automatically be merged until the boost hits 100.
-  - **Auto Merging** - Equipped items and items in inventory will automatically be merged, as well as MacGuffins. The highest level item will be selected for merging automatically. A locked item will always be preferred.
-  - **Auto Boosting** - Automatically boost items. Will start with items in the PriorityBoosts setting, followed by equipped items, locked items in inventory and finally Infinity Cube.
-  - **Auto Filtering** - If Improved Loot Filter is purchased, will automatically filter items when they hit level 100.
-  - **Auto Convertible Management** - Will automatically transform non-locked pendants/lootys and other items.
-  - **Quest Item Management** - Will try to merge a Quest item to level 100 if a locked one is found. Otherwise will automatically turn in Quest items.
-- **Manage Boost Conversion** - If all normal 100 Level Challenges are completed, will calculate needed boosts for items in boostIds and then switch auto conversion appropriately. If a locked non-level 100 boost is found in your inventory, will lock conversion to that type first to boost it to 100. Will also show you the hourly average of boost progress in the inject.log file.
-- **Cube Boost Priority** - How to boost cube.
-  - **None** - Will turn off boost conversion.
-  - **Balanced** - Will keep raw power and toughness on the Cube equal.
-  - **Softcap** - Will keep percentage of the power and toughness softcaps on the Cube equal. For instance if the power softcap is 3x the toughness softcap, Cube raw power will be 3x Cube raw toughness.
-  - **Power** - Will only put power into the Cube.
-  - **Toughness** - Will only put toughness into the Cube.
-- **Favored Macguffin** - When casting Guff B spell or eating Guff A Fruit will equip only the selected MacGuffins leaving all other slots empty, unless the "wasn't so random" wishes are bought, in which case it will just equip the selected MacGuffin in the first slot.
-- **Gear Boost Priority** - The priority in which items should be boosted. Defaults to Power > Toughness > Special.
-- **Priority Boosts** - Edit the items you wish to boost before others. Add items using the box in the bottom. Order is respected.
-- **Blacklisted Items** - Edit the items you wish to never be boosted or merged. Add items using the box in the bottom. Supersedes Priority list if the same item is in both lists.
-- **Reset Boost Average** - Resets the running average of cube/item boosting
-
-![Titans](https://i.imgur.com/tfgEpF4.png)
-
-- **Manage Titans** - Turns on combat for titans.
-- **Swap Diggers** - If checked, activate Drop Chance, Adventure, PP and EXP diggers before fighting Titans.
-- **Swap Beards** - If checked, activate the Neckbeard, the BEARd and the Golden Beard before fighting Titans.
-- **Swap Loadout** - If checked, equip the loadout specified in Titans loadout before fighting Titans.
-- **Loadout** - The gear to equip when autokilling or fighting titans.
-- **Titans to Manage**
-  - **Titan** - Mark titans you wish to fight and swap gear for.
-  - **Version** - Allows you to quickly change the titan version.
-- **Combat Mode** - Select one of the following options:
-  - **Idle** - Will just idle the zone. *WALDERP, THE GODMOTHER, and THE EXILE will ALWAYS use Offensive setting instead of Idle.*
-  - **Snipe** - Waits for the full HP before fights. Precasts buffs and waits until all moves are off cooldowns. Will try to block and paralyze a lot, while using Beast Mode cautiously.
-  - **Defensive** - Waits for 80% HP before fights. Does not precast buffs. Uses Beast Mode a bit less cautiously than Snipe mode.
-  - **Offensive** - Waits for 60% HP before fights. Does not precast buffs. Uses block only for special moves or if the next hit is expected to be fatal. Uses Beast Mode a lot.
-  - **Auto-kill** - Equips the loadout before the titan spawns, but does not move to the titan zone. If you can't autokill selected titans, will try to set a lower version.
-- **Beast Mode** - Whether to use Beast Mode or not in *idle combat*.
-- **Locate Walderp** - If Walderp is hiding, will take you to the menu he's currently in.
-
-![Adventure](https://i.imgur.com/y0vuEc6.png)
-
-- **Combat Enabled** - Turns on auto combat to go to target zone and kill stuff.
-
-- **Combat Mode** - Select one of the following options:
-  - **Idle** - Will just idle the zone.
-  - **Snipe** - Waits for the full HP before fights. Precasts buffs and waits until all moves are off cooldowns. Will try to block and paralyze a lot, while using Beast Mode cautiously.
-  - **Defensive** - Waits for 80% HP before fights. Does not precast buffs. Uses Beast Mode a bit less cautiously than Snipe mode.
-  - **Offensive** - Waits for 60% HP before fights. Does not precast buffs. Uses block only for special moves or if the next hit is expected to be fatal. Uses Beast Mode a lot. Aggressively uses Paralyze against Paralyze type enemies.
-  - **One-shot** - Does not use any buffs. Uses only Regular Attack.
-- **Beast Mode** - Whether to use Beast Mode or not while in *idle combat*.
-- **Target Zone** - The target zone to snipe/do combat in.
-- **Bosses Only** - If enabled, will only fight bosses when doing combat. Good for zone sniping.
-- **Allow Fallthrough** - If set to true, combat will use the highest unlocked zone you have until the target zone is unlocked.
-
-- **ITOPOD Settings** - Settings below this apply only to ITOPOD combat.
-- **ITOPOD** - If selected, will fight in ITOPOD regardless of chosen target zone. Titan combat takes precedence over this setting.
-- **Combat Mode** - If set to manual, will execute a custom combat routine. If set to idle, will just idle the zone.
-- **Beast Mode** - Whether to use Beast Mode.
-- **Optimization Mode** - Will optimize your ITOPOD floor every 10 seconds. Select one of the following options:
-  - **Disabled** - Does not perform floor optimization. Does not interfere with Lazy ITOPOD Shifter.
-  - **Default** - Behaves almost like Lazy ITOPOD Shifter. If manual combat is enabled, will use regular attack instead of idle attack for the calculation.
-  - **PP** - Uses buffs, strong attack, piercing attack and ultimate attack while shifting floors to maximize PP gain.
-  - **EXP/AP** - Uses buffs, strong attack, piercing attack and ultimate attack while shifting floors to maximize EXP and AP gain.
-- **Auto Push** - When the highest reached floor is below optimal, this option will try to reach higher floor. If it fails, the option is automatically disabled.
-
-- **Blacklisted Enemies** - Allows you to blacklist enemies when searching for enemies in a zone.
-
-![Gold](https://i.imgur.com/9LLFh5M.png)
-
-- **Enable Gold Management** - If turned off, will disable all gold swap logic.
-- **Resnipe Time** - Set this value to re-enable gold snipe at a certain time during your rebirth. Best set to after AT is completed in order to get a higher zone.
-- **CBlock Mode** - If checked, will automatically gold snipe every new zone that is unlocked. Useful for challenge blocks where zones sporadically become available.
-- **Gold Snipe Now** - If pressed, will immediately equip gold loadout gear and perform a boss snipe in the best calculated zone based on the zone stats and gold loadout power/toughness.
-- **Loadout** - Items to use when swapping for gold loadout.
-- **Titans to Gold Snipe** - Check the box next to titans you want to swap to gold loadouts for. Leave all boxes unchecked in order to never use gold loadouts for titans. If a titan is green, gold snipe has already been completed for this titan.
-- **Reset Titan Status** - Immediately mark all titan gold swaps as incomplete.
-
-![Quests](https://i.imgur.com/ystBmjC.png)
-
-- **Auto Quest** - If enabled, quests will automatically be turned in. Behavior varies based on Allow Major Quests and Start Major Quests with a full Bank options.
-- **Allow Major Quests** - If this option is enabled, when the Quest Bank has at least one Quest, it will be accepted and automation will manually farm the items from the appropriate zone.
-- **Start Major Quests with a full Bank** - If this option is enabled and the Quest Bank is full, a Major Quest will be accepted and automation will manually farm the items from the appropriate zone.
-  - In other scenarios Minor Quests will be accepted.
-  - Manual questing will pause while titan combat is occurring.
-  - Manual questing takes precedence over Adventure farming.
-- **Use Butter on Majors** - If enabled, will attempt to butter Major Quests.
-- **Manual Minors** - If enabled, will manual Minor Quests as well as Majors.
-- **Use Butter on Minors** - If enabled, will attempt to butter Minor Quests.
-- **Roll Fifty Item Minors** - If enabled, will skip Minor Quests that require more than 50 items. Takes progress into account. For example, if the progress is 3/54, it will skip the Minor Quest. Buf if the progress is 4/54, it will not skip. 
-- **Abandon Minor Quests** - If enabled, and Minor Quest progress is below the Minor Quest threshold, the Minor Quest will be abandoned and a Major Quest will be picked up.
-- **Abandon Minor Quest for Major at a Threshold (%)** - Quest progress until which it's acceptable to abandon Minor Quests.
-- **Swap Loadout for Quests** - Equip the gear in Quest Loadout when engaged in Manual questing
-- **Loadout** - The gear to equip when in a manual quest.
-- **Combat Mode** - Select one of the following options:
-  - **Idle** - Will just idle the zone.
-  - **Snipe** - Waits for the full HP before fights. Precasts buffs and waits until all moves are off cooldowns. Will try to block and paralyze a lot, while using Beast Mode cautiously.
-  - **Defensive** - Waits for 80% HP before fights. Does not precast buffs. Uses Beast Mode a bit less cautiously than Snipe mode.
-  - **Offensive** - Waits for 60% HP before fights. Does not precast buffs. Uses block only for special moves or if the next hit is expected to be fatal. Uses Beast Mode a lot. Aggressively uses Paralyze against Paralyze type enemies.
-  - **One-shot** - Does not use any buffs. Uses only Regular Attack.
-- **Beast Mode** - Whether to use Beast Mode or not while in *idle combat*.
-
-![Wishes](https://i.imgur.com/fXWD2CL.png)
-
-- **Manage Wishes** - If enabled, will allocate resources into Wishes, according to settings.
-- **Limit to X Wishes** - Maximum number of Wishes it will allocate resources into simultaneously. For example, if you have 3 or 4 Wish slots, but want to use only 2, set this option to 2.
-- **Energy %** - percent of Energy to use on Wishes. For example, if set to 30, 30% of total Energy will be distributed between active Wish slots.
-- **Magic %** - percent of Magic to use on Wishes.
-- **Resource 3 %** - percent of Resource 3 to use on Wishes.
-- **Allocation Mode** - select one of the following options:
-  - **Default** - Will prioritize Wishes by their index.
-  - **Cheapest** - Will prioritize Wishes that require the least resources to finish.
-  - **Fastest** - Will prioritize Wishes that can be finishes as soon as possible.
-  - **Balanced** - If multiple Wish slots are available, will use one slot for the cheapest non-blacklisted wish. The remaining slots are used for the cheapest Wishes that can't be speed capped.
-- **Priority Wishes** - The Wishes to prioritize for the available wish slots. If there are open slots remaining after all prioritized Wishes are assigned, other available Wishes will be assigned to open slots ordered by the method outlined above.
-  - **Soft Priorities** - If enabled, will prioritize Wishes by the method above, and if there is a tie, prioritize a Wish closer to the top of priorities list. If disabled, will ignore the settings above for Wishes in this list.
-- **Blacklist Wishes** - Assign Wishes you never want to cast here. Any Wish in this list will be ignored when working out the Wish priorities. Supersedes Priority list if the same Wish is in both lists.
-
-![The Pit](https://i.imgur.com/mrPmWmM.png)
-
-- **Auto Daily Spin** - Automatically do Daily Ppin and log the result to the loot.log file.
-- **Auto Money Pit** - Automatically throw money into the Money Pit if the Money Pit Threshold is met. Logs the result to the loot.log file.
-- **Predict Money Pit Outcome** - If enabled then right before throwing money into the Money Pit, it will inspect the Money Pit reward and behave accordingly. If the next reward is a Little Iron Pill, it will enable the Blood Digger and invest all Magic into Blood Rituals. If the next reward is a little Pomegranate, it will equip Yggdrasil loadout.
-- **Put Items out of Daycare** - if enabled, it will put items out of Daycare to maximize the number of items in the Items for Shockwave list that will be hit by a Shockwave. Does nothing if Money Pit prediction is disabled.
-- **Money Pit Threshold** - The amount of gold to wait for to throw gold into the Money Pit.
-- **Daycare Threshold** - If the progress bar of an item in Daycare has reached this threshold, the item won't be put out from Daycare. If you want items to always be put out from Daycare, set this to 100%.
-- **Items for Shockwave** - Items to equip before throwing money in the pit. If prediction is enabled, will only equip items if the reward is equipment shockwave.
-- **Swap Diggers and Beards** - If checked, activate the Golden beard and diggers depending on the predicted reward (if the prediction is on) before throwing money.
-
-![Cards](https://i.imgur.com/fC3FFJj.png)
-
-- **Manage Mayo** - Prioritize mayo production to be able to cast the first card in your deck asap. If you have no cards, it will equalize all mayo types.
-- **Auto Cast Cards** - Cast any unprotected card that is not trashed according to your settings.
-- **Cast Protected Cards** - Allow casting protected cards.
-- **Sort Cards** - Set this to true to have the injector sort cards based on the priorities given in the card Sort Order.
-- **Card Sort Order** - A list of priorities to sort the cards by. The cards will be sorted by the first priority, then any cards that share an identical value for the first priority will be sorted by the second priority, and so on. The available priority options are:
-  - **"RARITY"** - The card rarity ("Good"/"Okay", etc.). (high->low)
-  - **"TIER"** - The card tier. (high->low)
-  - **"COST"** - The total mayo cost. (high->low)
-  - **"PROTECTED"** - Whether the card is protected. (protected, then not protected)
-  - **"CHANGE"** - The actual change in the bonus. (e.g. if you're current total Wish bonus is 200%, and the card bonus is 2%, the change will be 1%). (high->low)
-  - **"VALUE"** - The CHANGE value divided by the card cost. (high->low)
-  - **"NORMALVALUE"** - The VALUE, normalized by the card bonus type. (e.g. Gold always gives higher changes than PP, so this will try to account for that). (high->low)
-  - **"TYPE:xxxx"** - The card bonus type. Replace 'xxxx' with a specific card bonus type, i.e. one of: "energyNGUSpeed", "magicNGUSpeed", "wandoosSpeed", "augSpeed", "TMSpeed", "hackSpeed", "wishSpeed", "atkDefStats", "adventureStat", "dropChance", "goldDrop", "dayCareSpeed", "PP", "QP".
-
-The "-ASC" versions of the sort options will sort in the opposite direction.  
-**Example:**
-```
-   ["PROTECTED", "TYPE:adventureStat", "TYPE:hackSpeed", "COST-ASC", "VALUE"]
-```
-This will place any protected cards first. For all the protected cards, it will prioritise advStat, then hackSpeed above other types. All the protected advStat cards are then ordered by the lowest cost, then highest value. Same for protected hackSpeed cards. Same for all other protected cards. The unprotected cards are then sorted in the same manner as the protected cards.
-
-- **Auto Trash Cards** - Automatically yeet cards according to the settings below.
-- **Trash Protected Cards** - If checked, protected cards are yeeted according to your settings. If not checked, no protected cards are ever yeeted, regarless of quality/cost/type settings.
-- **Trash Settings** - Customize which cards you want to trash in this table
-  - **Rarity** - trash all cards of this type of this rarity or lower.
-  - **Cost** - trash all cards of this type of this cost or lower.
-
-For example, if you set Good-2 on Augment cards, then all unprotected Augment cards of rarity Good or lower will be trashed, as well as all unprotected Augment cards of cost 1 or 2. A Great Augment card of cost 3 won't be trashed.
-
-![Cooking](https://i.imgur.com/undefined.png)
-
-- **Manage Cooking** - Set this to true to have the injector optimize your cooking efficiency.
-- **Swap Loadout for Cooking** - Set this to true to have the injector swap to a Cooking loadout when eating meals.
-- **Loadout** - Items to equip before eating.
-
 # Allocation
 
 Allocation profiles can be found in the profiles folder and contain time breakpoints for configuring your gear, beards, diggers, energy allocation, magic allocation and resource 3 allocation. Sample allocation files can be found in the sampleprofile folder.
 
-[Sample 24 Hour Profile](https://github.com/rvazarkar/NGUAdvisor/blob/master/NGUAdvisor/SampleProfiles/24hr_with_gear.json).
+Browse the bundled [sample profiles](NGUAdvisor/SampleProfiles/) (Normal / Evil / Sadistic) for working examples — the same set ships in each release zip.
 
 The time portion of every breakpoint refers to rebirth time in seconds. Time can be defined as a simple number (ex: 86400) or as a JSON object:
 
@@ -737,38 +556,22 @@ The optimal zone for gold sniping is calculated using a set of values from pins 
 
 The stats for the zones can be manually overriden using the `zoneOverrides.json` file in the user's directory. For the default stats used see [here](https://github.com/rvazarkar/NGUAdvisor/wiki/Default-Zone-Stats-for-Sniping)
 
-# Other Features
+# Hotkeys
 
-## Quicksave + NGUSav.ES JSON
-
-Pressing the F3 button will dump a NGU save file as well as a ngusav.es JSON file in the AppData NGUAdvisor folder, which can be loaded into Gear Optimizer.
-
-## Quickload
-
-Pressing the F7 button will load the save created by the quicksave function
-
-## Dump Equipment to Log
-
-Pressing the F5 button will dump your current equipment to the log file for use in allocation files
-
-## Monitor Loot Log File
-
-The adventure log will automatically be monitored and loot dropped will be written to loot.log in the AppData NGUAdvisor folder.
-
-## Monitor Money Pit/Daily Spin/Yggdrasil Results
-
-The pitspin.log file will contain the results of each automatic money pit, daily spin, and yggdrasil harvest and will persist across sessions.
-
-## Quick Disable/Enable
-
-Pressing the F2 button will globally disable all features of the app until re-enabled.
-
-## Auto Merge Boost to 100
-
-Lock a boost in your inventory and the script will automatically merge boosts on to that boost until it hits level 100!
+| Key | Action |
+|---|---|
+| **F1** | Open / focus the NGU Advisor window. |
+| **F2** | Pause / resume all automation (global on-off). |
+| **F3** | Quicksave — writes `NGUSave.txt` and `NGUSave.json` to the AppData folder (the JSON loads into Gear Optimizer). |
+| **F5** | Dump currently-equipped gear IDs to the log — handy for building loadouts and gear breakpoints. |
+| **F7** | Quickload — load the save made by F3. |
+| **F8** | Toggle your quick loadout / diggers / beards swap on and off. |
+| **F9** | Open the Profile Editor. |
 
 # Acknowledgements
 
-SharpMonoInjector can be found [here](https://github.com/warbler/SharpMonoInjector). This wouldn't be possible without the excellent work done there.
-Obviously 4G for making NGU Idle.
-JShepler on discord for GO bookmarklet and help with code.
+NGU Advisor is a fork in the lineage of **NGUInjector** by [rvazarkar](https://github.com/rvazarkar/NGUInjector) and later work by [rus9384](https://github.com/rus9384). Licensed under Apache 2.0 — see [LICENSE](LICENSE).
+
+- [SharpMonoInjector](https://github.com/warbler/SharpMonoInjector) — the injection this is built on. None of this would be possible without it.
+- 4G for making NGU Idle.
+- JShepler on Discord for the GO bookmarklet and help with code.
