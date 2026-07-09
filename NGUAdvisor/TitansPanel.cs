@@ -1,0 +1,493 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+using NGUAdvisor.Managers;
+using static NGUAdvisor.Main;
+
+namespace NGUAdvisor
+{
+    // Combat > TITANS, R2v2 (user-approved): advisor-first hero card with AK STATS and NEXT VERSION
+    // requirement boxes, each carrying its own progress bar; chip strip for the rest; manual mode is
+    // the M-A uniform grid (centered abbreviations, tight boxes). Locked / wrong-difficulty titans are
+    // HIDDEN everywhere; version fractions (v n/n) appear on versioned titans (T6-T12) only.
+    public class TitansPanel : Panel
+    {
+        // Shared with the Gold pipeline's TITAN BANK stage.
+        public static readonly string[] Abbrev =
+        {
+            "GRB", "GCT", "Jake", "UUG", "Walderp", "Beast", "Nerd",
+            "Godmother", "Exile", "Hungers", "Lobster", "Amalg", "Tippi", "Traitor"
+        };
+
+        // Abbreviation + version tag ONLY when the game's own enemy entry carries one (user-reported
+        // mislabel: "Walderp v1" — WALDERP has no versions; the Beast's V1/V2 are separate enemy #s).
+        // Reads the live enemy name and keeps our abbreviations for display.
+        public static string AbbrevWithVersion(int titanIndex)
+        {
+            string name = titanIndex >= 0 && titanIndex < Abbrev.Length ? Abbrev[titanIndex] : $"T{titanIndex + 1}";
+            try
+            {
+                var enemy = ZoneHelpers.TitanEnemyName(titanIndex);
+                if (enemy != null)
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(enemy.TrimEnd(), @"V(\d+)$",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    return m.Success ? $"{name} v{m.Groups[1].Value}" : name;
+                }
+            }
+            catch { }
+            // Enemy list unreadable: fall back to the versioned-titan table.
+            return ZoneHelpers.IsVersionedTitan(titanIndex) ? $"{name} v{ZoneHelpers.TitanVersion(titanIndex)}" : name;
+        }
+        private static readonly int[] RiddleTitanIndexes = { 5, 6, 7 };
+        private const int FirstVersioned = 5;   // T6..T12 = indexes 5..11 have versions
+        private const int LastVersioned = 11;
+
+        private Button _srcToggle;
+        private Panel _heroCard;
+        private Label _targetName;
+        private Label _stateInfo;
+
+        private class ReqBox
+        {
+            public Panel Box;
+            public Label Title;
+            public Label Stats;
+            public Panel BarOuter;
+            public Panel BarInner;
+            public Label Caption;
+        }
+        private ReqBox _akBox;
+        private ReqBox _verBox;
+
+        private Panel _chipArea;
+        private Panel _manualView;
+        private readonly Button[] _killToggles = new Button[14];
+        private ComboBox _combatMode;
+        private Button _beast;
+        private Label _modeLbl;
+        private Label _combatSummary;
+
+        private bool _syncing;
+
+        // canvasW: explicit canvas width when hosted in an M1 section column (0 = UiLayout.PanelW).
+        public TitansPanel(int canvasW = 0)
+        {
+            int W = canvasW > 0 ? canvasW : UiLayout.PanelW;
+            Dock = DockStyle.Fill;
+            BackColor = UiTheme.Ground;
+
+            _heroCard = new Panel { Location = new Point(10, 10), Size = new Size(W - 54, 150), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle, Tag = "exclusive" };
+            Controls.Add(_heroCard);
+
+            _heroCard.Controls.Add(new Label { Text = "CURRENT TARGET", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.AccentDark, BackColor = UiTheme.Surface, Location = new Point(10, 8) });
+
+            _srcToggle = new Button { Text = "ADVISOR", Size = new Size(UiLayout.BtnWidth("ADVISOR"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
+            _srcToggle.FlatAppearance.BorderColor = UiTheme.Border;
+            _srcToggle.Location = new Point(_heroCard.Width - 12 - _srcToggle.Width, 6);
+            _srcToggle.Click += (s, e) =>
+            {
+                if (Settings == null) return;
+                Settings.AdvisorTitans = !Settings.AdvisorTitans;
+                SyncFromSettings();
+            };
+            _heroCard.Controls.Add(_srcToggle);
+
+            _targetName = new Label { Text = "…", AutoSize = true, Font = UiTheme.Bold, ForeColor = UiTheme.Accent, BackColor = UiTheme.Surface, Location = new Point(10, 34) };
+            _heroCard.Controls.Add(_targetName);
+            // Fixed width + measured fit — long state strings blank an overflowing Mono label.
+            _stateInfo = new Label { Text = "", AutoSize = false, Size = new Size(_heroCard.Width - 20, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Surface, Location = new Point(10, 62), Visible = false };
+            _heroCard.Controls.Add(_stateInfo);
+
+            // Two requirement boxes split the hero card (10px margins, 12px gap).
+            int reqW = (_heroCard.Width - 32) / 2;
+            _akBox = MkReqBox(10, reqW);
+            _verBox = MkReqBox(10 + reqW + 12, reqW);
+
+            _chipArea = new Panel { Location = new Point(10, 168), Size = new Size(W - 54, 66), BackColor = UiTheme.Ground, Tag = "exclusive" };
+            Controls.Add(_chipArea);
+
+            // Manual M-A: uniform 4-column grid, centered abbreviations, only unlocked titans.
+            _manualView = new Panel { Location = new Point(10, 10), Size = new Size(W - 54, 224), BackColor = UiTheme.Ground, Visible = false, Tag = "exclusive" };
+            Controls.Add(_manualView);
+            _manualView.Controls.Add(new Label { Text = "MANUAL KILL TARGETS", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(0, 4) });
+            var mToggle = new Button { Text = "ENABLE ADVISOR MODE", Size = new Size(UiLayout.BtnWidth("ENABLE ADVISOR MODE"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
+            mToggle.FlatAppearance.BorderColor = UiTheme.Border;
+            mToggle.Location = new Point(_manualView.Width - mToggle.Width, 0);
+            UiTheme.ApplyState(mToggle, UiTheme.Cap, Color.White);
+            mToggle.Click += (s, e) =>
+            {
+                if (Settings == null) return;
+                Settings.AdvisorTitans = true;
+                SyncFromSettings();
+            };
+            _manualView.Controls.Add(mToggle);
+            int killW = (_manualView.Width - 18) / 4;   // 148 legacy
+            for (int i = 0; i < 14; i++)
+            {
+                int idx = i;
+                var b = new Button { Size = new Size(killW, 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat, Visible = false };
+                b.FlatAppearance.BorderColor = UiTheme.Border;
+                b.Click += (s, e) =>
+                {
+                    if (Settings == null) return;
+                    try
+                    {
+                        var arr = (Settings.TitanSwapTargets ?? new bool[14]).ToArray();
+                        if (arr.Length < 14) Array.Resize(ref arr, 14);
+                        arr[idx] = !arr[idx];
+                        Settings.TitanSwapTargets = arr;
+                    }
+                    catch (Exception ex) { LogDebug($"Titan toggle: {ex.Message}"); }
+                    SyncFromSettings();
+                };
+                _killToggles[i] = b;
+                _manualView.Controls.Add(b);
+            }
+
+            _modeLbl = new Label { Text = "Mode", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
+            _combatMode = new ComboBox { Width = 110, DropDownStyle = ComboBoxStyle.DropDownList, Font = UiTheme.Ui };
+            _combatMode.Items.AddRange(new object[] { "Idle", "Snipe", "Defensive", "Offensive" });
+            _combatMode.SelectedIndexChanged += (s, e) => { if (!_syncing && Settings != null) Settings.TitanCombatMode = _combatMode.SelectedIndex; };
+            _beast = new Button { Text = "Beast Mode", Size = new Size(UiLayout.BtnWidth("Beast Mode"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
+            _beast.FlatAppearance.BorderColor = UiTheme.Border;
+            _beast.Click += (s, e) =>
+            {
+                if (Settings == null) return;
+                Settings.TitanBeastMode = !Settings.TitanBeastMode;
+                SyncFromSettings();
+            };
+            // Advisor mode picks combat posture itself (AK-ratio heuristic) — the controls give way to
+            // a read-only summary of its choice.
+            _combatSummary = new Label { Text = "", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Visible = false, Location = new Point(10, 251) };
+            Controls.Add(_modeLbl);
+            Controls.Add(_combatMode);
+            Controls.Add(_beast);
+            Controls.Add(_combatSummary);
+            UiLayout.Row(10, 246, 8, _modeLbl, _combatMode, _beast);
+
+            SyncFromSettings();
+        }
+
+        private ReqBox MkReqBox(int x, int w)
+        {
+            var rb = new ReqBox();
+            // DPI truth: the 9pt stats line renders ~25px tall — bar must start at y52+ or the text
+            // overlaps it (user caught the regression when the caption fix moved the bar to y44).
+            rb.Box = new Panel { Location = new Point(x, 62), Size = new Size(w, 84), BackColor = UiTheme.Zebra, BorderStyle = BorderStyle.FixedSingle };
+            rb.Title = new Label { Text = "", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Zebra, Location = new Point(8, 2) };
+            rb.Stats = new Label { Text = "", AutoSize = false, Size = new Size(w - 16, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Ink, BackColor = UiTheme.Zebra, Location = new Point(8, 24) };
+            rb.BarOuter = new Panel { Location = new Point(8, 52), Size = new Size(w - 16, 9), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+            rb.BarInner = new Panel { Location = new Point(0, 0), Size = new Size(0, 7), BackColor = UiTheme.Accent };
+            rb.BarOuter.Controls.Add(rb.BarInner);
+            rb.Caption = new Label { Text = "", AutoSize = false, Size = new Size(w - 16, 18), Font = UiTheme.Chip, ForeColor = UiTheme.Muted, BackColor = UiTheme.Zebra, Location = new Point(8, 64) };
+            rb.Box.Controls.Add(rb.Title);
+            rb.Box.Controls.Add(rb.Stats);
+            rb.Box.Controls.Add(rb.BarOuter);
+            rb.Box.Controls.Add(rb.Caption);
+            _heroCard.Controls.Add(rb.Box);
+            return rb;
+        }
+
+        private static bool Versioned(int i) => i >= FirstVersioned && i <= LastVersioned;
+
+        private static string TitanTag(int i)
+        {
+            string name = i >= 0 && i < Abbrev.Length ? Abbrev[i] : $"T{i + 1}";
+            if (!Versioned(i)) return name;
+            int v = 1;
+            try { v = ZoneHelpers.TitanVersion(i); } catch { }
+            return $"{name}  v{v}/{OptimizationAdvisor.AkVersionCount(i)}";
+        }
+
+        private static bool RiddleUnlocked(int i)
+        {
+            try
+            {
+                var adv = Main.Character.adventure;
+                if (i == 5) return adv.titan6Unlocked;
+                if (i == 6) return adv.titan7Unlocked;
+                if (i == 7) return adv.titan8Unlocked;
+            }
+            catch { }
+            return true;
+        }
+
+        private static string RiddleProgress(int i)
+        {
+            try
+            {
+                var adv = Main.Character.adventure;
+                if (i == 5)
+                {
+                    int clues = (adv.clue1Complete ? 1 : 0) + (adv.clue2Complete ? 1 : 0) + (adv.clue3Complete ? 1 : 0) + (adv.clue4Complete ? 1 : 0);
+                    return $"clues {clues}/4";
+                }
+                if (i == 6) return $"locks {adv.titan7QuestSequence}/5";
+            }
+            catch { }
+            return "riddle";
+        }
+
+        // Visible anywhere = zone reachable (post riddle-bug-fix) — locked titans are hidden entirely.
+        private static bool Reachable(int i, int maxZone) => ZoneHelpers.TitanZones[i] <= maxZone;
+
+        public void SyncFromSettings()
+        {
+            if (Settings == null) return;
+            _syncing = true;
+            try
+            {
+                bool advisor = Settings.AdvisorTitans;
+                _srcToggle.Text = advisor ? "ADVISOR" : "MANUAL";
+                UiTheme.ApplyState(_srcToggle, advisor ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                _heroCard.Visible = advisor;
+                _chipArea.Visible = advisor;
+                _manualView.Visible = !advisor;
+
+                int cm = Settings.TitanCombatMode;
+                if (cm >= 0 && cm < _combatMode.Items.Count) _combatMode.SelectedIndex = cm;
+                UiTheme.ApplyState(_beast, Settings.TitanBeastMode ? UiTheme.Cap : UiTheme.Danger, Color.White);
+
+                // Advisor manages combat posture: controls hidden, summary shown.
+                _modeLbl.Visible = _combatMode.Visible = _beast.Visible = !advisor;
+                _combatSummary.Visible = advisor;
+                if (advisor)
+                {
+                    string[] modes = { "Idle", "Snipe", "Defensive", "Offensive" };
+                    string mode = cm >= 0 && cm < modes.Length ? modes[cm] : "?";
+                    _combatSummary.Text = $"Combat: {mode} · Beast {(Settings.TitanBeastMode ? "on" : "off")} — advisor-managed";
+                }
+
+                if (advisor) RefreshHero();
+                else RefreshManual();
+            }
+            finally { _syncing = false; }
+        }
+
+        private void RefreshManual()
+        {
+            int maxZone = 0;
+            try { maxZone = ZoneHelpers.GetMaxReachableZone(true); } catch { }
+            var targets = Settings.TitanSwapTargets ?? new bool[14];
+
+            int col = 0, row = 0;
+            for (int i = 0; i < 14; i++)
+            {
+                bool show = Reachable(i, maxZone) && RiddleUnlocked(i);
+                _killToggles[i].Visible = show;
+                if (!show) continue;
+
+                bool on = i < targets.Length && targets[i];
+                _killToggles[i].Text = TitanTag(i);
+                UiTheme.ApplyState(_killToggles[i], on ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                _killToggles[i].Location = new Point(col * (_killToggles[i].Width + 6), 34 + row * 28);
+                col++;
+                if (col == 4) { col = 0; row++; }
+            }
+            UiLayout.AuditOnce(_manualView, "Titans/MANUAL");
+        }
+
+        private void RefreshHero()
+        {
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return;
+
+                var objv = OptimizationAdvisor.NextObjective();
+                int target = objv.Known ? objv.Index : -1;
+                int maxZone = ZoneHelpers.GetMaxReachableZone(true);
+
+                // Challenge banner: reduced stats + constant rebirths make below-AK titans unviable —
+                // AK'd ones keep dying automatically (AK flags are permanent). Targeting is paused.
+                string challenge = null;
+                try { challenge = ChallengeDetector.Current(); } catch { }
+                if (challenge != null)
+                {
+                    SetState($"Challenge active ({challenge})", "Only auto-killed titans are viable — targeting paused until the challenge ends.");
+                    RefreshChips(-1, maxZone);
+                    return;
+                }
+
+                if (target < 0)
+                {
+                    SetState("All titans auto-killed at this difficulty",
+                        "Nothing left here until the next difficulty — bosses and NGUs are the push now.");
+                }
+                else if (!Reachable(target, maxZone))
+                {
+                    int zone = ZoneHelpers.TitanZones[target];
+                    string unlock = zone < ZoneHelpers.ZoneUnlocks.Length ? ZoneHelpers.ZoneUnlocks[zone].ToString() : "?";
+                    SetState($"{Abbrev[target]} (not yet available)", $"Zone unlocks at boss {unlock} (current: {c.bossID - 1})");
+                }
+                else if (RiddleTitanIndexes.Contains(target) && !RiddleUnlocked(target))
+                {
+                    SetState($"{Abbrev[target]} (riddle pending)", $"Unlock riddle in progress — {RiddleProgress(target)}");
+                }
+                else
+                {
+                    _titleBase = TitanTag(target);
+                    _countdownTarget = target;
+                    _targetName.Text = _titleBase + SpawnSuffix(target);
+                    _stateInfo.Visible = false;
+
+                    double atk = c.totalAdvAttack();
+                    double def = c.totalAdvDefense();
+
+                    // The chase is the OBJECTIVE version at its KILL-LADDER stage (user rule):
+                    // never killed -> manual first-kill stats; killed -> idle stats; then AK.
+                    int ver = objv.Version;
+                    string stageTitle = (objv.Stage ?? "auto-kill").ToUpperInvariant();
+
+                    _akBox.Box.Visible = true;
+                    _akBox.Title.Text = Versioned(target) ? $"{stageTitle} (v{ver})" : stageTitle;
+                    // Gear-swap projection (user request): if current gear falls short but the
+                    // optimizer's best P/T set would clear it, the caption says so — the titan
+                    // swap machinery equips kill gear at spawn, so that IS killable now.
+                    string cap = $"Current {Fmt(atk)} / {Fmt(def)}";
+                    if (atk < objv.ReqAttack || def < objv.ReqDefense)
+                    {
+                        OptimizationAdvisor.ProjectedBestGear(out var am, out var dm);
+                        if (atk * am >= objv.ReqAttack && def * dm >= objv.ReqDefense)
+                            cap = $"✓ with best P/T gear (≈{Fmt(atk * am)} / {Fmt(def * dm)})";
+                    }
+                    FillBox(_akBox, objv.ReqAttack, objv.ReqDefense, atk, def, cap);
+
+                    int maxVer = OptimizationAdvisor.AkVersionCount(target);
+                    if (Versioned(target) && ver < maxVer)
+                    {
+                        // The next version has never been killed by definition — first-kill stats.
+                        OptimizationAdvisor.StagedRequirementFor(target, ver + 1, out var nReqA, out var nReqD, out var nStage);
+                        _verBox.Box.Visible = true;
+                        _verBox.Title.Text = $"NEXT VERSION (v{ver + 1} · {nStage})";
+                        FillBox(_verBox, nReqA, nReqD, atk, def, $"Current {Fmt(atk)} / {Fmt(def)}");
+                    }
+                    else if (Versioned(target))
+                    {
+                        _verBox.Box.Visible = true;
+                        _verBox.Title.Text = "TOP VERSION";
+                        _verBox.Stats.Text = "Nothing further";
+                        _verBox.BarInner.Width = 0;
+                        _verBox.Caption.Text = "";
+                    }
+                    else
+                    {
+                        _verBox.Box.Visible = false;
+                    }
+                }
+
+                RefreshChips(target, maxZone);
+            }
+            catch (Exception ex) { LogDebug($"Titan hero: {ex.Message}"); }
+        }
+
+        // Live spawn countdown (user request): the swap machinery already reads the spawn timers —
+        // this just shows them. Ticked from the form's status pump while the tab is visible.
+        private string _titleBase;
+        private int _countdownTarget = -1;
+        private DateTime _lastCountdownTick = DateTime.MinValue;
+
+        private static string SpawnSuffix(int titanIndex)
+        {
+            try
+            {
+                float? t = ZoneHelpers.TimeTillTitanSpawn(titanIndex);
+                if (!t.HasValue) return "";
+                if (t.Value <= 1) return "  ·  SPAWNING";
+                int m = (int)(t.Value / 60), s = (int)(t.Value % 60);
+                return m > 0 ? $"  ·  spawns in {m}m {s:00}s" : $"  ·  spawns in {s}s";
+            }
+            catch { return ""; }
+        }
+
+        public void TickCountdown()
+        {
+            if (!Visible || _countdownTarget < 0 || _titleBase == null) return;
+            if ((DateTime.UtcNow - _lastCountdownTick).TotalSeconds < 5) return;
+            _lastCountdownTick = DateTime.UtcNow;
+            try { _targetName.Text = _titleBase + SpawnSuffix(_countdownTarget); } catch { }
+        }
+
+        private void SetState(string name, string info)
+        {
+            _countdownTarget = -1;
+            _targetName.Text = name;
+            UiLayout.FitOrGrow(_stateInfo, info);   // req boxes are hidden in state mode — free to wrap
+            _stateInfo.Visible = true;
+            _akBox.Box.Visible = false;
+            _verBox.Box.Visible = false;
+        }
+
+        private static void FillBox(ReqBox rb, double reqA, double reqD, double atk, double def, string caption)
+        {
+            rb.Stats.Text = UiLayout.FitText($"ADV P {Fmt(reqA)}  /  ADV T {Fmt(reqD)}", UiTheme.Ui, rb.Stats.Width - 2);
+            double pct = Math.Min(1.0, Math.Min(reqA > 0 ? atk / reqA : 1, reqD > 0 ? def / reqD : 1));
+            rb.BarInner.Width = (int)((rb.BarOuter.Width - 2) * pct);
+            rb.Caption.Text = UiLayout.FitText($"{pct * 100:0}% · {caption}", UiTheme.Chip, rb.Caption.Width - 2);
+        }
+
+        private void RefreshChips(int target, int maxZone)
+        {
+            _chipArea.Controls.Clear();
+            var chips = new List<Control>();
+
+            for (int i = 0; i < ZoneHelpers.TitanZones.Length && i < 14; i++)
+            {
+                try
+                {
+                    if (i == target) continue;
+                    if (!Reachable(i, maxZone)) continue;   // locked titans hidden entirely
+
+                    string text;
+                    Color bg;
+                    if (RiddleTitanIndexes.Contains(i) && !RiddleUnlocked(i))
+                    {
+                        text = $"{Abbrev[i]} {RiddleProgress(i)}";
+                        bg = UiTheme.Wandoos;
+                    }
+                    else
+                    {
+                        bool ak = false;
+                        try { ak = ZoneHelpers.AutokillAvailable(i); } catch { }
+                        if (ak)
+                        {
+                            text = Versioned(i) ? $"✓ {Abbrev[i]} v{ZoneHelpers.TitanVersion(i)}/{OptimizationAdvisor.AkVersionCount(i)}" : $"✓ {Abbrev[i]}";
+                            bg = UiTheme.Cap;
+                        }
+                        else
+                        {
+                            text = $"{Abbrev[i]} queued";
+                            bg = UiTheme.Danger;
+                        }
+                    }
+
+                    var chip = new Label
+                    {
+                        Text = text,
+                        AutoSize = false,
+                        Size = new Size(UiLayout.MeasureText(text, UiTheme.Chip) + 14, 18),
+                        Font = UiTheme.Chip,
+                        ForeColor = Color.White,
+                        BackColor = bg,
+                        TextAlign = ContentAlignment.MiddleCenter
+                    };
+                    chips.Add(chip);
+                    _chipArea.Controls.Add(chip);
+                }
+                catch (Exception ex) { LogDebug($"Titan chip {i}: {ex.Message}"); }
+            }
+            UiLayout.WrapRow(0, 4, 6, _chipArea.Width - 6, 24, chips);
+        }
+
+        private static string Fmt(double v)
+        {
+            if (v >= 1e9) return $"{v / 1e9:0.##}B";
+            if (v >= 1e6) return $"{v / 1e6:0.##}M";
+            if (v >= 1e3) return $"{v / 1e3:0.#}K";
+            return $"{v:0}";
+        }
+    }
+}

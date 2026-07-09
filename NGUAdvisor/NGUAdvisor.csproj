@@ -1,0 +1,112 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SDK-style project targeting .NET Framework 4.8 (net48).
+    net48 is REQUIRED: the DLL is injected into NGU Idle's Unity 2019.4 Mono (.NET 4.x) runtime,
+    which cannot load a modern .NET assembly. See PLAN.md.
+
+    Builds with just the .NET SDK (no Visual Studio, no admin targeting-pack install) because
+    Microsoft.NETFramework.ReferenceAssemblies supplies the net48 reference assemblies via NuGet.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>NGUAdvisor</RootNamespace>
+    <!--
+      Hot reload requires a UNIQUE ASSEMBLY IDENTITY per build: Mono's Assembly.Load(byte[]) dedupes
+      by simple name and silently returns the already-loaded assembly (verified: reload read the new
+      file's bytes but started the old build). csc bakes the identity from the output file name, so
+      the OUTPUT is NGUAdvisor.r<stamp>.dll; the deploy step renames the copy to NGUAdvisor.dll
+      (identity lives in metadata — the on-disk name is irrelevant to both smi and byte-loading).
+      Embedded resources are unaffected: fixed LogicalName + RootNamespace-based preset names.
+    -->
+    <AssemblyName>NGUAdvisor.r$([System.DateTime]::Now.ToString(yyMMddHHmmss))</AssemblyName>
+    <!-- Properties/AssemblyInfo.cs provides the assembly attributes -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- AssemblyVersion("1.0.*") wildcard requires non-deterministic builds -->
+    <Deterministic>false</Deterministic>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <!-- Keep the stale committed copy of the game assembly and old release zip out of the build -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Assembly-CSharp.dll;dist_3.6.1.zip</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- net48 reference assemblies from NuGet so no Visual Studio / targeting pack is needed -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Embed pre-generated CLASSIC .resources (built from the .resx by build/convert-resx.ps1
+      under Windows PowerShell 5.1). The .NET SDK's resource generator would emit the
+      "preserialized" format, which needs System.Resources.Extensions.dll at runtime - that
+      won't resolve inside NGU Idle's Mono domain. Classic .resources read natively under Mono.
+      Exclude the source .resx so the SDK does not also try to generate resources from them.
+      LogicalName must match what ComponentResourceManager(typeof(SettingsForm)) looks up.
+    -->
+    <EmbeddedResource Remove="**\*.resx" />
+    <EmbeddedResource Include="SettingsForm.resources">
+      <LogicalName>NGUAdvisor.SettingsForm.resources</LogicalName>
+    </EmbeddedResource>
+    <!--
+      SettingsForm.dje.resx is a dead leftover (no code loads it; its ".dje." middle segment
+      is misread as the Zarma culture and would spawn a stray satellite assembly). Not embedded.
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Goal loadout presets: embedded and auto-installed into the runtime profiles dir on first run
+      (Managers/PresetInstaller). Plain JSON streams read fine under Mono (unlike WinForms resx).
+      Resource names become NGUAdvisor.Presets.<file>.json.
+    -->
+    <None Remove="Presets\*.json" />
+    <EmbeddedResource Include="Presets\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Framework assemblies not referenced implicitly by the SDK -->
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Numerics" />
+    <Reference Include="System.Data.DataSetExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      NGU Idle game assemblies (Unity 2019.4 / Mono). Machine-specific paths.
+      Private=false: these are compile-time references only; never copy them to output.
+    -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>D:\SteamLibrary\steamapps\common\NGU IDLE\NGUIdle_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,236 @@
+using System;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+using NGUAdvisor.Managers;
+using static NGUAdvisor.Main;
+
+namespace NGUAdvisor
+{
+    // Systems > BLOOD (layout C: status hero + compact inputs, user pick). Consolidates the legacy
+    // manual blood-spell inputs (re-homed from the Settings tab) with a LIVE read of what the blood
+    // ADVISOR (BloodPlanner) is doing: Iron Pill worth + timing, and which sink it routes blood into
+    // (Number Boost / Spaghetti loot / Counterfeit Gold). Crimson = the Blood system identity color.
+    public class BloodPanel : Panel
+    {
+        private static readonly Color Blood = ColorTranslator.FromHtml("#9E2B36");
+
+        private readonly int _w;
+        private Button _managed;                 // AdvisorBlood
+        private Button _cast, _swap;             // CastBloodSpells (manual auto-cast) + AutoSpellSwap
+        private Button _pillRb, _guffARb, _guffBRb;
+        private Button _refresh;
+        private Label _bloodTotal, _pillStatus, _advice;
+        private Panel _card, _barOuter, _fill, _routeChips;
+        private Label _cNum, _cLoot, _cGold;     // route chips: created ONCE, recolored in place (never per-tick churn)
+        private NumericUpDown _pillThr, _guffAThr, _guffBThr, _spag, _counter;
+        private TextBox _numberThr;
+        private bool _syncing;
+
+        public BloodPanel(int canvasW = 0)
+        {
+            _w = canvasW > 0 ? canvasW : UiLayout.PanelW;
+            Dock = DockStyle.Fill;
+            BackColor = UiTheme.Ground;
+            AutoScroll = true;
+            Build();
+            VisibleChanged += (s, e) => { if (Visible) RefreshStatus(); };
+            SyncFromSettings();
+        }
+
+        private static Button MkBtn(string text)
+        {
+            var b = new Button { Text = text, Size = new Size(UiLayout.BtnWidth(text), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
+            b.FlatAppearance.BorderColor = UiTheme.Border;
+            return b;
+        }
+
+        private Button MkToggle(string text, Action onClick)
+        {
+            var b = MkBtn(text);
+            b.Click += (s, e) => { if (Settings == null) return; onClick(); SyncFromSettings(); };
+            Controls.Add(b);
+            return b;
+        }
+
+        private void MkHead(string text, int x, int y)
+        {
+            Controls.Add(new Label { Text = text, AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(x, y) });
+        }
+
+        // Inline "label [numeric]" that advances a running x cursor. Ints only (NumericUpDown).
+        private NumericUpDown MkNum(string label, ref int cx, int y, int min, int max, Action<decimal> set, int width = 82)
+        {
+            Controls.Add(new Label { Text = label, AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(cx, y + 4) });
+            cx += UiLayout.MeasureText(label, UiTheme.Ui) + 6;
+            var n = new NumericUpDown { Location = new Point(cx, y), Width = width, Minimum = min, Maximum = max, Font = UiTheme.Ui };
+            n.ValueChanged += (s, e) => { if (_syncing || Settings == null) return; try { set(n.Value); } catch (Exception ex) { LogDebug($"Blood num '{label}': {ex.Message}"); } };
+            Controls.Add(n);
+            cx += width + 18;
+            return n;
+        }
+
+        private void Build()
+        {
+            // Toolbar: MANAGED (advisor) · blood total · refresh.
+            _managed = MkToggle("MANAGED", () => Settings.AdvisorBlood = !Settings.AdvisorBlood);
+            _bloodTotal = new Label { Text = "BLOOD …", AutoSize = false, Size = new Size(220, UiTheme.TextH), Font = UiTheme.Bold, ForeColor = UiTheme.Ink, BackColor = UiTheme.Ground };
+            Controls.Add(_bloodTotal);
+            _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
+            UiTheme.StyleFlat(_refresh);
+            _refresh.Click += (s, e) => RefreshStatus();
+            Controls.Add(_refresh);
+            UiLayout.Row(10, 10, 8, _managed, _bloodTotal, _refresh);
+
+            // Hero card: IRON PILL status + a pooling bar + routing chips (crimson identity strip).
+            _card = new Panel { Location = new Point(10, 44), Size = new Size(_w - 40, 96), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+            var strip = new Panel { Location = new Point(0, 0), Size = new Size(4, 94), BackColor = Blood };
+            _pillStatus = new Label { Text = "IRON PILL …", AutoSize = false, Size = new Size(_w - 60, UiTheme.TextH), Font = UiTheme.Bold, ForeColor = Blood, BackColor = UiTheme.Surface, Location = new Point(12, 8) };
+            _barOuter = new Panel { Location = new Point(12, 34), Size = new Size(_w - 68, 28), BackColor = UiTheme.Zebra, BorderStyle = BorderStyle.FixedSingle };
+            _fill = new Panel { Location = new Point(0, 0), Size = new Size(0, 26), BackColor = Blood };
+            _barOuter.Controls.Add(_fill);
+            _routeChips = new Panel { Location = new Point(12, 66), Size = new Size(_w - 68, 22), BackColor = UiTheme.Surface };
+            _cNum = MakeChip("▶ NUMBER BOOST");
+            _cLoot = MakeChip("SPAGHETTI (loot)");
+            _cGold = MakeChip("COUNTERFEIT GOLD");
+            int chx = 0;
+            foreach (var ch in new[] { _cNum, _cLoot, _cGold }) { ch.Location = new Point(chx, 0); ch.Visible = false; _routeChips.Controls.Add(ch); chx += ch.Width + 6; }
+            _card.Controls.Add(strip);
+            _card.Controls.Add(_pillStatus);
+            _card.Controls.Add(_barOuter);
+            _card.Controls.Add(_routeChips);
+            Controls.Add(_card);
+
+            // INPUTS: manual auto-cast toggles + thresholds (moved from the Settings tab).
+            MkHead("INPUTS", 10, 150);
+            _cast = MkToggle("Cast Blood Spells", () => Settings.CastBloodSpells = !Settings.CastBloodSpells);
+            _swap = MkToggle("Auto Spell Swap", () => Settings.AutoSpellSwap = !Settings.AutoSpellSwap);
+            _pillRb = MkToggle("Pill on Rebirth", () => Settings.IronPillOnRebirth = !Settings.IronPillOnRebirth);
+            _guffARb = MkToggle("Guff A on Rebirth", () => Settings.BloodMacGuffinAOnRebirth = !Settings.BloodMacGuffinAOnRebirth);
+            _guffBRb = MkToggle("Guff B on Rebirth", () => Settings.BloodMacGuffinBOnRebirth = !Settings.BloodMacGuffinBOnRebirth);
+            UiLayout.Row(10, 174, 8, _cast, _swap, _pillRb, _guffARb, _guffBRb);
+
+            int cx = 10;
+            _pillThr = MkNum("Pill ≥", ref cx, 210, 0, 1000000000, v => Settings.IronPillThreshold = (double)v, 96);
+            _guffAThr = MkNum("Guff A ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinAThreshold = (int)v);
+            _guffBThr = MkNum("Guff B ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinBThreshold = (int)v);
+
+            cx = 10;
+            _spag = MkNum("Spaghetti %", ref cx, 244, 0, 100, v => Settings.SpaghettiThreshold = (int)v, 60);
+            _counter = MkNum("Counterfeit %", ref cx, 244, 0, 100, v => Settings.CounterfeitThreshold = (int)v, 60);
+            Controls.Add(new Label { Text = "Number ≥", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(cx, 248) });
+            cx += UiLayout.MeasureText("Number ≥", UiTheme.Ui) + 6;
+            _numberThr = new TextBox { Location = new Point(cx, 244), Width = 110, Font = UiTheme.Ui };
+            _numberThr.TextChanged += (s, e) =>
+            {
+                if (_syncing || Settings == null) return;
+                if (double.TryParse(_numberThr.Text, out var d)) { try { Settings.BloodNumberThreshold = d; } catch { } }
+            };
+            Controls.Add(_numberThr);
+
+            _advice = new Label { Text = "", AutoSize = false, Size = new Size(_w - 54, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, 286) };
+            Controls.Add(_advice);
+        }
+
+        private static string Fmt(double v)
+        {
+            double a = Math.Abs(v);
+            if (a >= 1e15) return $"{v / 1e15:0.##}Qa";
+            if (a >= 1e12) return $"{v / 1e12:0.##}T";
+            if (a >= 1e9) return $"{v / 1e9:0.##}B";
+            if (a >= 1e6) return $"{v / 1e6:0.##}M";
+            if (a >= 1e3) return $"{v / 1e3:0.#}K";
+            return v.ToString("0");
+        }
+
+        private static Label MakeChip(string text) => new Label
+        {
+            Text = text,
+            AutoSize = false,
+            Size = new Size(UiLayout.MeasureText(text, UiTheme.Chip) + 14, 20),
+            Font = UiTheme.Chip,
+            TextAlign = ContentAlignment.MiddleCenter,
+            BorderStyle = BorderStyle.FixedSingle,
+            ForeColor = UiTheme.Muted,
+            BackColor = UiTheme.Surface
+        };
+
+        private void SetChip(Label ch, bool active)
+        {
+            ch.ForeColor = active ? Color.White : UiTheme.Muted;
+            ch.BackColor = active ? Blood : UiTheme.Surface;
+        }
+
+        public void SyncFromSettings()
+        {
+            if (Settings == null) return;
+            _syncing = true;
+            try
+            {
+                UiTheme.ApplyState(_managed, Settings.AdvisorBlood ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                _managed.Text = Settings.AdvisorBlood ? "MANAGED" : "UNMANAGED";
+                UiTheme.ApplyState(_cast, Settings.CastBloodSpells ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_swap, Settings.AutoSpellSwap ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_pillRb, Settings.IronPillOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_guffARb, Settings.BloodMacGuffinAOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_guffBRb, Settings.BloodMacGuffinBOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                _pillThr.Value = Clamp(_pillThr, (decimal)Settings.IronPillThreshold);
+                _guffAThr.Value = Clamp(_guffAThr, Settings.BloodMacGuffinAThreshold);
+                _guffBThr.Value = Clamp(_guffBThr, Settings.BloodMacGuffinBThreshold);
+                _spag.Value = Clamp(_spag, Settings.SpaghettiThreshold);
+                _counter.Value = Clamp(_counter, Settings.CounterfeitThreshold);
+                _numberThr.Text = Settings.BloodNumberThreshold.ToString("0");
+            }
+            catch (Exception e) { LogDebug($"Blood sync: {e.Message}"); }
+            finally { _syncing = false; }
+            RefreshStatus();
+        }
+
+        private static decimal Clamp(NumericUpDown n, decimal v) => v < n.Minimum ? n.Minimum : (v > n.Maximum ? n.Maximum : v);
+
+        // Live status refresh: called on show, refresh button, sync, and the periodic UpdateStatus tick.
+        public void RefreshStatus()
+        {
+            if (!Visible) return;
+            try
+            {
+                var c = Main.Character;
+                double blood = 0;
+                try { blood = c.bloodMagic.bloodPoints; } catch { }
+                _bloodTotal.Text = $"BLOOD {Fmt(blood)}";
+
+                var plan = BloodPlanner.Analyze();
+                BloodPlanner.FillRouting(ref plan);
+
+                double thr = Settings != null ? Settings.IronPillThreshold : 0;
+                double frac = thr > 0 ? Math.Max(0, Math.Min(1, blood / thr)) : 0;
+                _fill.Width = (int)((_barOuter.Width - 2) * frac);
+                _fill.BackColor = plan.Known && !plan.PillWorthwhile ? UiTheme.Faint : Blood;
+
+                string status;
+                if (!plan.Known) status = "IRON PILL — gathering data…";
+                else if (!plan.PillWorthwhile) status = "IRON PILL — not worthwhile (can't raise your adventure stats)";
+                else if (plan.UnreachableThisRun) status = "IRON PILL — on cooldown past this rebirth (not pooling)";
+                else if (plan.CastIronNow) status = "IRON PILL — CAST NOW";
+                else if (plan.PoolForPill) status = "IRON PILL — pooling (autos paused while charging)";
+                else status = "IRON PILL — worthwhile";
+                if (thr > 0) status += $" · {Fmt(blood)} / {Fmt(thr)}";
+                _pillStatus.Text = status;
+
+                bool showRoute = plan.Known && plan.RouteKnown;
+                _cNum.Visible = _cLoot.Visible = _cGold.Visible = showRoute;
+                if (showRoute)
+                {
+                    SetChip(_cNum, plan.WantRebirth);
+                    SetChip(_cLoot, plan.WantLoot);
+                    SetChip(_cGold, plan.WantGold);
+                }
+
+                string advice = !plan.Known ? "Blood advisor idle." : plan.Text;
+                if (plan.Known && !string.IsNullOrEmpty(plan.RouteReason)) advice += $" — {plan.RouteReason}";
+                UiLayout.FitOrGrow(_advice, advice);
+            }
+            catch (Exception e) { LogDebug($"Blood panel: {e.Message}"); }
+        }
+    }
+}
