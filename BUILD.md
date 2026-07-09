@@ -16,7 +16,8 @@ The DLL is injected into NGU Idle's Unity 2019.4 **Mono (.NET 4.x)** runtime and
 ```
 dotnet build "NGUAdvisor/NGUAdvisor.csproj" -c Release
 ```
-Output: `NGUAdvisor/bin/Release/net48/NGUAdvisor.dll` (single self-contained DLL).
+Output: `NGUAdvisor/bin/Release/net48/NGUAdvisor.r<timestamp>.dll` — a single self-contained DLL.
+The build stamps a unique `.r<timestamp>` name each time; deploy renames it to `NGUAdvisor.dll`.
 
 ## WinForms resources — important
 The `.resx` are **not** compiled by the SDK at build time. The SDK's resource generator emits the
@@ -38,9 +39,9 @@ then rebuild. The generated `SettingsForm.resources` is what actually gets embed
 `SettingsForm.dje.resx` is a dead leftover (no code loads it) and is intentionally not embedded.
 
 ## Deploy
-Copy `NGUAdvisor/bin/Release/net48/NGUAdvisor.dll` over `NGU/injector/NGUAdvisor.dll`,
-keeping the existing `smi.exe`, `SharpMonoInjector.dll`, and `Run NGU Advisor (no hot-reload).bat`. Then run `Run NGU Advisor (no hot-reload).bat`
-with NGU Idle open.
+Copy the built `NGUAdvisor.r<timestamp>.dll` over `injector/NGUAdvisor.dll` in your runnable
+folder, keeping the existing `smi.exe` and `SharpMonoInjector.dll`. Then run `Run NGU Advisor.bat`
+with NGU Idle open — it injects `NGUAdvisor.dll` directly (`NGUAdvisor.Loader.Init`).
 
 ## Reverting the build system
 The original legacy (VS-style) project is preserved as `NGUAdvisor/NGUAdvisor.csproj.legacy`.

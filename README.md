@@ -68,7 +68,7 @@ The receipts, filterable and live. **Advisor** is the decision log (why it did w
 
 ## Settings
 
-The master switchboard — four columns of subsystem toggles (Manage / Auto / Swap Gear For / Combat + ITOPOD) plus Misc controls and Reload / Unload. The fine detail (loadout IDs, zones, thresholds, priorities) lives in the sections above; turning the top-left toggle off stops the advisor entirely.
+The master switchboard — four columns of subsystem toggles (Manage / Auto / Swap Gear For / Combat + ITOPOD) plus Misc controls and an Unload button. The fine detail (loadout IDs, zones, thresholds, priorities) lives in the sections above; turning the top-left toggle off stops the advisor entirely.
 
 ![Settings](media/screenshots/settings.png)
 
@@ -92,7 +92,7 @@ Releases can be found in the [releases section](https://github.com/Glowey-Glow/N
 
 You'll know injection worked when the overlay appears in the upper-left corner of the game. Open the window with **F1** and start on **Advisors › Status**.
 
-To upgrade to a new release, unload from the **Settings** section (**Unload Advisor**), then inject the new version — or, with the recommended launcher, just use **Reload Advisor** without restarting the game.
+To upgrade to a new release, unload from the **Settings** section (**Unload Advisor**), replace the extracted folder with the new release, and run `Run NGU Advisor.bat` again.
 
 # Configuration
 
