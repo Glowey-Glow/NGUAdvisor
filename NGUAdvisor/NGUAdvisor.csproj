@@ -14,12 +14,11 @@
     <TargetFramework>net48</TargetFramework>
     <RootNamespace>NGUAdvisor</RootNamespace>
     <!--
-      Hot reload requires a UNIQUE ASSEMBLY IDENTITY per build: Mono's Assembly.Load(byte[]) dedupes
-      by simple name and silently returns the already-loaded assembly (verified: reload read the new
-      file's bytes but started the old build). csc bakes the identity from the output file name, so
-      the OUTPUT is NGUAdvisor.r<stamp>.dll; the deploy step renames the copy to NGUAdvisor.dll
-      (identity lives in metadata — the on-disk name is irrelevant to both smi and byte-loading).
-      Embedded resources are unaffected: fixed LogicalName + RootNamespace-based preset names.
+      The output name carries a per-build timestamp (NGUAdvisor.r<stamp>.dll) that Main.BuildTag
+      parses into the build id shown in the rail footer. The deploy step renames the copy to
+      NGUAdvisor.dll; the on-disk name is irrelevant to smi and injection, which resolve the entry
+      point by namespace/class (NGUAdvisor.Loader.Init). Embedded resources are unaffected: fixed
+      LogicalName + RootNamespace-based preset names.
     -->
     <AssemblyName>NGUAdvisor.r$([System.DateTime]::Now.ToString(yyMMddHHmmss))</AssemblyName>
     <!-- Properties/AssemblyInfo.cs provides the assembly attributes -->

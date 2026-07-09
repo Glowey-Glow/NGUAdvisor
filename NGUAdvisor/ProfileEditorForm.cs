@@ -26,8 +26,7 @@ namespace NGUAdvisor
         private bool _dirty;
         private bool _isNewProfile;
 
-        // Teardown for hot reload (Main.Unload): an open editor from the old assembly must not
-        // survive as an orphan window.
+        // Teardown on unload (Main.Unload): an open editor must not survive as an orphan window.
         public static void CloseEditor()
         {
             try

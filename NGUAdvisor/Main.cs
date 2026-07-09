@@ -32,9 +32,8 @@ namespace NGUAdvisor
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
         public const string Version = "1.0.0";
-        // Build stamp, derived automatically from the hot-reload assembly identity (NGUAdvisor.r<yyMMddHHmmss>,
-        // the unique per-compile name that already exists for Mono byte-load dedup). Replaces the old
-        // hand-bumped codename — every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
+        // Build stamp, derived automatically from the per-build assembly name (NGUAdvisor.r<yyMMddHHmmss>,
+        // stamped by the .csproj). Every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
         private static string _buildTag;
         public static string BuildTag
         {
@@ -156,10 +155,10 @@ namespace NGUAdvisor
 
         public void Unload()
         {
-            // Every step individually guarded: a single throw here used to ABORT the bootstrap's
-            // reload half-done (form closed, new payload never loaded — user-reported). Worse, the
-            // old catch called LogDebug AFTER DebugWriter.Close(), so the logging itself threw.
-            // Writers close LAST; nothing below may escape.
+            // Every step individually guarded: a single throw here used to ABORT teardown half-done
+            // (form closed, resources never released — user-reported). Worse, the old catch called
+            // LogDebug AFTER DebugWriter.Close(), so the logging itself threw. Writers close LAST;
+            // nothing below may escape.
             void Try(Action a) { try { a(); } catch { } }
 
             Try(() => CancelInvoke("AutomationRoutine"));

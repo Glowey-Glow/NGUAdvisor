@@ -121,35 +121,7 @@ namespace NGUAdvisor
             Controls.Add(folderBtn);
             y4 += 36;
 
-            // Hot reload: only works when the session was started via Run NGU Advisor.bat (the
-            // bootstrap byte-loads the payload, so a fresh build on disk can replace it live).
-            var reloadBtn = new Button { Text = "Reload Advisor", Size = new Size(140, 26), Location = new Point(x3, y4 + 2), Font = UiTheme.Ui };
-            UiTheme.StyleFlat(reloadBtn);
-            reloadBtn.Click += (s, e) =>
-            {
-                try
-                {
-                    System.Reflection.MethodInfo reload = null;
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        if (asm.GetName().Name != "NGUAdvisorBootstrap") continue;
-                        reload = asm.GetType("NGUAdvisorBootstrap.Boot")?.GetMethod("Reload");
-                        break;
-                    }
-                    if (reload == null)
-                    {
-                        Log("Reload needs the bootstrap: start the game session with 'Run NGU Advisor.bat' (full restart required this time).");
-                        return;
-                    }
-                    Log($"Reloading advisor from disk (build {BuildTag} going down)...");
-                    reload.Invoke(null, null);
-                }
-                catch (Exception ex) { LogDebug($"Reload: {ex.Message}"); }
-            };
-            Controls.Add(reloadBtn);
-            y4 += 36;
-
-            // Phase D: Unload, re-homed from the retired General page. Safety-gated exactly like the
+            // Unload, re-homed from the retired General page. Safety-gated exactly like the
             // legacy pair: the button only arms while the checkbox is ticked.
             var unloadSafety = new CheckBox { Text = "Arm unload", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(x3, y4 + 6) };
             var unloadBtn = new Button { Text = "Unload Advisor", Size = new Size(140, 26), Location = new Point(x3, y4 + 30), Font = UiTheme.Ui, Enabled = false };

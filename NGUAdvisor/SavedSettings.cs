@@ -1899,7 +1899,7 @@ namespace NGUAdvisor
         }
 
         // A/B layout test: widens the settings window (default ~608 client from DPI autoscale halving
-        // the designed 1216) to 940. Applied at form construction — flip + Reload Advisor to compare.
+        // the designed 1216) to 940. Applied at form construction — flip + reinject to compare.
         public bool WideLayout
         {
             get => _wideLayout;
