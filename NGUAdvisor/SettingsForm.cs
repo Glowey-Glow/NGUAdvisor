@@ -834,7 +834,7 @@ namespace NGUAdvisor
                 Font = UiTheme.Chip,
                 ForeColor = UiTheme.Faint,
                 BackColor = UiTheme.Ground,
-                Text = $"F1 PAUSE · F9 EDITOR\nv{Main.Version} · {Main.BuildTag}",
+                Text = $"F2 PAUSE · F9 EDITOR\nv{Main.Version} · {Main.BuildTag}",
                 TextAlign = System.Drawing.ContentAlignment.MiddleCenter
             };
             _rail.Controls.Add(foot);
