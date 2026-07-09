@@ -359,3 +359,6 @@ NGUAdvisor/inject/
 dist_*.zip
 *.zip
 *.pdb
+
+# release packager output
+/dist/
