@@ -149,7 +149,7 @@ namespace NGUAdvisor
             {
                 { "Advisors", new[] { "Status", "Top Actions" } },
                 { "Systems", new[] { "Yggdrasil", "Quests", "Boosts", "Inventory", "Cooking", "Blood" } },
-                { "Loadouts", new[] { "Titan", "Gold", "Quest", "Yggdrasil", "Cooking", "Shockwave" } },
+                { "Loadouts", new[] { "Titan", "Gold", "Quest", "Yggdrasil", "Cooking", "Loot Hunter", "Shockwave" } },
                 { "Logs", new[] { "Advisor", "Loot", "Session" } },
                 { "Cards", new[] { "Cards", "Wishes" } },
             };

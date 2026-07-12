@@ -336,9 +336,12 @@ namespace NGUAdvisor
 
                     double atk = c.totalAdvAttack();
                     double def = c.totalAdvDefense();
+                    double rgn = 0;
+                    try { rgn = c.totalAdvHPRegen(); } catch { }
 
                     // The chase is the OBJECTIVE version at its KILL-LADDER stage (user rule):
-                    // never killed -> manual first-kill stats; killed -> idle stats; then AK.
+                    // never killed -> manual first-kill stats; killed -> idle stats; then AK
+                    // (which from T4 up also gates on HP regen — shown as a third stat).
                     int ver = objv.Version;
                     string stageTitle = (objv.Stage ?? "auto-kill").ToUpperInvariant();
 
@@ -346,24 +349,30 @@ namespace NGUAdvisor
                     _akBox.Title.Text = Versioned(target) ? $"{stageTitle} (v{ver})" : stageTitle;
                     // Gear-swap projection (user request): if current gear falls short but the
                     // optimizer's best P/T set would clear it, the caption says so — the titan
-                    // swap machinery equips kill gear at spawn, so that IS killable now.
-                    string cap = $"Current {Fmt(atk)} / {Fmt(def)}";
+                    // swap machinery equips kill gear at spawn, so that IS killable now. The
+                    // optimizer doesn't project regen, so the claim needs it already met.
+                    string cap = objv.ReqRegen > 0
+                        ? $"Current {Fmt(atk)} / {Fmt(def)} / {Fmt(rgn)}"
+                        : $"Current {Fmt(atk)} / {Fmt(def)}";
+                    // Guide footnote: manual first-kill stats assume max move-cooldown gear + Beast Mode.
+                    if (objv.Stage == "first kill") cap += " · CD gear+BM";
                     if (atk < objv.ReqAttack || def < objv.ReqDefense)
                     {
                         OptimizationAdvisor.ProjectedBestGear(out var am, out var dm);
-                        if (atk * am >= objv.ReqAttack && def * dm >= objv.ReqDefense)
+                        if (atk * am >= objv.ReqAttack && def * dm >= objv.ReqDefense
+                            && (objv.ReqRegen <= 0 || rgn >= objv.ReqRegen))
                             cap = $"✓ with best P/T gear (≈{Fmt(atk * am)} / {Fmt(def * dm)})";
                     }
-                    FillBox(_akBox, objv.ReqAttack, objv.ReqDefense, atk, def, cap);
+                    FillBox(_akBox, objv.ReqAttack, objv.ReqDefense, objv.ReqRegen, atk, def, rgn, cap);
 
                     int maxVer = OptimizationAdvisor.AkVersionCount(target);
                     if (Versioned(target) && ver < maxVer)
                     {
                         // The next version has never been killed by definition — first-kill stats.
-                        OptimizationAdvisor.StagedRequirementFor(target, ver + 1, out var nReqA, out var nReqD, out var nStage);
+                        OptimizationAdvisor.StagedRequirementFor(target, ver + 1, out var nReqA, out var nReqD, out var nReqR, out var nStage);
                         _verBox.Box.Visible = true;
                         _verBox.Title.Text = $"NEXT VERSION (v{ver + 1} · {nStage})";
-                        FillBox(_verBox, nReqA, nReqD, atk, def, $"Current {Fmt(atk)} / {Fmt(def)}");
+                        FillBox(_verBox, nReqA, nReqD, nReqR, atk, def, rgn, $"Current {Fmt(atk)} / {Fmt(def)}");
                     }
                     else if (Versioned(target))
                     {
@@ -421,10 +430,16 @@ namespace NGUAdvisor
             _verBox.Box.Visible = false;
         }
 
-        private static void FillBox(ReqBox rb, double reqA, double reqD, double atk, double def, string caption)
+        private static void FillBox(ReqBox rb, double reqA, double reqD, double reqR, double atk, double def, double rgn, string caption)
         {
-            rb.Stats.Text = UiLayout.FitText($"ADV P {Fmt(reqA)}  /  ADV T {Fmt(reqD)}", UiTheme.Ui, rb.Stats.Width - 2);
-            double pct = Math.Min(1.0, Math.Min(reqA > 0 ? atk / reqA : 1, reqD > 0 ? def / reqD : 1));
+            // Tighter separators when the regen gate joins the line — three stats must share it.
+            string stats = reqR > 0
+                ? $"ADV P {Fmt(reqA)} / ADV T {Fmt(reqD)} / RGN {Fmt(reqR)}"
+                : $"ADV P {Fmt(reqA)}  /  ADV T {Fmt(reqD)}";
+            rb.Stats.Text = UiLayout.FitText(stats, UiTheme.Ui, rb.Stats.Width - 2);
+            double pct = Math.Min(reqA > 0 ? atk / reqA : 1, reqD > 0 ? def / reqD : 1);
+            if (reqR > 0) pct = Math.Min(pct, rgn / reqR);
+            pct = Math.Min(1.0, pct);
             rb.BarInner.Width = (int)((rb.BarOuter.Width - 2) * pct);
             rb.Caption.Text = UiLayout.FitText($"{pct * 100:0}% · {caption}", UiTheme.Chip, rb.Caption.Width - 2);
         }
@@ -482,12 +497,15 @@ namespace NGUAdvisor
             UiLayout.WrapRow(0, 4, 6, _chipArea.Width - 6, 24, chips);
         }
 
+        // Full suffix ladder (matches OptimizationAdvisor.Fmt) — capping at B rendered T6v4's
+        // 2.5e12 as "2500B" and would only get worse from T7 (5e14) up.
         private static string Fmt(double v)
         {
-            if (v >= 1e9) return $"{v / 1e9:0.##}B";
-            if (v >= 1e6) return $"{v / 1e6:0.##}M";
-            if (v >= 1e3) return $"{v / 1e3:0.#}K";
-            return $"{v:0}";
+            if (v <= 0) return "0";
+            string[] suf = { "", "K", "M", "B", "T", "Q", "Qi", "Sx", "Sp", "Oc", "No", "De" };
+            int i = 0;
+            while (v >= 1000 && i < suf.Length - 1) { v /= 1000; i++; }
+            return $"{v:0.##}{suf[i]}";
         }
     }
 }

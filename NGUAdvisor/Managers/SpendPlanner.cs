@@ -40,8 +40,9 @@ namespace NGUAdvisor.Managers
             new Step("The Newbie Adventure Perk", 0, 2),
             new Step("The Newbie Drop Chance Perk", 0, 2),
             new Step("The Newbie Stat Perk", 0, 2),
-            new Step("Generic Energy Power Perk I", 0, 3),
-            new Step("Generic Energy Cap Perk I", 0, 3),
+            new Step("Instant Advanced Training Levels", 2, 2),  // guide ch2: 2x after the Newbies
+            new Step("Generic Energy Power Perk I", 0, 2),       // guide ch2: alternate with Cap I
+            new Step("Generic Energy Cap Perk I", 0, 2),
             new Step("Bonus Titan EXP!", 1, 3),          // 1 level: online-AK EXP bonus
             new Step("What a Crappy Perk", 0, 3),
             new Step("A Digger Slot!", 0, 3),
@@ -113,18 +114,49 @@ namespace NGUAdvisor.Managers
             new Step("Rage", 24, 4),
         };
 
+        // 0 = stage unknown: every chapter-gated step then skips, so NextPerk/NextQuirk go un-Known
+        // and NOTHING is bought — the planned-buy fallback still names what's next. (The old
+        // "unknown = chapter 1" default made a transient detection failure read as "plan complete".)
         private static int Chapter()
         {
-            try { var p = ProgressionAnalyzer.Detect(); return p.Known ? p.Chapter : 1; }
-            catch { return 1; }
+            try { var p = ProgressionAnalyzer.Detect(); return p.Known ? p.Chapter : 0; }
+            catch { return 0; }
         }
 
-        private static int FindByName(List<string> names, string match)
+        // A plan step whose name doesn't resolve is SKIPPED — silently, it looks like "plan
+        // complete" (user-reported: P&Q said end-of-guide while the guide's chapter list had buys
+        // left). Log each miss once so a name drift is visible in debug.log instead of invisible.
+        private static readonly HashSet<string> _reportedMisses = new HashSet<string>();
+
+        private static int FindByName(List<string> names, string match, string kind = null)
+        {
+            int found = FindByNameCore(names, match);
+            if (found < 0 && kind != null && _reportedMisses.Add(kind + "|" + match))
+                Main.LogDebug($"SpendPlanner: {kind} step '{match}' not found in the game's name list — step skipped (name drift?)");
+            return found;
+        }
+
+        private static int FindByNameCore(List<string> names, string match)
         {
             for (int i = 0; i < names.Count; i++)
                 if (string.Equals(names[i]?.Trim(), match, StringComparison.OrdinalIgnoreCase)) return i;
-            // fallback: unique contains
+            // fallback 1: punctuation-insensitive exact (live names quote/punctuate differently than
+            // the community catalogs — debug.log caught the quoted '"Fruit of Knowledge sucks 1/5"'
+            // steps never resolving). Unique required, refuse ambiguity rather than mis-buy.
+            string normMatch = Normalize(match);
             int found = -1;
+            if (normMatch.Length > 0)
+            {
+                for (int i = 0; i < names.Count; i++)
+                {
+                    if (names[i] == null || Normalize(names[i]) != normMatch) continue;
+                    if (found >= 0) { found = -1; break; }
+                    found = i;
+                }
+                if (found >= 0) return found;
+            }
+            // fallback 2: unique contains
+            found = -1;
             for (int i = 0; i < names.Count; i++)
             {
                 if (names[i] == null || names[i].IndexOf(match, StringComparison.OrdinalIgnoreCase) < 0) continue;
@@ -132,6 +164,16 @@ namespace NGUAdvisor.Managers
                 found = i;
             }
             return found;
+        }
+
+        // Lowercase letters/digits only — quotes, punctuation and spacing drift can't break a match.
+        private static string Normalize(string s)
+        {
+            if (s == null) return "";
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (var ch in s)
+                if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+            return sb.ToString();
         }
 
         // ---------- PERKS ----------
@@ -151,7 +193,7 @@ namespace NGUAdvisor.Managers
                 foreach (var step in PerkPlan)
                 {
                     if (chapter < step.MinChapter) continue;
-                    int id = FindByName(ipc.perkName, step.Match);
+                    int id = FindByName(ipc.perkName, step.Match, "perk");
                     if (id < 0 || id >= levels.Count || id >= ipc.maxLevel.Count) continue;
                     if (ipc.perkDifficultyReq[id] > diff) continue;
                     long max = ipc.maxLevel[id] > 0 ? ipc.maxLevel[id] : long.MaxValue;
@@ -167,6 +209,41 @@ namespace NGUAdvisor.Managers
             }
             catch (Exception e) { Main.LogDebug($"SpendPlanner perks: {e.Message}"); }
             return b;
+        }
+
+        // The first perk buy the guide still has QUEUED but which is gated by chapter or difficulty
+        // — what banked PP is FOR (mirrors NextQuirkPlanned; user-reported: NextPerk()=unknown
+        // surfaced as "plan complete" while later-chapter steps were still queued).
+        public static PlannedBuy NextPerkPlanned()
+        {
+            var f = new PlannedBuy();
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return f;
+                var ipc = c.adventureController.itopod;
+                var levels = c.adventure.itopod.perkLevel;
+                if (levels == null) return f;
+                var diff = c.settings.rebirthDifficulty;
+
+                foreach (var step in PerkPlan)
+                {
+                    int id = FindByName(ipc.perkName, step.Match, "perk");
+                    if (id < 0 || id >= levels.Count || id >= ipc.maxLevel.Count) continue;
+                    long max = ipc.maxLevel[id] > 0 ? ipc.maxLevel[id] : long.MaxValue;
+                    long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
+                    if (levels[id] >= target) continue;
+
+                    f.Known = true;
+                    f.Name = ipc.perkName[id]?.Trim();
+                    f.Cost = ipc.perkCost(id);
+                    f.MinChapter = step.MinChapter;
+                    f.DifficultyGated = ipc.perkDifficultyReq[id] > diff;
+                    return f;
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"SpendPlanner planned perk: {e.Message}"); }
+            return f;
         }
 
         // Buy toward the current perk step; a bounded number of levels per call. Replicates the
@@ -211,7 +288,7 @@ namespace NGUAdvisor.Managers
                 foreach (var step in QuirkPlan)
                 {
                     if (chapter < step.MinChapter) continue;
-                    int id = FindByName(qc.quirkName, step.Match);
+                    int id = FindByName(qc.quirkName, step.Match, "quirk");
                     if (id < 0 || id >= levels.Count || id >= qc.maxLevel.Count) continue;
                     if (qc.quirkDifficultyReq[id] > diff) continue;
                     long max = qc.maxLevel[id] > 0 ? qc.maxLevel[id] : long.MaxValue;
@@ -257,7 +334,7 @@ namespace NGUAdvisor.Managers
 
                 foreach (var step in QuirkPlan)
                 {
-                    int id = FindByName(qc.quirkName, step.Match);
+                    int id = FindByName(qc.quirkName, step.Match, "quirk");
                     if (id < 0 || id >= levels.Count || id >= qc.maxLevel.Count) continue;
                     long max = qc.maxLevel[id] > 0 ? qc.maxLevel[id] : long.MaxValue;
                     long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
@@ -315,7 +392,7 @@ namespace NGUAdvisor.Managers
                 foreach (var step in FruitPlan)
                 {
                     if (chapter < step.MinChapter) continue;
-                    int id = FindByName(ycon.fruitName, step.Match);
+                    int id = FindByName(ycon.fruitName, step.Match, "fruit");
                     if (id < 0 || id >= fruits.Count || id >= ycon.baseSeedCost.Count) continue;
                     long target = Math.Min(step.Target, cap);
                     long tier = fruits[id].maxTier;

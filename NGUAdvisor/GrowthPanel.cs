@@ -118,9 +118,11 @@ namespace NGUAdvisor
 
                 // EXP — value, windowed rate, and the ratio-walk status (balance % + next chunk),
                 // so the guide-ratio progress is visible on the Status page (not just Top Actions).
+                // Rates/run-deltas read the GAIN counters (G*): spending must never count them
+                // down (user rule) — only a rebirth resets the RUN window.
                 double r;
-                bool expRate = GrowthTracker.Rate(s => s.Exp, win, false, out r);
-                string expSub = $"+{Fmt(GrowthTracker.RunDelta(s => s.Exp))} this run";
+                bool expRate = GrowthTracker.Rate(s => s.GExp, win, false, out r);
+                string expSub = $"+{Fmt(GrowthTracker.RunDelta(s => s.GExp))} this run";
                 Color expSubColor = UiTheme.Faint;
                 try
                 {
@@ -141,26 +143,26 @@ namespace NGUAdvisor
                 }
                 catch { }
                 Set(1, Fmt(newest.Ap),
-                    GrowthTracker.Rate(s => s.Ap, win, false, out r) ? r : (double?)null,
+                    GrowthTracker.Rate(s => s.GAp, win, false, out r) ? r : (double?)null,
                     apSub);
 
                 // PP
                 bool inItopod = false;
                 try { inItopod = Settings != null && (Settings.AdventureTargetITOPOD || Settings.SnipeZone >= 1000); } catch { }
-                bool ppHasRate = GrowthTracker.Rate(s => s.Pp, win, false, out r);
+                bool ppHasRate = GrowthTracker.Rate(s => s.GPp, win, false, out r);
                 Set(2, Fmt(newest.Pp),
                     ppHasRate ? r : (double?)null,
-                    ppHasRate && r <= 0 && !inItopod ? "not in ITOPOD" : $"+{Fmt(GrowthTracker.RunDelta(s => s.Pp))} this run");
+                    ppHasRate && r <= 0 && !inItopod ? "not in ITOPOD" : $"+{Fmt(GrowthTracker.RunDelta(s => s.GPp))} this run");
 
                 // CUBE P/T — rate over both combined.
-                bool cubeHasRate = GrowthTracker.Rate(s => s.CubeP + s.CubeT, win, false, out r);
+                bool cubeHasRate = GrowthTracker.Rate(s => s.GCubeP + s.GCubeT, win, false, out r);
                 Set(3, $"{Fmt(newest.CubeP)} / {Fmt(newest.CubeT)}",
                     cubeHasRate ? r : (double?)null,
-                    $"+{Fmt(GrowthTracker.RunDelta(s => s.CubeP + s.CubeT))} this run");
+                    $"+{Fmt(GrowthTracker.RunDelta(s => s.GCubeP + s.GCubeT))} this run");
 
                 // NGU LEVELS — per-run metric; measured vs NGUAdvisors prediction calibrates the
-                // tick-rate constant (predicted per NGU = (Ratio - 1) × Level over the targets).
-                bool nguHasRate = GrowthTracker.Rate(s => s.Ngu, win, true, out r);
+                // tick-rate constant (predicted = the plan's levels/hr at each target's share).
+                bool nguHasRate = GrowthTracker.Rate(s => s.GNgu, win, true, out r);
                 string nguSub = "resets each rebirth";
                 try
                 {
@@ -169,8 +171,8 @@ namespace NGUAdvisor
                         ChallengeOverlay.ChapterNguIds(ResourceType.Magic));
                     if (plan.Known)
                     {
-                        double pred = plan.Energy.Where(x => plan.EnergyTargets.Contains(x.Id)).Sum(x => (x.Ratio - 1) * x.Level)
-                                    + plan.Magic.Where(x => plan.MagicTargets.Contains(x.Id)).Sum(x => (x.Ratio - 1) * x.Level);
+                        double pred = plan.Energy.Where(x => plan.EnergyTargets.Contains(x.Id)).Sum(x => x.Lph)
+                                    + plan.Magic.Where(x => plan.MagicTargets.Contains(x.Id)).Sum(x => x.Lph);
                         if (pred > 0 && nguHasRate && r > 0)
                             nguSub = $"predicted {Fmt(pred)}/hr — {r / pred:0%}";
                         else if (pred > 0)

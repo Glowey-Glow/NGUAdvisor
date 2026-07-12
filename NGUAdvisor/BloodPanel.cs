@@ -23,7 +23,7 @@ namespace NGUAdvisor
         private Label _bloodTotal, _pillStatus, _advice;
         private Panel _card, _barOuter, _fill, _routeChips;
         private Label _cNum, _cLoot, _cGold;     // route chips: created ONCE, recolored in place (never per-tick churn)
-        private NumericUpDown _pillThr, _guffAThr, _guffBThr, _spag, _counter;
+        private NumericUpDown _guffAThr, _guffBThr, _spag, _counter;
         private TextBox _numberThr;
         private bool _syncing;
 
@@ -110,14 +110,17 @@ namespace NGUAdvisor
             _guffBRb = MkToggle("Guff B on Rebirth", () => Settings.BloodMacGuffinBOnRebirth = !Settings.BloodMacGuffinBOnRebirth);
             UiLayout.Row(10, 174, 8, _cast, _swap, _pillRb, _guffARb, _guffBRb);
 
+            // No "Pill ≥" input: IronPillThreshold is dead — the advisor casts the pill on
+            // BloodPlanner timing (CastIronNow), nothing reads a manual blood threshold anymore.
             int cx = 10;
-            _pillThr = MkNum("Pill ≥", ref cx, 210, 0, 1000000000, v => Settings.IronPillThreshold = (double)v, 96);
             _guffAThr = MkNum("Guff A ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinAThreshold = (int)v);
             _guffBThr = MkNum("Guff B ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinBThreshold = (int)v);
 
             cx = 10;
             _spag = MkNum("Spaghetti %", ref cx, 244, 0, 100, v => Settings.SpaghettiThreshold = (int)v, 60);
-            _counter = MkNum("Counterfeit %", ref cx, 244, 0, 100, v => Settings.CounterfeitThreshold = (int)v, 60);
+            // Counterfeit has NO game-side cap (goldBonus = 1 + floor((log2(blood/min)+1)^2)/100,
+            // decomp AllBloodMagicController:105) — the old max of 100 falsely capped the target.
+            _counter = MkNum("Counterfeit %", ref cx, 244, 0, 100000, v => Settings.CounterfeitThreshold = (int)v, 60);
             Controls.Add(new Label { Text = "Number ≥", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(cx, 248) });
             cx += UiLayout.MeasureText("Number ≥", UiTheme.Ui) + 6;
             _numberThr = new TextBox { Location = new Point(cx, 244), Width = 110, Font = UiTheme.Ui };
@@ -174,7 +177,6 @@ namespace NGUAdvisor
                 UiTheme.ApplyState(_pillRb, Settings.IronPillOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_guffARb, Settings.BloodMacGuffinAOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_guffBRb, Settings.BloodMacGuffinBOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
-                _pillThr.Value = Clamp(_pillThr, (decimal)Settings.IronPillThreshold);
                 _guffAThr.Value = Clamp(_guffAThr, Settings.BloodMacGuffinAThreshold);
                 _guffBThr.Value = Clamp(_guffBThr, Settings.BloodMacGuffinBThreshold);
                 _spag.Value = Clamp(_spag, Settings.SpaghettiThreshold);
@@ -202,10 +204,14 @@ namespace NGUAdvisor
                 var plan = BloodPlanner.Analyze();
                 BloodPlanner.FillRouting(ref plan);
 
-                double thr = Settings != null ? Settings.IronPillThreshold : 0;
-                double frac = thr > 0 ? Math.Max(0, Math.Min(1, blood / thr)) : 0;
+                // Bar = COOLDOWN charge toward ready (full = castable). The advisor pools by TIME,
+                // not a blood target — the old denominator was Settings.IronPillThreshold, the dead
+                // manual-mode knob nothing casts on anymore (user-reported "1.96Qa/3K"). Readout =
+                // what casting the current pool would grant.
+                double frac = plan.Known && plan.CdTotalSec > 0
+                    ? Math.Max(0, Math.Min(1, 1.0 - plan.CdLeftSec / plan.CdTotalSec)) : 0;
                 _fill.Width = (int)((_barOuter.Width - 2) * frac);
-                _fill.BackColor = plan.Known && !plan.PillWorthwhile ? UiTheme.Faint : Blood;
+                _fill.BackColor = plan.Known && (!plan.PillWorthwhile || plan.UnreachableThisRun) ? UiTheme.Faint : Blood;
 
                 string status;
                 if (!plan.Known) status = "IRON PILL — gathering data…";
@@ -214,8 +220,11 @@ namespace NGUAdvisor
                 else if (plan.CastIronNow) status = "IRON PILL — CAST NOW";
                 else if (plan.PoolForPill) status = "IRON PILL — pooling (autos paused while charging)";
                 else status = "IRON PILL — worthwhile";
-                if (thr > 0) status += $" · {Fmt(blood)} / {Fmt(thr)}";
-                _pillStatus.Text = status;
+                if (plan.Known)
+                    status += plan.PillPowerNow > 0
+                        ? $" · {Fmt(blood)} → +{plan.PillPowerNow:N0} adv"
+                        : $" · {Fmt(blood)} — below cast minimum";
+                _pillStatus.Text = UiLayout.FitText(status, _pillStatus.Font, _pillStatus.Width - 2);
 
                 bool showRoute = plan.Known && plan.RouteKnown;
                 _cNum.Visible = _cLoot.Visible = _cGold.Visible = showRoute;

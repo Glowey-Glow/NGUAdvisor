@@ -200,8 +200,6 @@ namespace NGUAdvisor.Managers
         // (1) narrates the filter in the feed, and (2) injects a generic fallback priority list in the
         // all-dead case — itself IsValid-filtered, so whatever the challenge kills drops here too. ----
         private static bool _lscSwordOn;   // narration flag for the LSC sword-first injection
-        private static bool _lscTargetsSaved;   // snapshot of the user's aug-6 caps while LSC overrides them
-        private static long _savedAugTarget, _savedUpgTarget;
         private static readonly Dictionary<ResourceType, int> _lastActive = new Dictionary<ResourceType, int>();
         private static readonly Dictionary<ResourceType, List<ResourceBreakpoint>> _fallbackParsed = new Dictionary<ResourceType, List<ResourceBreakpoint>>();
         private static readonly Dictionary<ResourceType, bool> _templateOn = new Dictionary<ResourceType, bool>();
@@ -340,23 +338,27 @@ namespace NGUAdvisor.Managers
             return parsed.Where(x => x.IsValid()).ToList();
         }
 
-        // LSC completion = leveling the laser sword aug (augs[6]) AND its upgrade to laserSwordTarget()
-        // (curCompletions + 2 on Normal). Setting the game's aug-6 "set caps" to that level makes the CAP
-        // sword priorities stop there (AugmentBP.TargetMet → IsValid=false), so BOTH reach target instead
-        // of Laser Sword racing to its energy cap while the upgrade starves. Snapshot the user's own caps
-        // once and restore them when LSC ends.
+        // LSC completion = leveling the laser sword aug (augs[6]) AND its upgrade to the CONTROLLER's
+        // laserSwordTarget(), which is this difficulty's completions (clamped to max) + 2 — NOT
+        // Character.challenges.laserSwordChallenge.curCompletions + 2, which is the normal-difficulty
+        // counter and unclamped, and on Evil/Sadistic can sit far above the real requirement. Setting
+        // the game's aug-6 "set caps" to that level makes the CAP sword priorities stop there
+        // (AugmentBP.TargetMet → IsValid=false), so BOTH reach target instead of Laser Sword racing to
+        // its energy cap while the upgrade starves. Snapshot the user's own caps once (persisted, so a
+        // save/reload mid-challenge can't strand the override) and restore them when LSC ends.
         private static void SetLscAugTargets()
         {
             try
             {
                 var c = Main.Character;
                 var a = c.augments.augs[6];
-                long target = c.challenges.laserSwordChallenge.curCompletions + 2;
-                if (!_lscTargetsSaved)
+                long target = c.allChallenges.laserSwordChallenge.laserSwordTarget();
+                var s = Main.Settings;
+                if (s != null && !s.LscTargetsSaved)
                 {
-                    _savedAugTarget = a.augmentTarget;
-                    _savedUpgTarget = a.upgradeTarget;
-                    _lscTargetsSaved = true;
+                    s.LscSavedAugTarget = a.augmentTarget;
+                    s.LscSavedUpgTarget = a.upgradeTarget;
+                    s.LscTargetsSaved = true;   // last: a throw above leaves the snapshot un-armed
                 }
                 a.augmentTarget = target;
                 a.upgradeTarget = target;
@@ -366,15 +368,16 @@ namespace NGUAdvisor.Managers
 
         private static void RestoreLscAugTargets()
         {
-            if (!_lscTargetsSaved) return;
+            var s = Main.Settings;
+            if (s == null || !s.LscTargetsSaved) return;
             try
             {
                 var a = Main.Character.augments.augs[6];
-                a.augmentTarget = _savedAugTarget;
-                a.upgradeTarget = _savedUpgTarget;
+                a.augmentTarget = s.LscSavedAugTarget;
+                a.upgradeTarget = s.LscSavedUpgTarget;
+                s.LscTargetsSaved = false;   // only disarm once the write landed
             }
             catch (Exception e) { Main.LogDebug($"LSC aug restore: {e.Message}"); }
-            _lscTargetsSaved = false;
         }
 
         private static List<ResourceBreakpoint> Fallback(ResourceType type)
@@ -485,9 +488,11 @@ namespace NGUAdvisor.Managers
             return $"{seg}{ph} phase · TM {(tmEmpty ? "empty" : "funded")} · {num}";
         }
 
-        // D2: chapter NGU CANDIDATES (guide ch.1-4 — which bonuses matter). Energy indices: 0 Augs,
-        // 1 Wandoos, 4 Adventure-a, 6 Drop Chance. Magic: 0 Ygg, 3 Number, 4 TM. NGUAdvisors ranks
-        // these by live x/hr value and picks how many to actually run.
+        // D2: chapter NGU CANDIDATES (guide ch.1-3 — which bonuses matter early). Energy indices:
+        // 0 Augs, 1 Wandoos, 4 Adventure-a, 6 Drop Chance. Magic: 0 Ygg, 3 Number, 4 TM.
+        // From ch.4 on, EVERY NGU is a candidate (user rule 2026-07-11: the old ch.4 group lists
+        // excluded E7 Magic / E8 PP / M5 Energy / M6 Adventure-β outright, so they never ran) —
+        // NGUAdvisors's exact-value ranking decides which lanes actually get energy/magic.
         public static int[] ChapterNguIds(ResourceType type)
         {
             int ch = Chapter();
@@ -496,18 +501,13 @@ namespace NGUAdvisor.Managers
                 if (ch == 1) return new int[0];             // pre-NGU era
                 if (ch == 2) return new[] { 0, 1 };
                 if (ch == 3) return new[] { 4, 6 };
-                // Ch.4 = the guide's NGU groups: PAWG (Power-a 5, Augs 0, Wandoos 1, Gold 3) +
-                // Adv/DC (4, 6) — NGUAdvisors value-ranks within the union.
-                if (ch == 4) return new[] { 5, 0, 1, 3, 4, 6 };
-                return new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 }; // ch5+ tables pending: all candidates
+                return new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
             }
             if (type == ResourceType.Magic)
             {
                 if (ch == 1) return new int[0];
                 if (ch == 2) return new[] { 0, 3 };
                 if (ch == 3) return new[] { 0 };
-                // Ch.4 magic groups: Ygg/EXP (0, 1) + Number/TM (3, 4).
-                if (ch == 4) return new[] { 0, 1, 3, 4 };
                 return new[] { 0, 1, 2, 3, 4, 5, 6 };
             }
             return new int[0];
@@ -527,6 +527,23 @@ namespace NGUAdvisor.Managers
             }
             catch { }
             return ids.Select(i => $"NGU-{i}").ToArray();
+        }
+
+        // Surplus lanes: positive-value NGUs that didn't make the hot set, emitted as CAPNGU so
+        // they stay OUT of the equal-share divisor — a CAP token only drinks what's left when its
+        // turn comes, so the hot lanes' shares are untouched (allocation walks the list in order,
+        // recomputing idle/prioCount per non-cap token; caps take min(need, idle-at-turn)).
+        private static string[] ChapterNgusSurplus(ResourceType type)
+        {
+            try
+            {
+                var plan = NGUAdvisors.Compute(ChapterNguIds(ResourceType.Energy), ChapterNguIds(ResourceType.Magic));
+                var ids = type == ResourceType.Magic ? plan.MagicSurplus : plan.EnergySurplus;
+                if (plan.Known && ids != null)
+                    return ids.Select(i => $"CAPNGU-{i}").ToArray();
+            }
+            catch { }
+            return new string[0];
         }
 
         public static string[] AutoTokens(ResourceType type)
@@ -564,36 +581,43 @@ namespace NGUAdvisor.Managers
                     foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
                     break;
                 default:
-                    // NGU MARATHON — NGUs get the whole idle pool (user-reported: BESTAUG/CAPALLAT
-                    // in this set stole equal shares from the NGUs; augs/AT had their hours).
+                    // NGU MARATHON — hot NGU lanes get their full equal shares (the old plain
+                    // BESTAUG/CAPALLAT here stole equal shares from them; augs/AT have their hours).
                     list.Add("CAPTM:5");
                     list.Add("CAPWAN:60");
                     foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    // SURPLUS ABSORBERS (user 2026-07-11: 4.7B of a 5.4B pool sat idle once the
+                    // hot lanes took their caps — the game hard-caps each NGU at ONE level per
+                    // tick, decomp NGUController.updateNGU resets progress to 0 on level-up, so
+                    // hot lanes physically cannot drink more). Every absorber is CAP-type: out of
+                    // the equal-share divisor, fed strictly from what the hot lanes leave behind.
+                    // Value order: warm NGU lanes (any growth beats idle), AT (costs only energy),
+                    // then the aug pair last (aug levels also drain gold).
+                    foreach (var t in ChapterNgusSurplus(type)) if (!list.Contains(t)) list.Add(t);
+                    if (e) { list.Add("CAPALLAT"); list.Add("CAPBESTAUG"); }
                     break;
             }
 
-            // Rituals cost magic that would otherwise be NGU growth: always worth it early in the
-            // run (recovery/TM hour feed gold + number spells), but during the marathon only while
-            // blood is ACTUALLY converting into something — the NUMBER auto-spell live past the boss
-            // ceiling, or an Iron Pill that can genuinely move current stats (user-reported: rituals
-            // held half the magic while no spell ever cast).
+            // Rituals cost magic that would otherwise be NGU growth, so run them ONLY while blood is
+            // ACTUALLY being converted into something: an auto-spell the advisor has routed on
+            // (number/loot/gold) or an Iron Pill worth pursuing. When the routing is idle AND the pill
+            // isn't worth it, drop rituals so that magic feeds the current segment (e.g. the marathon's
+            // NGUs) instead of pooling blood that never gets cast. Applies to EVERY segment now — this
+            // was NGU-MARATHON-only, which left TM/AT/recovery pooling unconditionally.
+            // (Caveat: the gold-spell "want" reads live blood/sec, so a cold-start gold-starve can't
+            // bootstrap rituals from zero — a pre-existing limit; revisit with potential income if it bites.)
             if (!e)
             {
-                bool marathon = seg == "NGU MARATHON";
-                bool bloodMatters = !marathon;
-                if (marathon)
+                bool bloodMatters = true;
+                try
                 {
-                    try
-                    {
-                        var c = Main.Character;
-                        bool numberLive = c.bossID - 1 >= OptimizationAdvisor.BossUnlockCeiling()
-                            && c.bloodMagic.rebirthAutoSpell;
-                        bool pillWorth = Main.Settings != null && Main.Settings.CastBloodSpells
-                            && BloodPlanner.PillWorthPursuing();
-                        bloodMatters = numberLive || pillWorth;
-                    }
-                    catch { bloodMatters = true; }
+                    var bm = Main.Character.bloodMagic;
+                    bool spellLive = bm.rebirthAutoSpell || bm.lootAutoSpell || bm.goldAutoSpell;
+                    bool pillWorth = Main.Settings != null && Main.Settings.CastBloodSpells
+                        && BloodPlanner.PillWorthPursuing();
+                    bloodMatters = spellLive || pillWorth;
                 }
+                catch { bloodMatters = true; }   // fail-safe: keep rituals if the state read throws
                 if (bloodMatters) list.Add("BR-30");
             }
             return list.ToArray();
@@ -639,32 +663,37 @@ namespace NGUAdvisor.Managers
             new[] { "NOTM", "will strip TM priorities; zone snipe carries gold" },
         };
 
+        // Completions come from the CONTROLLERS (Character.allChallenges), not the serialized
+        // Character.challenges objects: there, maxCompletions is [NonSerialized] and nothing ever
+        // assigns it, so every Max read 0 — and ChallengesPanel filters its completed chips and its
+        // queue on Max > 0, leaving both permanently empty. The controllers also expose
+        // currentCompletions(), i.e. the counter for the difficulty actually being played.
         public static List<Entry> Block()
         {
             var list = new List<Entry>();
             try
             {
-                var cc = Main.Character?.challenges;
-                if (cc == null) return list;
+                var ac = Main.Character?.allChallenges;
+                if (ac == null) return list;
                 foreach (var d in Defs)
                 {
-                    Challenge ch = null;
+                    int cur, max;
                     switch (d[0])
                     {
-                        case "BASIC": ch = cc.basicChallenge; break;
-                        case "NOAUG": ch = cc.noAugsChallenge; break;
-                        case "24HR": ch = cc.hour24Challenge; break;
-                        case "100LC": ch = cc.levelChallenge10k; break;
-                        case "NOEC": ch = cc.noEquipmentChallenge; break;
-                        case "TC": ch = cc.trollChallenge; break;
-                        case "NORB": ch = cc.noRebirthChallenge; break;
-                        case "LSC": ch = cc.laserSwordChallenge; break;
-                        case "BLIND": ch = cc.blindChallenge; break;
-                        case "NONGU": ch = cc.nguChallenge; break;
-                        case "NOTM": ch = cc.timeMachineChallenge; break;
+                        case "BASIC": cur = ac.basicChallenge.currentCompletions(); max = ac.basicChallenge.maxCompletions; break;
+                        case "NOAUG": cur = ac.noAugsChallenge.currentCompletions(); max = ac.noAugsChallenge.maxCompletions; break;
+                        case "24HR": cur = ac.hour24Challenge.currentCompletions(); max = ac.hour24Challenge.maxCompletions; break;
+                        case "100LC": cur = ac.level100Challenge.currentCompletions(); max = ac.level100Challenge.maxCompletions; break;
+                        case "NOEC": cur = ac.noEquipmentChallenge.currentCompletions(); max = ac.noEquipmentChallenge.maxCompletions; break;
+                        case "TC": cur = ac.trollChallenge.currentCompletions(); max = ac.trollChallenge.maxCompletions; break;
+                        case "NORB": cur = ac.noRebirthChallenge.currentCompletions(); max = ac.noRebirthChallenge.maxCompletions; break;
+                        case "LSC": cur = ac.laserSwordChallenge.currentCompletions(); max = ac.laserSwordChallenge.maxCompletions; break;
+                        case "BLIND": cur = ac.blindChallenge.currentCompletions(); max = ac.blindChallenge.maxCompletions; break;
+                        case "NONGU": cur = ac.NGUChallenge.currentCompletions(); max = ac.NGUChallenge.maxCompletions; break;
+                        case "NOTM": cur = ac.timeMachineChallenge.currentCompletions(); max = ac.timeMachineChallenge.maxCompletions; break;
+                        default: continue;
                     }
-                    if (ch == null) continue;
-                    list.Add(new Entry { Code = d[0], Cur = ch.curCompletions, Max = ch.maxCompletions, StripNote = d[1] });
+                    list.Add(new Entry { Code = d[0], Cur = cur, Max = max, StripNote = d[1] });
                 }
             }
             catch (Exception e) { Main.LogDebug($"ChallengeOverlay block: {e.Message}"); }

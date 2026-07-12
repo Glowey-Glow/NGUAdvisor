@@ -58,7 +58,8 @@ namespace NGUAdvisor.Managers
                 if (Main.Settings.AdvisorQuests) ApplyQuests();
                 if (Main.Settings.AdvisorBlood) ApplyBlood();
                 if (Main.Settings.AutoBoostPriority) ApplyBoostPriority();
-                if (Main.Settings.AdvisorZones) ApplyZones();
+                // Gear Hunt routes the zone even in MANUAL ZONE mode — the toggle is the intent.
+                if (Main.Settings.AdvisorZones || GearHunter.Active) ApplyZones();
                 if (Main.Settings.AdvisorTitans) ApplyTitans();
                 TransformManager.Tick();
             }
@@ -354,6 +355,25 @@ namespace NGUAdvisor.Managers
                     return;
                 }
 
+                // Objective + attempt-readiness FIRST — both the target list and the spawn version
+                // depend on it. A "first kill" objective is only ATTEMPTED once the projected
+                // best-gear stats actually cover the staged manual requirement (user-reported: the
+                // advisor chased a freshly-AK'd titan's next version nowhere near a manual attempt —
+                // wasted fights, and the spawn was parked off the AK version that pays gold/drops).
+                var objv = OptimizationAdvisor.NextObjective();
+                int primary = objv.Known ? objv.Index : -1;
+                bool attemptReady = true;
+                if (objv.Known && objv.Stage == "first kill")
+                {
+                    try
+                    {
+                        OptimizationAdvisor.ProjectedBestGear(out var am, out var dm);
+                        attemptReady = c.totalAdvAttack() * am >= objv.ReqAttack
+                                    && c.totalAdvDefense() * dm >= objv.ReqDefense;
+                    }
+                    catch { attemptReady = false; }
+                }
+
                 int maxZone = ZoneHelpers.GetMaxReachableZone(true);
                 var targets = new bool[14];
                 for (int i = 0; i < ZoneHelpers.TitanZones.Length && i < 14; i++)
@@ -372,6 +392,10 @@ namespace NGUAdvisor.Managers
                     try { ak = ZoneHelpers.AutokillAvailable(i); } catch { }
                     if (!ak) targets[i] = true;
                 }
+                // Not ready for the first-kill attempt: don't attend its spawns in kill gear at all.
+                // (The version parking below keeps the AK-able version spawning for gold/drops.)
+                if (!attemptReady && primary >= 0 && primary < targets.Length)
+                    targets[primary] = false;
 
                 var cur = Main.Settings.TitanSwapTargets ?? new bool[14];
                 bool differs = cur.Length != targets.Length;
@@ -387,14 +411,6 @@ namespace NGUAdvisor.Managers
                             names.Add(ZoneHelpers.ZoneList.TryGetValue(ZoneHelpers.TitanZones[i], out var n) ? n : $"Titan {i + 1}");
                     Main.Log($"Advisor: titan targets -> {(names.Count > 0 ? string.Join(", ", names.ToArray()) : "(none — everything auto-kills)")}");
                 }
-
-                // Combat posture for the primary target, from the AK-requirement ratios:
-                //  - attack already at AK level -> Idle (the fight is trivial)
-                //  - defense >= half the AK requirement -> Offensive (can face-tank the mechanics)
-                //  - otherwise -> Defensive (block/dodge management needed)
-                // Beast Mode only when defense covers ~80% of the requirement (its trade-off is safe).
-                var objv = OptimizationAdvisor.NextObjective();
-                int primary = objv.Known ? objv.Index : -1;
 
                 // The advisor owns titan killing: the kill-gear swap master must be on or the
                 // snapshot machinery never equips the P/T set (user-reported death loop).
@@ -425,17 +441,28 @@ namespace NGUAdvisor.Managers
                     try
                     {
                         int spawn = ZoneHelpers.TitanVersion(primary);
-                        if (goldPending)
+                        if (goldPending || !attemptReady)
                         {
-                            // Park the spawn on the highest AK-able version so the bank completes.
+                            // Park the spawn on the highest AK-able version: while a gold bank is
+                            // pending it completes there for free, and while the next version's
+                            // first-kill stats are out of reach even in best gear, the AK version
+                            // keeps paying gold/drops instead of feeding doomed attempts.
                             int akVer = 0;
                             for (int vv = 1; vv < objv.Version; vv++)
                                 try { if (ZoneHelpers.AutokillAvailable(primary, vv)) akVer = vv; } catch { }
                             if (akVer > 0 && spawn != akVer)
                             {
                                 ZoneHelpers.SetTitanVersion(primary, akVer);
-                                Main.Log($"Advisor: titan spawn version -> v{akVer} (gold bank pending — free AK kill first)");
-                                ChallengeOverlay.Record("TITAN", $"titan version → v{akVer}", "gold bank pending — banking before the push");
+                                if (goldPending)
+                                {
+                                    Main.Log($"Advisor: titan spawn version -> v{akVer} (gold bank pending — free AK kill first)");
+                                    ChallengeOverlay.Record("TITAN", $"titan version → v{akVer}", "gold bank pending — banking before the push");
+                                }
+                                else
+                                {
+                                    Main.Log($"Advisor: titan spawn version -> v{akVer} (v{objv.Version} first-kill stats out of reach — farming the AK version meanwhile)");
+                                    ChallengeOverlay.Record("TITAN", $"titan version → v{akVer}", $"v{objv.Version} first kill needs {objv.ReqAttack:0.#e0} atk — not there yet even in best gear");
+                                }
                             }
                         }
                         else if (spawn != objv.Version)
@@ -485,6 +512,24 @@ namespace NGUAdvisor.Managers
         {
             if (!Main.Settings.CombatEnabled) return;
             if (Main.Settings.GoldCBlockMode || Main.Settings.MoneyPitRunMode) return;
+
+            // GEAR HUNT: the user-picked stage outranks the automatic farms. Cheap and outside the
+            // 10-minute throttle so flipping the toggle acts on the next tick; an unreachable stage
+            // leaves routing alone until it unlocks.
+            if (GearHunter.Active)
+            {
+                if (!GearHunter.ZoneReachable()) return;
+                int hz = Main.Settings.GearHuntZone;
+                if (Main.Settings.SnipeZone != hz)
+                {
+                    Main.Settings.SnipeZone = hz;
+                    string hn = ZoneHelpers.ZoneList.TryGetValue(hz, out var n) ? n : $"Zone {hz}";
+                    Main.Log($"Advisor: farm zone -> {hn} (gear hunt)");
+                }
+                return;
+            }
+            if (!Main.Settings.AdvisorZones) return;
+
             if ((DateTime.UtcNow - _lastZoneCheck).TotalMinutes < 10) return;
             _lastZoneCheck = DateTime.UtcNow;
 
@@ -570,11 +615,41 @@ namespace NGUAdvisor.Managers
             try { if (ChallengeDetector.Current() == "NOEC") return; } catch { }
             // The challenge overlay's rotation outranks the profile objective — this is what un-freezes
             // gear during challenges even when the profile's challenge breakpoints are static ID lists.
-            string objName = ChallengeOverlay.GearObjectiveOverride
-                ?? AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+            // GEAR HUNT sits between them: it replaces the SEGMENT objective (the user is deliberately
+            // camping a stage) but yields to challenge rotation. NOTE: GearObjectiveOverride is the
+            // SEGMENT gear whenever AutoProfile is on (not just challenge rotation), so the hunt must
+            // be checked FIRST outside challenges — `override ?? hunt` never fell through and the
+            // Loot Hunter loadout was never equipped (user-reported).
+            bool inChallenge = false;
+            try { inChallenge = ChallengeDetector.Current() != null; } catch { }
+            string objName = !inChallenge && GearHunter.Active
+                ? "LOOT HUNTER"
+                : ChallengeOverlay.GearObjectiveOverride ?? AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
             if (string.IsNullOrEmpty(objName)) return;
             if ((DateTime.UtcNow - _lastGearCheck).TotalSeconds < 120) return;
             _lastGearCheck = DateTime.UtcNow;
+
+            if (objName == "LOOT HUNTER")
+            {
+                // Hybrid set (pool accessories + best P/T): no single objective score exists, so the
+                // anti-churn test is set-membership — re-equip only when the resolved set isn't worn.
+                var huntIds = GearHunter.ResolveLoadout(out var what);
+                if (huntIds.Length == 0) return;
+                bool huntChanged = objName != _lastGearObjective;
+                var worn = new HashSet<int>(LoadoutManager.CurrentGearIds());
+                if (_gearAsserted && !huntChanged && huntIds.All(worn.Contains))
+                {
+                    _lastGearObjective = objName;
+                    return;
+                }
+                bool firstHunt = !_gearAsserted;
+                _gearAsserted = true;
+                _lastGearObjective = objName;
+                LoadoutManager.ChangeGear(huntIds);
+                Main.InventoryController.assignCurrentEquipToLoadout(0);
+                Main.Log($"Advisor: gear hunt loadout equipped — {what}{(firstHunt ? " (startup/reload assert)" : "")}");
+                return;
+            }
 
             var obj = GearOptimizer.FindObjective(objName);
             if (obj == null) return;

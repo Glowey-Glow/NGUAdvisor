@@ -22,6 +22,10 @@ namespace NGUAdvisor
         private Button _farmBoost;
         private ComboBox _zoneCombo;
         private Label _zoneLbl;
+        private Button _gearHunt;
+        private Label _huntLbl;
+        private ComboBox _huntZone;
+        private Label _huntLine;
         private Label _boostLine1;
         private Label _boostLine2;
         private Label _gearLine;
@@ -129,7 +133,7 @@ namespace NGUAdvisor
             UiLayout.AuditOnce(_pages[idx], $"Adventure/{_segButtons[idx].Text}");
         }
 
-        private Panel NewPage() => new Panel { Location = new Point(0, 38), Size = new Size(_w - 34, 348), BackColor = UiTheme.Ground, Visible = false };
+        private Panel NewPage() => new Panel { Location = new Point(0, 38), Size = new Size(_w - 34, 440), BackColor = UiTheme.Ground, Visible = false };
 
         private Button MkToggle(string text, Action onClick)
         {
@@ -180,6 +184,45 @@ namespace NGUAdvisor
             page.Controls.Add(_farmGear);
             page.Controls.Add(_farmBoost);
             y = UiLayout.Row(10, y, 8, _farmGear, _farmBoost) + 10;
+
+            // GEAR HUNT (user feature): camp a chosen stage for its drops in the Loot Hunter hybrid
+            // set (pool accessories + best P/T). Works in BOTH zone-source modes and outranks the
+            // automatic farms; the pool itself is curated in Loadouts › Loot Hunter.
+            var ghead = MkHead("GEAR HUNT");
+            page.Controls.Add(ghead);
+            ghead.Location = new Point(10, y);
+            y += UiTheme.HeadPitch;
+
+            _gearHunt = MkToggle("Gear Hunt", () =>
+            {
+                Settings.GearHuntEnabled = !Settings.GearHuntEnabled;
+                AdvisorApply.GearRestored();   // re-arm the gear pass: swap on the next tick, not after the 120s throttle
+            });
+            _huntLbl = MkLbl("Stage");
+            _huntZone = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, Font = UiTheme.Ui };
+            foreach (var kv in ZoneHelpers.ZoneList)
+            {
+                if (kv.Key < 0 || ZoneHelpers.ZoneIsTitan(kv.Key)) continue;
+                _huntZone.Items.Add(new KeyValuePair<int, string>(kv.Key, kv.Value));
+            }
+            _huntZone.DisplayMember = "Value";
+            _huntZone.SelectedIndexChanged += (s, e) =>
+            {
+                if (_syncing || Settings == null || _huntZone.SelectedItem == null) return;
+                Settings.GearHuntZone = ((KeyValuePair<int, string>)_huntZone.SelectedItem).Key;
+                SyncFromSettings();
+            };
+            page.Controls.Add(_gearHunt);
+            page.Controls.Add(_huntLbl);
+            page.Controls.Add(_huntZone);
+            y = UiLayout.Row(10, y, 10, _gearHunt, _huntLbl, _huntZone) + 4;
+
+            _huntLine = MkLbl("");
+            _huntLine.AutoSize = false;
+            _huntLine.Size = new Size(page.Width - 20, UiTheme.TextH);
+            page.Controls.Add(_huntLine);
+            _huntLine.Location = new Point(10, y);
+            y += UiTheme.LinePitch * 2;
 
             var bhead = MkHead("BOOST FARM ADVICE");
             page.Controls.Add(bhead);
@@ -363,6 +406,28 @@ namespace NGUAdvisor
                 for (int i = 0; i < _zoneCombo.Items.Count; i++)
                     if (((KeyValuePair<int, string>)_zoneCombo.Items[i]).Key == Settings.SnipeZone)
                     { _zoneCombo.SelectedIndex = i; break; }
+
+                StyleOnOff(_gearHunt, Settings.GearHuntEnabled);
+                for (int i = 0; i < _huntZone.Items.Count; i++)
+                    if (((KeyValuePair<int, string>)_huntZone.Items[i]).Key == Settings.GearHuntZone)
+                    { _huntZone.SelectedIndex = i; break; }
+                string hunt;
+                if (!Settings.GearHuntEnabled)
+                    hunt = "Off — pick a stage; curate the accessory pool in Loadouts › Loot Hunter";
+                else if (Settings.GearHuntZone < 0)
+                    hunt = "On — pick a stage to hunt";
+                else if (!GearHunter.ZoneReachable())
+                    hunt = "Stage not reachable yet — zone routing unchanged until it unlocks";
+                else
+                {
+                    int pool = (Settings.LootHunterAccessories ?? new int[0]).Count(x => x > 0);
+                    int wr = Settings.LootHunterRespawnCount, wd = Settings.LootHunterDropCount;
+                    string picks = wr == 0 && wd == 0
+                        ? $"optimizer auto over the {pool}-item pool"
+                        : $"{wr} respawn + {wd} DC from the {pool}-item pool";
+                    hunt = $"Hunting this stage in the Loot Hunter set ({picks} + best P/T gear)";
+                }
+                UiLayout.FitOrGrow(_huntLine, hunt, 2);
 
                 StyleOnOff(_combat, Settings.CombatEnabled);
                 StyleOnOff(_beast, Settings.BeastMode);

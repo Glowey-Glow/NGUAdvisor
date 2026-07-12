@@ -33,6 +33,7 @@ namespace NGUAdvisor
             public Func<int[]> GetStatic;
             public Action<int[]> SetStatic;
             public bool GoldDefault;
+            public bool LootHunter;   // Gear Hunt pool: IDs = accessory CANDIDATES, preview = resolved hybrid
 
             public Button Tab;
             public Panel Page;
@@ -50,6 +51,8 @@ namespace NGUAdvisor
         }
 
         private readonly List<Mode> _modes = new List<Mode>();
+        private NumericUpDown _lhResp;
+        private NumericUpDown _lhDrop;
         private bool _syncing;
         private int _hostW;
         private int _wSave;
@@ -120,6 +123,17 @@ namespace NGUAdvisor
                 GetObj = () => Settings.CookingObjective, SetObj = v => Settings.CookingObjective = v,
                 GetResp = () => Settings.CookingObjectiveRespawn, SetResp = v => Settings.CookingObjectiveRespawn = v,
                 GetStatic = () => Settings.CookingLoadout, SetStatic = v => Settings.CookingLoadout = v,
+            });
+            // Gear Hunt (user feature): the ID list is the ACCESSORY POOL (Drop Chance / Respawn
+            // candidates), not a literal loadout — the advisor equips the best of the pool plus the
+            // optimizer's best Power/Toughness gear. Objective/respawn lambdas are inert.
+            _modes.Add(new Mode
+            {
+                Name = "LOOT HUNTER",
+                GetObj = () => "", SetObj = v => { },
+                GetResp = () => false, SetResp = v => { },
+                GetStatic = () => Settings.LootHunterAccessories, SetStatic = v => Settings.LootHunterAccessories = v,
+                LootHunter = true,
             });
             // Re-homed from the retired Old Pit page (Phase B): the 7-day shockwave set is a plain
             // static list — no objective concept, so the objective lambdas are inert.
@@ -198,7 +212,7 @@ namespace NGUAdvisor
             m.Page = page;
             Controls.Add(page);
 
-            page.Controls.Add(new Label
+            var srcHead = new Label
             {
                 Text = "SOURCE",
                 Location = new Point(10, 15),
@@ -206,7 +220,8 @@ namespace NGUAdvisor
                 Font = UiTheme.ColHeader,
                 ForeColor = UiTheme.Muted,
                 BackColor = UiTheme.Ground
-            });
+            };
+            page.Controls.Add(srcHead);
 
             // One status toggle, styled like the AUTO light (user request): green ADVISOR ACTIVE /
             // red MANUAL MODE; clicking flips the source and reveals/hides the manual ID row.
@@ -259,6 +274,40 @@ namespace NGUAdvisor
                 SyncCard(m);
             };
             page.Controls.Add(m.Resp);
+
+            // Loot Hunter: no source/objective concept — the ID row IS the accessory pool, and the
+            // freed top row holds the per-type QUOTAS (user rule: choose how many Respawn and how
+            // many Drop Chance accessories the advisor allocates; 0/0 = auto blended ranking).
+            if (m.LootHunter)
+            {
+                srcHead.Text = "ACCESSORY POOL";
+                m.Src.Visible = false;
+                m.Combo.Visible = false;
+                m.Resp.Visible = false;
+
+                Label QLbl(string t) => new Label { Text = t, AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
+                var pickLbl = QLbl("Advisor picks:");
+                _lhResp = new NumericUpDown { Width = 44, Minimum = 0, Maximum = 20, Font = UiTheme.Ui };
+                var respLbl = QLbl("× Respawn  +");
+                _lhDrop = new NumericUpDown { Width = 44, Minimum = 0, Maximum = 20, Font = UiTheme.Ui };
+                var dropLbl = QLbl("× Drop Chance  (0/0 = optimizer auto · shortfall picks from whole inventory)");
+                _lhResp.ValueChanged += (s, e) =>
+                {
+                    if (_syncing || Settings == null) return;
+                    Settings.LootHunterRespawnCount = (int)_lhResp.Value;
+                    RefreshCard(m);
+                };
+                _lhDrop.ValueChanged += (s, e) =>
+                {
+                    if (_syncing || Settings == null) return;
+                    Settings.LootHunterDropCount = (int)_lhDrop.Value;
+                    RefreshCard(m);
+                };
+                foreach (Control c in new Control[] { pickLbl, _lhResp, respLbl, _lhDrop, dropLbl })
+                    page.Controls.Add(c);
+                UiLayout.Row(10 + UiLayout.MeasureText("ACCESSORY POOL", UiTheme.ColHeader) + 14, 11, 6,
+                    pickLbl, _lhResp, respLbl, _lhDrop, dropLbl);
+            }
 
             m.Refresh = new Button { Text = "↻", Location = new Point(_hostW - 46, 10), Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(m.Refresh);
@@ -397,6 +446,12 @@ namespace NGUAdvisor
                 var ids = new int[0];
                 try { ids = m.GetStatic() ?? new int[0]; } catch { }
                 m.Ids.Text = string.Join(", ", ids.Where(x => x > 0).Select(x => x.ToString()).ToArray());
+
+                if (m.LootHunter && _lhResp != null)
+                {
+                    _lhResp.Value = Math.Max(0, Math.Min(20, Settings.LootHunterRespawnCount));
+                    _lhDrop.Value = Math.Max(0, Math.Min(20, Settings.LootHunterDropCount));
+                }
             }
             finally { _syncing = false; }
             RefreshCard(m);
@@ -414,7 +469,13 @@ namespace NGUAdvisor
                 int[] ids;
                 string note;
 
-                if (string.IsNullOrEmpty(obj))
+                if (m.LootHunter)
+                {
+                    // Same resolution the gear-hunt swap uses: pool accessories + best P/T gear.
+                    ids = GearHunter.ResolveLoadout(out var what);
+                    note = ids.Length > 0 ? what : "add accessory IDs to the pool";
+                }
+                else if (string.IsNullOrEmpty(obj))
                 {
                     int[] fallback = new int[0];
                     try { fallback = (m.GetStatic() ?? new int[0]).Where(x => x > 0).ToArray(); } catch { }

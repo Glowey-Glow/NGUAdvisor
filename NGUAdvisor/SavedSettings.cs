@@ -122,6 +122,14 @@ namespace NGUAdvisor
         [SerializeField] private bool _manageCookingLoadouts;
         [SerializeField] private int[] _questLoadout;
         [SerializeField] private int[] _cookingLoadout;
+        [SerializeField] private bool _poolMajorQuests;
+        [SerializeField] private bool _questHoldForGear;
+        [SerializeField] private bool _questBurstActive;
+        [SerializeField] private bool _gearHuntEnabled;
+        [SerializeField] private int _gearHuntZone = -1;
+        [SerializeField] private int[] _lootHunterAccessories;
+        [SerializeField] private int _lootHunterRespawnCount;
+        [SerializeField] private int _lootHunterDropCount;
         // Mode-loadout optimizer (route C3 3.2): when a mode's objective is set, gear is optimized live
         // for it before that mode's kill/action instead of using the static loadout above. Respawn flag
         // pins the single best Respawn item into the optimized loadout. "" objective = use static loadout.
@@ -176,6 +184,9 @@ namespace NGUAdvisor
         [SerializeField] private bool _advisorChallenges;
         [SerializeField] private bool _advisorQuests;
         [SerializeField] private bool _autoProfile;
+        [SerializeField] private bool _lscTargetsSaved;
+        [SerializeField] private long _lscSavedAugTarget;
+        [SerializeField] private long _lscSavedUpgTarget;
         [SerializeField] private int[] _transformAutoClimb;
         [SerializeField] private int[] _transformKeepMax;
         [SerializeField] private int[] _transformFilter;
@@ -469,6 +480,15 @@ namespace NGUAdvisor
             _cookingObjective = other?.CookingObjective ?? "";
             _cookingObjectiveRespawn = other?.CookingObjectiveRespawn ?? false;
 
+            _poolMajorQuests = other?.PoolMajorQuests ?? false;
+            _questHoldForGear = other?.QuestHoldForGear ?? false;
+            _questBurstActive = other?.QuestBurstActive ?? false;
+            _gearHuntEnabled = other?.GearHuntEnabled ?? false;
+            AssignValue(ref _gearHuntZone, other?.GearHuntZone, (z) => z >= -1, -1);
+            AssignValues(ref _lootHunterAccessories, other?.LootHunterAccessories, (id) => IsEquipment(id));
+            AssignValue(ref _lootHunterRespawnCount, other?.LootHunterRespawnCount, (n) => n >= 0 && n <= 20, 0);
+            AssignValue(ref _lootHunterDropCount, other?.LootHunterDropCount, (n) => n >= 0 && n <= 20, 0);
+
             _advisorDiggers = other?.AdvisorDiggers ?? false;
             _advisorBeards = other?.AdvisorBeards ?? false;
             _advisorWandoosOS = other?.AdvisorWandoosOS ?? false;
@@ -497,6 +517,9 @@ namespace NGUAdvisor
             _advisorChallenges = other?.AdvisorChallenges ?? false;
             _advisorQuests = other?.AdvisorQuests ?? false;
             _autoProfile = other?.AutoProfile ?? false;
+            _lscTargetsSaved = other?.LscTargetsSaved ?? false;
+            _lscSavedAugTarget = other?.LscSavedAugTarget ?? 0;
+            _lscSavedUpgTarget = other?.LscSavedUpgTarget ?? 0;
             AssignValues(ref _transformAutoClimb, other?.TransformAutoClimb, 5);
             // Auto-climb defaults ON: transforming at max level is the game's normal progression —
             // a fresh/legacy settings file must not silently freeze maxed chain items.
@@ -1773,6 +1796,105 @@ namespace NGUAdvisor
             }
         }
 
+        // --- Quest pooling (user feature): bank majors to cap, then burst the whole bank ---
+
+        public bool PoolMajorQuests
+        {
+            get => _poolMajorQuests;
+            set
+            {
+                if (value == _poolMajorQuests) return;
+                _poolMajorQuests = value;
+                SaveSettings();
+            }
+        }
+
+        // Opt-in capstone hold (default OFF — user: a ready major parked at 100% for hours read
+        // as a hang; Gear Hunt is the deliberate gear-farming tool now).
+        public bool QuestHoldForGear
+        {
+            get => _questHoldForGear;
+            set
+            {
+                if (value == _questHoldForGear) return;
+                _questHoldForGear = value;
+                SaveSettings();
+            }
+        }
+
+        // Internal burst state (persisted so a reload mid-burst keeps burning the bank).
+        public bool QuestBurstActive
+        {
+            get => _questBurstActive;
+            set
+            {
+                if (value == _questBurstActive) return;
+                _questBurstActive = value;
+                SaveSettings();
+            }
+        }
+
+        // --- Gear Hunt (user feature): camp a chosen stage for its drops in a hybrid loadout ---
+        // (best N accessories from the Loot Hunter pool + optimizer-best Power/Toughness gear).
+
+        public bool GearHuntEnabled
+        {
+            get => _gearHuntEnabled;
+            set
+            {
+                if (value == _gearHuntEnabled) return;
+                _gearHuntEnabled = value;
+                SaveSettings();
+            }
+        }
+
+        public int GearHuntZone
+        {
+            get => _gearHuntZone;
+            set
+            {
+                if (value == _gearHuntZone) return;
+                _gearHuntZone = value;
+                SaveSettings();
+            }
+        }
+
+        // The Loot Hunter ACCESSORY POOL: candidate Drop Chance / Respawn accessory item IDs the
+        // user curates; the advisor equips the best of them, as many as accessory slots allow.
+        public int[] LootHunterAccessories
+        {
+            get => _lootHunterAccessories;
+            set
+            {
+                _lootHunterAccessories = value;
+                SaveSettings();
+            }
+        }
+
+        // Per-type quotas (user 2026-07-11): how many Respawn and how many Drop Chance accessories
+        // the advisor should allocate from the pool. Both 0 = auto (blended DCxRespawn ranking).
+        public int LootHunterRespawnCount
+        {
+            get => _lootHunterRespawnCount;
+            set
+            {
+                if (value == _lootHunterRespawnCount) return;
+                _lootHunterRespawnCount = value;
+                SaveSettings();
+            }
+        }
+
+        public int LootHunterDropCount
+        {
+            get => _lootHunterDropCount;
+            set
+            {
+                if (value == _lootHunterDropCount) return;
+                _lootHunterDropCount = value;
+                SaveSettings();
+            }
+        }
+
         // --- Mode-loadout optimizer objectives (3.2). "" => use the static loadout for that mode. ---
 
         public string TitanObjective
@@ -2006,6 +2128,29 @@ namespace NGUAdvisor
         {
             get => _autoProfile;
             set { if (value == _autoProfile) return; _autoProfile = value; SaveSettings(); }
+        }
+
+        // LSC override bookkeeping. While the Laser Sword Challenge runs, the overlay rewrites the
+        // game's aug-6 targets so the sword and its upgrade both stop at the challenge level. These
+        // persist the player's own targets across a save/reload — held in memory they were lost if
+        // the game closed mid-challenge, and the next LSC then snapshotted the OVERRIDE as if it
+        // were the player's value, poisoning aug-6 permanently. Not surfaced in the UI.
+        public bool LscTargetsSaved
+        {
+            get => _lscTargetsSaved;
+            set { if (value == _lscTargetsSaved) return; _lscTargetsSaved = value; SaveSettings(); }
+        }
+
+        public long LscSavedAugTarget
+        {
+            get => _lscSavedAugTarget;
+            set { if (value == _lscSavedAugTarget) return; _lscSavedAugTarget = value; SaveSettings(); }
+        }
+
+        public long LscSavedUpgTarget
+        {
+            get => _lscSavedUpgTarget;
+            set { if (value == _lscSavedUpgTarget) return; _lscSavedUpgTarget = value; SaveSettings(); }
         }
 
         public int[] TransformAutoClimb

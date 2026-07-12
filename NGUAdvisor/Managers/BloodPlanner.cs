@@ -33,6 +33,8 @@ namespace NGUAdvisor.Managers
             public bool WantLoot;      // Spaghetti: log2(invested/min)% drop chance
             public bool WantGold;      // Counterfeit Gold: log2(invested/min)^2 % GPS (needs TM base gold)
             public string RouteReason;
+            public double CdLeftSec, CdTotalSec;   // Iron Pill cooldown state — the panel bar charges toward ready
+            public long PillPowerNow;              // what casting the current pool grants (game formula); 0 = below cast min
         }
 
         // Magic-cap growth sampler (user ask: time the pill against Magic Cap/Power growth, not just
@@ -75,6 +77,11 @@ namespace NGUAdvisor.Managers
         private static bool _pillWorthCache = true;
         private static DateTime _pillWorthAt = DateTime.MinValue;
 
+        // HARD pooling horizon (user rule): never treat the pill as a live blood consumer more than
+        // 1 hour before it comes off cooldown. Rituals fed for a pill hours away are pure NGU-magic
+        // loss — the pool builds in the final hour instead.
+        private const double PillPoolingHorizonSec = 3600;
+
         public static bool PillWorthPursuing()
         {
             if ((DateTime.UtcNow - _pillWorthAt).TotalSeconds < 60) return _pillWorthCache;
@@ -82,7 +89,15 @@ namespace NGUAdvisor.Managers
             try
             {
                 var p = Analyze();
-                _pillWorthCache = p.Known && p.PillWorthwhile && !p.UnreachableThisRun;
+                double cdLeft = 0;
+                try
+                {
+                    var c = Main.Character;
+                    cdLeft = Math.Max(0, c.bloodSpells.adventureSpellCooldown - c.bloodMagic.adventureSpellTime.totalseconds);
+                }
+                catch { }
+                _pillWorthCache = p.Known && p.PillWorthwhile && !p.UnreachableThisRun
+                    && cdLeft <= PillPoolingHorizonSec;
             }
             catch { _pillWorthCache = false; }
             return _pillWorthCache;
@@ -111,6 +126,19 @@ namespace NGUAdvisor.Managers
                 double minBlood = spells.minAdventureBlood();
 
                 p.Known = true;
+                p.CdLeftSec = cdLeft;
+                p.CdTotalSec = Math.Max(1.0, spells.adventureSpellCooldown);
+                // Display-only cast value (decomp castAdventurePowerupSpell): floor(blood^0.25),
+                // ×ironPillBonus on Evil+, capped 1e8. The planner's breakpoint math below keeps
+                // using the raw root — the bonus is a flat multiplier that cancels out of timing.
+                long powerNow = blood >= minBlood ? (long)Math.Floor(Math.Pow(blood, 0.25)) : 0;
+                try
+                {
+                    if (powerNow > 0 && c.settings.rebirthDifficulty >= difficulty.evil)
+                        powerNow = (long)(powerNow * c.adventureController.itopod.ironPillBonus());
+                }
+                catch { }
+                p.PillPowerNow = Math.Min(powerNow, 100000000L);
 
                 // Worth gate (user rule): the pill grants FLAT blood^0.25 to the BASE Adventure
                 // Power/Toughness (game: character.adventure.attack/defense += num — the summand
@@ -160,7 +188,9 @@ namespace NGUAdvisor.Managers
 
                 if (cdLeft > 0)
                 {
-                    p.Text = $"Iron Pill ready in {FmtH(cdLeft)} — projected power {eEnd} by rebirth (+{ExpBalancer.Fmt(bps)}/s blood)";
+                    p.Text = cdLeft > PillPoolingHorizonSec
+                        ? $"Iron Pill ready in {FmtH(cdLeft)} — too far out to pool for (magic feeds NGUs until the last hour)"
+                        : $"Iron Pill ready in {FmtH(cdLeft)} — projected power {eEnd} by rebirth (+{ExpBalancer.Fmt(bps)}/s blood)";
                     p.Severity = 0;
                     return p;
                 }
@@ -264,11 +294,15 @@ namespace NGUAdvisor.Managers
 
                 p.WantGold = p.WantLoot = p.WantRebirth = false;
 
-                if (c.machine.realBaseGold > 0 && OptimizationAdvisor.GoldStarvedForAugs(c, 2.0)
-                    && GoldBelowKnee(c, bps, out var goldReason))
+                // Gold demand = augs OR diggers (user rule): once augs are funded the digger max-level
+                // upgrades are the next gold sink, and they need a far HIGHER gold cap — Counterfeit
+                // stays credited until those are funded too.
+                bool goldDemand = OptimizationAdvisor.GoldStarvedForAugs(c, 2.0)
+                    || OptimizationAdvisor.GoldStarvedForDiggers(c);
+                if (c.machine.realBaseGold > 0 && goldDemand && GoldBelowKnee(c, bps, out var goldReason))
                 {
                     p.WantGold = true;
-                    p.RouteReason = goldReason;
+                    p.RouteReason = goldReason + (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) ? " · augs unfunded" : " · digger upgrades unfunded");
                 }
                 else if (DcBelowZoneRec(c, out var dcReason))
                 {
@@ -297,8 +331,10 @@ namespace NGUAdvisor.Managers
         }
 
         // Counterfeit gold cost-curve knee. Game: +N% GPS needs goldSpellBlood = minGold x 2^(sqrt(N)-1).
-        // Eligible while below the +100% game cap AND the next +1% is reachable within ~20min of the FULL
-        // blood income (single-sink → no sharing). Past that the step is too slow to be worth the pool.
+        // There is NO game cap (goldBonus = 1 + floor((log2(blood/min)+1)^2)/100 — user-corrected; the
+        // old "<100%" cutoff here discredited Counterfeit far too early). The only knee is the cost
+        // curve itself: eligible while the next +1% is reachable within ~20min of the FULL blood
+        // income (single-sink → no sharing). Past that the step is too slow to be worth the pool.
         private static bool GoldBelowKnee(Character c, double bps, out string reason)
         {
             reason = null;
@@ -308,7 +344,6 @@ namespace NGUAdvisor.Managers
                 double gm = c.bloodSpells.minGoldBlood();
                 if (gm <= 0) return false;
                 double cur = gb >= gm ? Math.Floor(Math.Pow(Math.Log(gb / gm, 2.0) + 1.0, 2.0)) : 0;
-                if (cur >= 100) return false;
                 double nextInvest = gm * Math.Pow(2.0, Math.Sqrt(cur + 1.0) - 1.0);
                 double eta = bps > 0 ? (nextInvest - gb) / bps : double.MaxValue;
                 if (eta > 20 * 60) return false;

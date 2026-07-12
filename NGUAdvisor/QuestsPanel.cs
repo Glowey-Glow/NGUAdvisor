@@ -45,6 +45,8 @@ namespace NGUAdvisor
         private Button _questGear;
         private ComboBox _combatMode;
         private Button _beast;
+        private Button _poolMajors;
+        private Button _holdGear;
 
         private bool _syncing;
 
@@ -149,10 +151,18 @@ namespace NGUAdvisor
             _combatMode.Items.AddRange(new object[] { "Idle", "Snipe", "Defensive", "Offensive" });
             _combatMode.SelectedIndexChanged += (s, e) => { if (!_syncing && Settings != null && _combatMode.SelectedIndex >= 0) Settings.QuestCombatMode = _combatMode.SelectedIndex; };
             _beast = MkRule("Beast Mode", () => Settings.QuestBeastMode = !Settings.QuestBeastMode);
+            // Strategy toggles live on the always-visible row (both advisor + manual modes):
+            // Pool Majors = bank to cap then burst the whole bank; Hold for Gear = the opt-in
+            // capstone hold (default OFF — a held major reads as a hang at the quest ticket).
+            _poolMajors = MkRule("Pool Majors", () => Settings.PoolMajorQuests = !Settings.PoolMajorQuests);
+            _holdGear = MkRule("Hold for Gear", () => Settings.QuestHoldForGear = !Settings.QuestHoldForGear);
             Controls.Add(cmLbl);
             Controls.Add(_combatMode);
             Controls.Add(_beast);
-            UiLayout.Row(10, Math.Max(226, _rules.Bottom + 8), 8, cmLbl, _combatMode, _beast);
+            Controls.Add(_poolMajors);
+            Controls.Add(_holdGear);
+            UiLayout.WrapRow(10, Math.Max(226, _rules.Bottom + 8), 8, W - 20, 30,
+                new Control[] { cmLbl, _combatMode, _beast, _poolMajors, _holdGear });
 
             VisibleChanged += (s, e) => { if (Visible) RefreshView(); };
             SyncFromSettings();
@@ -212,6 +222,8 @@ namespace NGUAdvisor
                 int cm = Settings.QuestCombatMode;
                 if (cm >= 0 && cm < _combatMode.Items.Count) _combatMode.SelectedIndex = cm;
                 UiTheme.ApplyState(_beast, Settings.QuestBeastMode ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_poolMajors, Settings.PoolMajorQuests ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                UiTheme.ApplyState(_holdGear, Settings.QuestHoldForGear ? UiTheme.Cap : UiTheme.Danger, Color.White);
             }
             finally { _syncing = false; }
             RefreshView();
@@ -272,16 +284,24 @@ namespace NGUAdvisor
                 _bankNext.Text = banked >= maxBank ? "FULL" : Fit($"next in {(next >= 3600 ? $"{next / 3600:0.#}h" : $"{next / 60:0}m")}", UiTheme.Ui, _bankNext.Width - 2);
                 _bankInner.Width = (int)((_bankOuter.Width - 2) * (thr > 0 ? into / thr : 0));
                 bool overfill = QuestManager.BankOverfill;
-                _bankVerdict.Text = overfill ? "overfill: FORCING QUESTS" : "overfill guard: safe";
-                _bankVerdict.ForeColor = overfill ? UiTheme.Danger : UiTheme.Muted;
+                bool pooling = Settings.PoolMajorQuests;
+                bool bursting = pooling && Settings.QuestBurstActive;
+                _bankVerdict.Text = bursting ? "BURST: burning the bank"
+                    : pooling ? $"pooling — burst at {maxBank}"
+                    : overfill ? "overfill: FORCING QUESTS" : "overfill guard: safe";
+                _bankVerdict.ForeColor = bursting ? UiTheme.Energy : overfill && !pooling ? UiTheme.Danger : UiTheme.Muted;
 
                 // Plan sentence (advisor mode).
                 if (Settings.AdvisorQuests)
                 {
                     string plan;
+                    bool hunting = false;
+                    try { hunting = GearHunter.Active; } catch { }
                     if (!Settings.AutoQuest) plan = "Auto Quest is OFF (Settings tab) — advisor is idle.";
                     else if (QuestManager.CapstoneItem != null) plan = $"Plan: max {QuestManager.CapstoneItem}, turn in, then {(banked > 0 ? "next banked major" : "idle minors")}.";
+                    else if (bursting) plan = $"Plan: BURST — chain {(q.inQuest && !q.reducedRewards ? "this major and " : "")}{banked} banked major{(banked == 1 ? "" : "s")}{(hunting ? " (paused: gear hunt)" : "")}.";
                     else if (q.inQuest && !q.reducedRewards) plan = $"Plan: finish this major → {(banked > 0 ? $"{banked} more banked" : "idle minors while sniping resumes")}.";
+                    else if (pooling) plan = $"Plan: pooling majors — {banked}/{maxBank} banked; burst when full{(hunting ? " and the gear hunt ends" : "")}.";
                     else if (banked > 0) plan = $"Plan: {banked} banked major{(banked > 1 ? "s" : "")} queued — starting when current quest clears.";
                     else plan = "Plan: idle minors while sniping; majors start as the bank fills.";
                     UiLayout.FitOrGrow(_plan, plan);

@@ -27,24 +27,50 @@ namespace NGUAdvisor.Managers
             { "Stats", "Drops", "Number", "NGU", "Wandoos", "Adv", "Golden" };
         private static readonly string[] WandoosOsNames = { "98", "MEH", "XL" };
 
-        // Autokill attack/defense requirements per titan index (0-based) and version (1-4), extracted
-        // from the game's autokillTitan{N}V{V}Achieved methods (reference/decomp/AdventureController.cs).
-        // Titans 1-5 have a single version. T9+ can alternatively be unlocked by kill counts, which the
-        // stat gap intentionally ignores (the stat path is the one you can push toward).
+        // Autokill attack/defense/HP-REGEN requirements per titan index (0-based) and version (1-4),
+        // extracted from the game's autokillTitan{N}V{V}Achieved methods (reference/decomp-full/
+        // AdventureController.cs). Regen (third column, 0 = no check) is a REAL gate from T4 up —
+        // omitting it let the UI claim AK-ready while the game refused to fire. T4 additionally
+        // needs a maxxed item 135 and T5 needs boss5Kills >= 3; T9+ can alternatively be unlocked
+        // by kill counts. Those non-stat gates live in ZoneHelpers.AutokillAvailable — this table
+        // is the stat path you can push toward.
         private static readonly double[][][] TitanAk =
         {
-            new[] { new[] { 3000.0, 2500.0 } },
-            new[] { new[] { 9000.0, 7000.0 } },
-            new[] { new[] { 25000.0, 15000.0 } },
-            new[] { new[] { 8e5, 4e5 } },
-            new[] { new[] { 1.3e7, 7e6 } },
-            new[] { new[] { 2.5e9, 1.6e9 }, new[] { 2.5e10, 1.6e10 }, new[] { 2.5e11, 1.6e11 }, new[] { 2.5e12, 1.6e12 } },
-            new[] { new[] { 5e14, 2.5e14 }, new[] { 1e16, 5e15 }, new[] { 2e17, 1e17 }, new[] { 5e18, 2.5e18 } },
-            new[] { new[] { 5e18, 2.5e18 }, new[] { 1e20, 5e19 }, new[] { 2e21, 1e21 }, new[] { 5e22, 2.5e22 } },
-            new[] { new[] { 1e23, 5e22 }, new[] { 2e24, 1e24 }, new[] { 4e25, 2e25 }, new[] { 7.5e26, 3.7e26 } },
-            new[] { new[] { 4e28, 2e28 }, new[] { 3.2e29, 1.6e29 }, new[] { 2e30, 1e30 }, new[] { 1e31, 5e30 } },
-            new[] { new[] { 1.8e31, 6e30 }, new[] { 9e31, 3e31 }, new[] { 3.6e32, 1.2e32 }, new[] { 1.1e33, 3.6e32 } },
-            new[] { new[] { 3e33, 1e33 }, new[] { 1.2e34, 4e33 }, new[] { 3.6e34, 1.2e34 }, new[] { 7.2e34, 2.4e34 } },
+            new[] { new[] { 3000.0, 2500.0, 0.0 } },
+            new[] { new[] { 9000.0, 7000.0, 0.0 } },
+            new[] { new[] { 25000.0, 15000.0, 0.0 } },
+            new[] { new[] { 8e5, 4e5, 1.4e4 } },
+            new[] { new[] { 1.3e7, 7e6, 1.5e5 } },
+            new[] { new[] { 2.5e9, 1.6e9, 2.5e7 }, new[] { 2.5e10, 1.6e10, 2.5e8 }, new[] { 2.5e11, 1.6e11, 2.5e9 }, new[] { 2.5e12, 1.6e12, 2.5e10 } },
+            new[] { new[] { 5e14, 2.5e14, 5e12 }, new[] { 1e16, 5e15, 1e14 }, new[] { 2e17, 1e17, 2e15 }, new[] { 5e18, 2.5e18, 5e16 } },
+            new[] { new[] { 5e18, 2.5e18, 5e16 }, new[] { 1e20, 5e19, 1e18 }, new[] { 2e21, 1e21, 2e19 }, new[] { 5e22, 2.5e22, 5e20 } },
+            new[] { new[] { 1e23, 5e22, 1e21 }, new[] { 2e24, 1e24, 2e22 }, new[] { 4e25, 2e25, 4e23 }, new[] { 7.5e26, 3.7e26, 7.5e24 } },
+            new[] { new[] { 4e28, 2e28, 4e26 }, new[] { 3.2e29, 1.6e29, 1.6e27 }, new[] { 2e30, 1e30, 1e28 }, new[] { 1e31, 5e30, 5e28 } },
+            new[] { new[] { 1.8e31, 6e30, 1.2e29 }, new[] { 9e31, 3e31, 6e29 }, new[] { 3.6e32, 1.2e32, 2.5e30 }, new[] { 1.1e33, 3.6e32, 7.5e30 } },
+            new[] { new[] { 3e33, 1e33, 2e31 }, new[] { 1.2e34, 4e33, 8e31 }, new[] { 3.6e34, 1.2e34, 2.4e32 }, new[] { 7.2e34, 2.4e34, 4.8e32 } },
+        };
+
+        // Guide-recommended kill-ladder stats per titan/version { manual atk, manual def, idle atk,
+        // idle def } — the community guide's hand-tuned numbers (reference/ngu-guide/titan-list.md).
+        // NOT derivable from TitanAk: the old 45%/80%-of-AK scalars were calibrated on T1 and
+        // overstated Beast first-kill by ~60% and idle ~2x (user report). Idle 0/0 = the guide lists
+        // no idle numbers (Walderp, Godmother, T10-T12): those are fought manually until AK, so the
+        // ladder skips the idle stage. Manual numbers assume max move-cooldown items + Beast Mode on.
+        // Walderp's manual is the FINAL form (first form is 800K/400K).
+        private static readonly double[][][] TitanGuide =
+        {
+            new[] { new[] { 1350.0, 1350.0, 2300.0, 2100.0 } },
+            new[] { new[] { 5000.0, 4000.0, 6000.0, 5000.0 } },
+            new[] { new[] { 1.4e4, 1.2e4, 2.2e4, 1.4e4 } },
+            new[] { new[] { 4e5, 3e5, 6e5, 4e5 } },
+            new[] { new[] { 4e6, 3e6, 0.0, 0.0 } },
+            new[] { new[] { 7e8, 5e8, 1e9, 7e8 }, new[] { 7e9, 5e9, 1e10, 7e9 }, new[] { 7e10, 5e10, 1e11, 7e10 }, new[] { 7e11, 5e11, 1e12, 7e11 } },
+            new[] { new[] { 1.4e14, 9e13, 3e14, 2e14 }, new[] { 3.2e15, 1.6e15, 6e15, 4e15 }, new[] { 5.5e16, 3.5e16, 1.2e17, 8e16 }, new[] { 1.3e18, 7.5e17, 2.5e18, 1.5e18 } },
+            new[] { new[] { 1.7e18, 7e17, 0.0, 0.0 }, new[] { 3.9e19, 1.5e19, 0.0, 0.0 }, new[] { 6.6e20, 3.5e20, 0.0, 0.0 }, new[] { 1.5e22, 6.4e21, 0.0, 0.0 } },
+            new[] { new[] { 2.5e22, 1.3e22, 6e22, 3e22 }, new[] { 3.8e23, 1.6e23, 1.5e24, 7e23 }, new[] { 7.5e24, 3.5e24, 3e25, 1.5e25 }, new[] { 2e26, 1e26, 7e26, 3.5e26 } },
+            new[] { new[] { 1.55e28, 3e27, 0.0, 0.0 }, new[] { 1.3e29, 3.6e28, 0.0, 0.0 }, new[] { 7.8e29, 1.6e29, 0.0, 0.0 }, new[] { 4e30, 9e29, 0.0, 0.0 } },
+            new[] { new[] { 1.1e31, 4e30, 0.0, 0.0 }, new[] { 6e31, 1.8e31, 0.0, 0.0 }, new[] { 2.5e32, 8.2e31, 0.0, 0.0 }, new[] { 7.5e32, 2.5e32, 0.0, 0.0 } },
+            new[] { new[] { 1.47e33, 4.7e32, 0.0, 0.0 }, new[] { 5.6e33, 2.1e33, 0.0, 0.0 }, new[] { 2.1e34, 6e33, 0.0, 0.0 }, new[] { 4.1e34, 1e34, 0.0, 0.0 } },
         };
 
         private static List<Rec> _cache = new List<Rec>();
@@ -93,18 +119,23 @@ namespace NGUAdvisor.Managers
                 try
                 {
                     int idx = NextTitanIndex();
-                    if (idx >= 0 && TryAkRequirement(idx, out var reqA, out var reqD))
+                    if (idx >= 0 && TryAkRequirement(idx, out var reqA, out var reqD, out var reqR))
                     {
                         double atk = c.totalAdvAttack(), def = c.totalAdvDefense();
-                        if (atk >= reqA && def >= reqD)
+                        double rgn = 0;
+                        try { rgn = c.totalAdvHPRegen(); } catch { }
+                        if (atk >= reqA && def >= reqD && (reqR <= 0 || rgn >= reqR))
                             list.Add(new Rec { System = "Power", Text = $"Titan {idx + 1} autokill ready", Optimal = true });
                         else
                         {
-                            double pct = Math.Min(atk / reqA, def / reqD) * 100.0;
+                            double pct = Math.Min(atk / reqA, def / reqD);
+                            if (reqR > 0) pct = Math.Min(pct, rgn / reqR);
+                            pct *= 100.0;
+                            string regenPart = reqR > 0 && rgn < reqR ? $" / {Fmt(rgn)} of {Fmt(reqR)} regen" : "";
                             list.Add(new Rec
                             {
                                 System = "Power",
-                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def for Titan {idx + 1} AK ({pct:0}%)",
+                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for Titan {idx + 1} AK ({pct:0}%)",
                                 Severity = pct >= 80 ? 1 : 2
                             });
                         }
@@ -277,8 +308,26 @@ namespace NGUAdvisor.Managers
                         Text = $"Buy next: {pb.Name} L{pb.CurLevel}->{pb.TargetLevel} ({FmtSeeds(pb.Cost)} PP each, have {FmtSeeds(pp)})",
                         Severity = pb.Affordable ? 1 : 0
                     });
-                else if (pp > 0 || Chapter3Plus(prog))
-                    list.Add(new Rec { System = "Perks", AutoKey = "perks", Text = "Guide perk plan complete for this chapter", Optimal = true });
+                else
+                {
+                    // Mirror the quirks row (user-reported: "plan complete" showed while the guide
+                    // still had queued buys — chapter/difficulty-gated steps must read as BANKING,
+                    // and "complete" is only true when the WHOLE plan is exhausted).
+                    var fp = SpendPlanner.NextPerkPlanned();
+                    if (fp.Known)
+                        list.Add(new Rec
+                        {
+                            System = "Perks",
+                            AutoKey = "perks",
+                            Text = $"Bank PP — next guide buy at ch.{fp.MinChapter}"
+                                + (fp.DifficultyGated ? " (needs next difficulty)" : "")
+                                + $": {fp.Name} ({FmtSeeds(fp.Cost)} PP, have {FmtSeeds(pp)})",
+                            Optimal = pp < fp.Cost,
+                            Severity = 0
+                        });
+                    else if (prog.Known && (pp > 0 || Chapter3Plus(prog)))
+                        list.Add(new Rec { System = "Perks", AutoKey = "perks", Text = "Guide perk plan complete", Optimal = true });
+                }
             }
             catch (Exception ex) { Main.LogDebug($"Advisor rec failed: {ex.Message}"); }
 
@@ -311,8 +360,8 @@ namespace NGUAdvisor.Managers
                             Optimal = qp < fq.Cost,
                             Severity = 0
                         });
-                    else if (qp > 0)
-                        list.Add(new Rec { System = "Quirks", AutoKey = "quirks", Text = "Guide quirk plan complete for this chapter", Optimal = true });
+                    else if (prog.Known && qp > 0)
+                        list.Add(new Rec { System = "Quirks", AutoKey = "quirks", Text = "Guide quirk plan complete", Optimal = true });
                 }
             }
             catch (Exception ex) { Main.LogDebug($"Advisor rec failed: {ex.Message}"); }
@@ -460,12 +509,16 @@ namespace NGUAdvisor.Managers
                     ChallengeOverlay.ChapterNguIds(AllocationProfiles.BreakpointTypes.ResourceType.Energy),
                     ChallengeOverlay.ChapterNguIds(AllocationProfiles.BreakpointTypes.ResourceType.Magic));
                 if (plan.Known)
+                {
+                    int spare = plan.EnergySurplus.Length + plan.MagicSurplus.Length;
                     list.Add(new Rec
                     {
                         System = "NGUs",
-                        Text = $"{plan.Summary} — running {plan.EnergyTargets.Length}E/{plan.MagicTargets.Length}M",
+                        Text = $"{plan.Summary} — running {plan.EnergyTargets.Length}E/{plan.MagicTargets.Length}M"
+                            + (spare > 0 ? $" (+{spare} surplus lanes)" : ""),
                         Severity = 1
                     });
+                }
             }
             catch (Exception ex) { Main.LogDebug($"NGU rec failed: {ex.Message}"); }
 
@@ -539,6 +592,7 @@ namespace NGUAdvisor.Managers
             public int Version;     // the first un-AK'd version — the actual chase
             public string Stage;    // "first kill" -> "idle" -> "auto-kill" (user's kill ladder)
             public double ReqAttack, ReqDefense;   // the STAGE's requirement, not blindly AK
+            public double ReqRegen;                // AK stage only (game gates on HP regen from T4 up); 0 otherwise
         }
 
         // Has this titan+version been killed at least once? The titan6V1Kills..V4Kills save fields
@@ -604,32 +658,36 @@ namespace NGUAdvisor.Managers
             defMult = _projDefMult;
         }
 
-        // Kill-ladder requirement (user rule): never killed -> MANUAL stats (~45% of AK, from the
-        // guide's T1 numbers 1350 manual vs 3000 AK); killed -> IDLE stats (~80%) until met, then
-        // the full AK stats. Factors are approximations — tune against in-game titan tooltips.
-        public static void StagedRequirementFor(int i, int v, out double reqA, out double reqD, out string stage)
+        // Kill-ladder requirement (user rule): never killed -> the guide's MANUAL first-kill stats;
+        // killed -> the guide's IDLE stats until met (skipped where the guide lists none); then the
+        // game's exact AK stats, which from T4 up include the HP-regen gate (reqR; 0 elsewhere).
+        public static void StagedRequirementFor(int i, int v, out double reqA, out double reqD, out double reqR, out string stage)
         {
-            TryAkRequirementFor(i, v, out var akA, out var akD);
+            TryAkRequirementFor(i, v, out var akA, out var akD, out var akR);
+            var g = i >= 0 && i < TitanGuide.Length && v >= 1 && v <= TitanGuide[i].Length ? TitanGuide[i][v - 1] : null;
             if (!VersionKilled(i, v))
             {
                 stage = "first kill";
-                reqA = akA * 0.45;
-                reqD = akD * 0.45;
+                reqA = g != null ? g[0] : akA;
+                reqD = g != null ? g[1] : akD;
+                reqR = 0;
                 return;
             }
             double atk = 0, def = 0;
             try { atk = Main.Character.totalAdvAttack(); def = Main.Character.totalAdvDefense(); } catch { }
-            if (atk >= akA * 0.8 && def >= akD * 0.8)
+            if (g != null && g[2] > 0 && (atk < g[2] || def < g[3]))
+            {
+                stage = "idle";
+                reqA = g[2];
+                reqD = g[3];
+                reqR = 0;
+            }
+            else
             {
                 stage = "auto-kill";
                 reqA = akA;
                 reqD = akD;
-            }
-            else
-            {
-                stage = "idle";
-                reqA = akA * 0.8;
-                reqD = akD * 0.8;
+                reqR = akR;
             }
         }
 
@@ -649,14 +707,15 @@ namespace NGUAdvisor.Managers
                         bool ak = false;
                         try { ak = ZoneHelpers.AutokillAvailable(i, v); } catch { }
                         if (ak) continue;
-                        if (!TryAkRequirementFor(i, v, out _, out _)) continue;
-                        StagedRequirementFor(i, v, out var ra, out var rd, out var stage);
+                        if (!TryAkRequirementFor(i, v, out _, out _, out _)) continue;
+                        StagedRequirementFor(i, v, out var ra, out var rd, out var rr, out var stage);
                         o.Known = true;
                         o.Index = i;
                         o.Version = v;
                         o.Stage = stage;
                         o.ReqAttack = ra;
                         o.ReqDefense = rd;
+                        o.ReqRegen = rr;
                         return o;
                     }
                 }
@@ -709,22 +768,22 @@ namespace NGUAdvisor.Managers
             catch { return null; }
         }
 
-        public static bool TryAkRequirement(int titanIndex, out double reqAttack, out double reqDefense)
+        public static bool TryAkRequirement(int titanIndex, out double reqAttack, out double reqDefense, out double reqRegen)
         {
             int version = 1;
             try { version = ZoneHelpers.TitanVersion(titanIndex); } catch { }
-            return TryAkRequirementFor(titanIndex, version, out reqAttack, out reqDefense);
+            return TryAkRequirementFor(titanIndex, version, out reqAttack, out reqDefense, out reqRegen);
         }
 
         // Requirement for a SPECIFIC version (Titans hero card's NEXT VERSION box).
-        public static bool TryAkRequirementFor(int titanIndex, int version, out double reqAttack, out double reqDefense)
+        public static bool TryAkRequirementFor(int titanIndex, int version, out double reqAttack, out double reqDefense, out double reqRegen)
         {
-            reqAttack = 0; reqDefense = 0;
+            reqAttack = 0; reqDefense = 0; reqRegen = 0;
             if (titanIndex < 0 || titanIndex >= TitanAk.Length) return false;
             var versions = TitanAk[titanIndex];
             if (version < 1 || version > versions.Length) return false;
             var req = versions[version - 1];
-            reqAttack = req[0]; reqDefense = req[1];
+            reqAttack = req[0]; reqDefense = req[1]; reqRegen = req[2];
             return true;
         }
 
@@ -783,8 +842,15 @@ namespace NGUAdvisor.Managers
                     if (!order.Contains(i)) order.Add(i);
 
                 // Context for the laws.
+                bool hunting = false;
+                try { hunting = GearHunter.Active && GearHunter.ZoneReachable(); } catch { }
                 bool itopod = false;
-                try { itopod = Main.Settings.AdventureTargetITOPOD || Main.Settings.SnipeZone >= 1000; } catch { }
+                try { itopod = !hunting && (Main.Settings.AdventureTargetITOPOD || Main.Settings.SnipeZone >= 1000); } catch { }
+                // Window sized to the machinery, not the event (user-reported: diggers swapped ~8min
+                // before a titan/gold snipe and lingered after): the digger applier ticks every 30s
+                // and the titan gear lock engages <20s before spawn, so 60s guarantees exactly one
+                // swap pass lands just ahead of the lock — seconds before the event, and the set
+                // reverts on the first tick after the kill releases the lock.
                 bool titanWindow = false;
                 try
                 {
@@ -792,7 +858,7 @@ namespace NGUAdvisor.Managers
                     if (o.Known)
                     {
                         float? t = ZoneHelpers.TimeTillTitanSpawn(o.Index);
-                        titanWindow = t.HasValue && t.Value < 600;
+                        titanWindow = t.HasValue && t.Value < 60;
                     }
                 }
                 catch { }
@@ -814,8 +880,10 @@ namespace NGUAdvisor.Managers
                 if (!ritualsLive) { order.Remove(10); order.Add(10); }
 
                 // LAW: DC/PP by venue. Titan window: DC for the kill drops, PP has nothing to earn.
+                // GEAR HUNT (user rule): a deliberate drop farm — DC in, PP benched, and it outranks
+                // the ITOPOD read (Target ITOPOD may still be toggled while the hunt owns routing).
                 // ITOPOD: PP earns, DC is dead (flat rolls). Zone farming: DC earns, PP idles along.
-                if (titanWindow)
+                if (titanWindow || hunting)
                 {
                     order.Remove(0); order.Insert(Math.Min(1, order.Count), 0);
                     order.Remove(8); order.Add(8);
@@ -954,6 +1022,31 @@ namespace NGUAdvisor.Managers
                     if (cost > 0 && cost < minCost) minCost = cost;
                 }
                 return minCost != double.MaxValue && gold < minCost * factor;
+            }
+            catch { return false; }
+        }
+
+        // Digger gold demand (user rule): digger MAX-LEVEL upgrades are the gold sink that outlasts
+        // augments — upgradeCost = baseGoldCost x growthRate^maxLevel (decomp AllGoldDiggerController),
+        // so they need a far higher gold cap. Starved while the CHEAPEST next upgrade (over the money
+        // pit reserve) is unaffordable; diggers already at their hard cap are excluded.
+        public static bool GoldStarvedForDiggers(Character c, double factor = 1.0)
+        {
+            try
+            {
+                if (!c.buttons.diggers.interactable) return false;
+                var dc = c.allDiggers;
+                double gold = c.realGold;
+                double reserve = 0;
+                try { reserve = Main.Settings != null ? Main.Settings.MoneyPitThreshold : 0; } catch { }
+                double minCost = double.MaxValue;
+                for (int i = 0; i < c.diggers.diggers.Count && i < 12; i++)
+                {
+                    if (c.diggers.diggers[i].maxLevel >= dc.hardCapLevel(i)) continue;
+                    double cost = dc.upgradeCost(i);
+                    if (cost > 0 && cost < minCost) minCost = cost;
+                }
+                return minCost != double.MaxValue && gold < (minCost + reserve) * factor;
             }
             catch { return false; }
         }

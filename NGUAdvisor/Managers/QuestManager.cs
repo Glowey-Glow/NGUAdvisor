@@ -70,6 +70,13 @@ namespace NGUAdvisor.Managers
             try
             {
                 if (Settings == null || !Settings.AdvisorQuests) return false;
+                // OPT-IN (user 2026-07-11: a ready major parked at 100% for hours read as a hang —
+                // and Gear Hunt is now the deliberate gear-farming tool, so the hold defaults off).
+                if (!Settings.QuestHoldForGear) return false;
+                // A pooled-major burst exists to CHAIN quests — never hold one open mid-burst;
+                // and while the hunt owns farming, quest zones aren't where gear time goes.
+                if (Settings.PoolMajorQuests && Settings.QuestBurstActive) return false;
+                try { if (GearHunter.Active) return false; } catch { }
                 if (!Quest.inQuest || Quest.reducedRewards)
                 {
                     _capstoneStart = DateTime.MinValue;
@@ -318,6 +325,38 @@ namespace NGUAdvisor.Managers
             var majorQuests = Settings.AllowMajorQuests && Quest.curBankedQuests > 0;
             // Check if Quest Bank will overfill before we can finish the current idle quest
             majorQuests |= Settings.QuestsFullBank && questBankOverfill;
+
+            // POOL MAJOR QUESTS (user rule): bank to cap, then burn the WHOLE bank in one burst,
+            // then pool again — and never start a major while Gear Hunt owns routing (the burst
+            // waits at cap until the hunt is done; the wasted regen at cap is the accepted cost).
+            // Burst state persists in settings so a reload mid-burst keeps burning the bank.
+            if (Settings.PoolMajorQuests && Settings.AllowMajorQuests)
+            {
+                bool burst = Settings.QuestBurstActive;
+                int cap = 10;
+                try { cap = Math.Max(1, _qc.maxBankedQuests()); } catch { }
+                if (!burst && Quest.curBankedQuests >= cap) burst = true;
+                else if (burst && Quest.curBankedQuests <= 0) burst = false;   // in-flight major still completes
+                if (burst != Settings.QuestBurstActive)
+                {
+                    Settings.QuestBurstActive = burst;
+                    Log(burst
+                        ? $"Advisor: quest bank at cap ({cap}) — bursting every banked major"
+                        : "Advisor: major burst complete — pooling the quest bank again");
+                    ChallengeOverlay.Record("QUEST",
+                        burst ? "major quest BURST" : "burst done — pooling majors",
+                        burst ? $"bank {cap}/{cap}" : "bank spent");
+                }
+                bool hunting = false;
+                try { hunting = GearHunter.Active; } catch { }
+                majorQuests = burst && !hunting && Quest.curBankedQuests > 0;
+            }
+            else if (Settings.QuestBurstActive)
+            {
+                // Pooling toggled off mid-burst: clear the persisted flag, or re-enabling pooling
+                // later would burst immediately at a part-filled bank instead of pooling to cap.
+                Settings.QuestBurstActive = false;
+            }
             majorQuests &= shouldQuest;
 
             // First logic: not in a quest
@@ -363,7 +402,11 @@ namespace NGUAdvisor.Managers
             // Second logic, we're in a quest
             if (Quest.reducedRewards)
             {
-                var abandonQuest = Settings.QuestsFullBank && questBankOverfill;
+                // While POOLING (not bursting), overfill can't start a major anyway — abandoning
+                // the minor for it would just skip-loop at the cap boundary. Sitting at cap is
+                // the pooling trade-off; the burst is what spends the bank.
+                var abandonQuest = Settings.QuestsFullBank && questBankOverfill
+                    && !(Settings.PoolMajorQuests && !Settings.QuestBurstActive);
                 if (majorQuests && Settings.AbandonMinors)
                 {
                     float progress = Quest.curDrops / (float)Quest.targetDrops * 100;

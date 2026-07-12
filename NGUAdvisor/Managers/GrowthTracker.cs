@@ -5,14 +5,17 @@ namespace NGUAdvisor.Managers
 {
     // G1 growth tracker (user-approved): a 60s sampler on the status pump feeding a session ring
     // buffer (~2.5h). Read-only — every value is something the UI already reads elsewhere.
-    // Semantics: EXP/AP/PP/Cube are lifetime values; NGU levels RESET on rebirth, so rate walks
-    // stop at a run boundary (rebirthTime went backwards) for per-run metrics and for RUN windows.
+    // Semantics: the chips track GAINS (user rule) — spending EXP/AP/PP must never count a rate
+    // down, so each sample also carries cumulative positive-deltas (G*) and the rate walks read
+    // those. NGU levels RESET on rebirth, so rate walks stop at a run boundary (rebirthTime went
+    // backwards) for per-run metrics and for RUN windows — rebirth is the only "reset" the chips see.
     public static class GrowthTracker
     {
         public class Sample
         {
             public DateTime T;
-            public double Exp, Ap, Pp, CubeP, CubeT, Ngu;
+            public double Exp, Ap, Pp, CubeP, CubeT, Ngu;          // raw balances (tile values)
+            public double GExp, GAp, GPp, GCubeP, GCubeT, GNgu;    // cumulative gains since load
             public double RunSec;
         }
 
@@ -30,21 +33,35 @@ namespace NGUAdvisor.Managers
             {
                 var c = Main.Character;
                 if (c == null) return;
+                var prev = Newest;
+                // A failed read must carry the PREVIOUS value, not 0: with cumulative gains, a
+                // one-tick dip to 0 would register the whole balance as a fresh gain next minute.
+                double Read(Func<double> f, double carry) { try { return f(); } catch { return carry; } }
                 var s = new Sample { T = DateTime.UtcNow };
-                try { s.Exp = c.realExp; } catch { }
-                try { s.Ap = c.arbitrary.curArbitraryPoints; } catch { }
-                try { s.Pp = c.adventure.itopod.perkPoints; } catch { }
-                try { s.CubeP = c.inventoryController.cubePower(); } catch { }
-                try { s.CubeT = c.inventoryController.cubeToughness(); } catch { }
-                try
+                s.Exp = Read(() => c.realExp, prev?.Exp ?? 0);
+                s.Ap = Read(() => c.arbitrary.curArbitraryPoints, prev?.Ap ?? 0);
+                s.Pp = Read(() => c.adventure.itopod.perkPoints, prev?.Pp ?? 0);
+                s.CubeP = Read(() => c.inventoryController.cubePower(), prev?.CubeP ?? 0);
+                s.CubeT = Read(() => c.inventoryController.cubeToughness(), prev?.CubeT ?? 0);
+                s.Ngu = Read(() =>
                 {
                     long total = 0;
                     for (int i = 0; i < c.NGU.skills.Count; i++) total += c.NGU.skills[i].level;
                     for (int i = 0; i < c.NGU.magicSkills.Count; i++) total += c.NGU.magicSkills[i].level;
-                    s.Ngu = total;
+                    return total;
+                }, prev?.Ngu ?? 0);
+                s.RunSec = Read(() => c.rebirthTime.totalseconds, prev?.RunSec ?? 0);
+                if (prev != null)
+                {
+                    // Positive deltas only: spending drops the balance but never the gain counters.
+                    // (An NGU rebirth reset is a big negative delta — ignored, counters stay flat.)
+                    s.GExp = prev.GExp + Math.Max(0, s.Exp - prev.Exp);
+                    s.GAp = prev.GAp + Math.Max(0, s.Ap - prev.Ap);
+                    s.GPp = prev.GPp + Math.Max(0, s.Pp - prev.Pp);
+                    s.GCubeP = prev.GCubeP + Math.Max(0, s.CubeP - prev.CubeP);
+                    s.GCubeT = prev.GCubeT + Math.Max(0, s.CubeT - prev.CubeT);
+                    s.GNgu = prev.GNgu + Math.Max(0, s.Ngu - prev.Ngu);
                 }
-                catch { }
-                try { s.RunSec = c.rebirthTime.totalseconds; } catch { }
                 _samples.Add(s);
                 if (_samples.Count > MaxSamples) _samples.RemoveAt(0);
             }

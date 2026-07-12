@@ -799,7 +799,11 @@ namespace NGUAdvisor
                 if (Settings.AutoSpin)
                     MoneyPitManager.DoDailySpin();
 
-                if (Settings.AutoSpellSwap)
+                // Manual %-cap auto-swap runs ONLY when the advisor isn't managing blood. When
+                // CastBloodSpells (advisor) is on it fully owns the spell toggles via AdvisorApply.ApplyBlood
+                // and ignores these page caps — otherwise this every-tick clamp would fight the advisor's
+                // 60s routing and pin the spells to the manual caps (user-reported).
+                if (Settings.AutoSpellSwap && !Settings.CastBloodSpells)
                 {
                     var spaghetti = (int)Math.Round((Character.bloodMagicController.lootBonus() - 1) * 100);
                     var counterfeit = (int)Math.Round((Character.bloodMagicController.goldBonus() - 1) * 100);
@@ -1207,8 +1211,12 @@ namespace NGUAdvisor
                 if (!Settings.CombatEnabled)
                     return;
 
-                int tempZone = Settings.AdventureTargetITOPOD ? 1000 : Settings.SnipeZone;
-                if (tempZone < 1000 && !CombatManager.IsZoneUnlocked(Settings.SnipeZone))
+                // GEAR HUNT outranks ITOPOD targeting (user-reported: Target ITOPOD silently
+                // overrode the hunted stage — the hunt toggle IS the routing intent while on).
+                int tempZone = GearHunter.Active && GearHunter.ZoneReachable()
+                    ? Settings.GearHuntZone
+                    : Settings.AdventureTargetITOPOD ? 1000 : Settings.SnipeZone;
+                if (tempZone < 1000 && !CombatManager.IsZoneUnlocked(tempZone))
                     tempZone = Settings.AllowZoneFallback ? ZoneHelpers.GetMaxReachableZone(false) : 1000;
 
                 // No Time Machine (locked early / TM challenge) and headed to the ITOPOD: ITOPOD enemies
