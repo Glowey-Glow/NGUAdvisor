@@ -445,13 +445,15 @@ namespace NGUAdvisor.Managers
             // "push" alive — past the boss ceiling, bosses die continuously and would hold the run
             // hostage forever). The wall clock owns the shape; the number rule gets a bounded window:
             //   TM HOUR   — first hour, and any time TM gold is zero
-            //   AT HOUR   — second hour (if AT is unlocked)
+            //   AT HOUR   — second hour (if AT is unlocked); AtHourPlanner may extend it to the 4h
+            //               mark when projected AT gains cross a titan stage or unlock a farm zone
+            //               (one bounded decision per run — the time anchor stays the law)
             //   RECOVERY  — number still cheap (>=2 boss/30m), but never past hour 4
-            //   MARATHON  — everything after (the guide's 22h)
+            //   MARATHON  — everything after (the guide's 22h); its start is never delayed
             bool numberCheap = !double.IsNaN(Bosses30) && Bosses30 >= 2.0;
             string seg;
             if (tmEmpty || runSec < 3600) seg = "TM HOUR";
-            else if (runSec < 7200 && atUnlocked) seg = "AT HOUR";
+            else if (atUnlocked && runSec < AtHourPlanner.EndSec(c, runSec)) seg = "AT HOUR";
             else if (numberCheap && runSec < 14400) seg = "RECOVERY";
             else seg = "NGU MARATHON";
 

@@ -26,6 +26,10 @@ namespace NGUAdvisor
         private Label _note;
         private readonly int _lineW;
 
+        // Signature of the last completed-chip build (see Refresh2) — chips are rebuilt only when
+        // the completed set changes, and the old ones are DISPOSED, not just cleared.
+        private string _doneSig;
+
         // canvasW: explicit canvas width when hosted in an M1 section column (0 = UiLayout.PanelW).
         public ChallengesPanel(int canvasW = 0)
         {
@@ -92,22 +96,38 @@ namespace NGUAdvisor
                 try { active = ChallengeDetector.Current(); } catch { }
 
                 // Completed chips — wrap to as many rows as needed, everything below reflows.
-                _doneChips.Controls.Clear();
-                var chips = new List<Control>();
-                foreach (var e in block.Where(b => b.Max > 0 && b.Cur >= b.Max))
+                // Rebuilt only when the completed set changes, with explicit disposal: this runs on
+                // every settings save, and Controls.Clear() does NOT dispose — the orphaned chips
+                // held native handles until the process GDI budget ran out (GUI death).
+                var done = block.Where(b => b.Max > 0 && b.Cur >= b.Max)
+                    .Select(e => $"✓ {e.Code} {e.Cur}/{e.Max}").ToList();
+                string sig = done.Count == 0 ? "none" : string.Join("|", done.ToArray());
+                if (sig != _doneSig)
                 {
-                    var chip = MkChip($"✓ {e.Code} {e.Cur}/{e.Max}", UiTheme.Cap);
-                    chips.Add(chip);
-                    _doneChips.Controls.Add(chip);
+                    _doneSig = sig;
+                    // Remove-then-Dispose (the LogsPanel pattern, proven on this Mono).
+                    while (_doneChips.Controls.Count > 0)
+                    {
+                        var old = _doneChips.Controls[_doneChips.Controls.Count - 1];
+                        _doneChips.Controls.Remove(old);
+                        old.Dispose();
+                    }
+                    var chips = new List<Control>();
+                    foreach (var text in done)
+                    {
+                        var chip = MkChip(text, UiTheme.Cap);
+                        chips.Add(chip);
+                        _doneChips.Controls.Add(chip);
+                    }
+                    if (chips.Count == 0)
+                    {
+                        var chip = MkChip("NO CHALLENGES COMPLETE YET", UiTheme.Faint);
+                        chips.Add(chip);
+                        _doneChips.Controls.Add(chip);
+                    }
+                    int chipBottom = UiLayout.WrapRow(0, 2, 6, _doneChips.Width - 6, 24, chips);
+                    _doneChips.Height = chipBottom + 2;
                 }
-                if (chips.Count == 0)
-                {
-                    var chip = MkChip("NO CHALLENGES COMPLETE YET", UiTheme.Faint);
-                    chips.Add(chip);
-                    _doneChips.Controls.Add(chip);
-                }
-                int chipBottom = UiLayout.WrapRow(0, 2, 6, _doneChips.Width - 6, 24, chips);
-                _doneChips.Height = chipBottom + 2;
                 int y = _doneChips.Bottom + 8;
 
                 // Current line.

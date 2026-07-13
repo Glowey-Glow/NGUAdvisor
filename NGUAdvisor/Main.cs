@@ -56,6 +56,12 @@ namespace NGUAdvisor
         // completed snipe mid-run (user-reported). SetResnipe re-seeds from the current best zone.
         private static int _furthestZone = -1;
 
+        // Highest zone that already armed a "new zone fightable" re-snipe this run. Fightability is
+        // measured in CURRENT gear, but the snipe itself runs in the gold loadout — when the gold
+        // gear couldn't clear the zone, the ratchet dropped back and the trigger re-fired forever
+        // (user-reported infinite swap loop). Each zone arms the trigger ONCE; resets with the run.
+        private static int _lastNewZoneTrigger = -1;
+
         private static string _dir;
         private static string _profilesDir;
 
@@ -1121,6 +1127,7 @@ namespace NGUAdvisor
                 if (Character.machine.realBaseGold == 0.0 && Settings.GoldSnipeComplete)
                 {
                     _furthestZone = -1;
+                    _lastNewZoneTrigger = -1;
                     Settings.TitanMoneyDone = new bool[ZoneHelpers.TitanZones.Length];
                     if (Settings.AdvisorGold || Settings.SnipeOnRebirth)
                     {
@@ -1345,10 +1352,22 @@ namespace NGUAdvisor
                 return;
             }
             if (best.Zone > _furthestZone)
+            {
+                // Mid-snipe promotions are legitimate: stats grow continuously (NGUs, cube), so a
+                // zone that measured just-short right after the gold swap can come back in reach
+                // seconds later. Log it — the silent retarget after a logged drop-back read as
+                // "sniped the wrong zone in the wrong gear" (user-reported).
+                if (_furthestZone >= 0 && LockManager.HasGoldLock())
+                    Log($"Zone {best.Zone} back in reach mid-snipe (stats grew); retargeting from {_furthestZone}.");
                 _furthestZone = best.Zone;
+            }
             else if (_furthestZone > best.Zone && ZoneStatHelper.ZoneFightType(_furthestZone) == 0)
             {
-                Log($"Gold zone {_furthestZone} is no longer fightable after rebirth; dropping back to {best.Zone}.");
+                // Mid-snipe (gold lock held) the shortfall is the gold loadout's weaker stats, not
+                // a rebirth — say so, and note that the new-zone trigger stays disarmed for it.
+                Log(LockManager.HasGoldLock()
+                    ? $"Gold loadout can't clear zone {_furthestZone}; sniping {best.Zone} instead (re-arms on the next new zone or rebirth)."
+                    : $"Gold zone {_furthestZone} is no longer fightable after rebirth; dropping back to {best.Zone}.");
                 _furthestZone = best.Zone;
             }
             if (_furthestZone != before)
@@ -1383,7 +1402,11 @@ namespace NGUAdvisor
             return v >= 100 ? $"{v:0}{suf[i]}" : $"{v:0.#}{suf[i]}";
         }
 
-        public static void ResetFurthestZone() => _furthestZone = -1;
+        public static void ResetFurthestZone()
+        {
+            _furthestZone = -1;
+            _lastNewZoneTrigger = -1;
+        }
 
         // S3 trigger engine: which event fired last (Gold pipeline's snipe stage shows it).
         public static string LastSnipeTrigger = "";
@@ -1393,6 +1416,7 @@ namespace NGUAdvisor
         {
             bool advisor = Settings.AdvisorGold;
             string trigger = null;
+            int newZone = -1;
 
             // New zone fightable: previously CBlock-only — now a first-class trigger everywhere.
             if (advisor || Settings.SnipeOnNewZone || Settings.GoldCBlockMode)
@@ -1403,8 +1427,15 @@ namespace NGUAdvisor
                 // silently instead of firing — genuinely new unlocks still trigger from here on.
                 if (best != null && _furthestZone < 0 && Settings.GoldSnipeComplete)
                     _furthestZone = best.Zone;
-                else if (best != null && _furthestZone >= 0 && best.Zone > _furthestZone)
+                // > _lastNewZoneTrigger: one arm per zone. Fightability here reflects the equipped
+                // (P/T) gear — if the gold loadout then can't clear the zone, the snipe ratchet
+                // drops back and this would re-fire every second, swapping gear forever.
+                else if (best != null && _furthestZone >= 0 && best.Zone > _furthestZone
+                    && best.Zone > _lastNewZoneTrigger)
+                {
                     trigger = "new zone fightable";
+                    newZone = best.Zone;
+                }
             }
 
             // Timer: manual-only (advisor is event-driven); fires once at ResnipeTime into the run.
@@ -1414,6 +1445,8 @@ namespace NGUAdvisor
 
             if (trigger != null && Settings.GoldSnipeComplete)
             {
+                if (newZone >= 0)
+                    _lastNewZoneTrigger = newZone;
                 Settings.GoldSnipeComplete = false;
                 LastSnipeTrigger = trigger;
                 Log($"Re-snipe: {trigger}");

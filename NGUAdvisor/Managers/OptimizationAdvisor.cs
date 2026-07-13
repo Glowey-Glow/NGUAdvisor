@@ -663,6 +663,16 @@ namespace NGUAdvisor.Managers
         // game's exact AK stats, which from T4 up include the HP-regen gate (reqR; 0 elsewhere).
         public static void StagedRequirementFor(int i, int v, out double reqA, out double reqD, out double reqR, out string stage)
         {
+            double atk = 0, def = 0;
+            try { atk = Main.Character.totalAdvAttack(); def = Main.Character.totalAdvDefense(); } catch { }
+            StagedRequirementFor(i, v, atk, def, out reqA, out reqD, out reqR, out stage);
+        }
+
+        // Stats-parameterized core: the AT-hour planner stages the ladder against PROJECTED
+        // best-gear stats — at its decision point the character wears AT-speed gear, whose live
+        // stats say nothing about what the kill loadout can clear.
+        public static void StagedRequirementFor(int i, int v, double atk, double def, out double reqA, out double reqD, out double reqR, out string stage)
+        {
             TryAkRequirementFor(i, v, out var akA, out var akD, out var akR);
             var g = i >= 0 && i < TitanGuide.Length && v >= 1 && v <= TitanGuide[i].Length ? TitanGuide[i][v - 1] : null;
             if (!VersionKilled(i, v))
@@ -673,8 +683,6 @@ namespace NGUAdvisor.Managers
                 reqR = 0;
                 return;
             }
-            double atk = 0, def = 0;
-            try { atk = Main.Character.totalAdvAttack(); def = Main.Character.totalAdvDefense(); } catch { }
             if (g != null && g[2] > 0 && (atk < g[2] || def < g[3]))
             {
                 stage = "idle";

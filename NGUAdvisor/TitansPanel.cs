@@ -444,11 +444,15 @@ namespace NGUAdvisor
             rb.Caption.Text = UiLayout.FitText($"{pct * 100:0}% · {caption}", UiTheme.Chip, rb.Caption.Width - 2);
         }
 
+        // Chip-strip signature of the last build — rebuild only when the content changes. This runs
+        // on every settings save (sync path), and Controls.Clear() does NOT dispose: the orphaned
+        // chips kept their native handles and exhausted the process GDI budget over a long session
+        // (user-reported — the form died with GDI+ OutOfMemory and could no longer open).
+        private string _chipSig;
+
         private void RefreshChips(int target, int maxZone)
         {
-            _chipArea.Controls.Clear();
-            var chips = new List<Control>();
-
+            var items = new List<KeyValuePair<string, Color>>();
             for (int i = 0; i < ZoneHelpers.TitanZones.Length && i < 14; i++)
             {
                 try
@@ -456,43 +460,52 @@ namespace NGUAdvisor
                     if (i == target) continue;
                     if (!Reachable(i, maxZone)) continue;   // locked titans hidden entirely
 
-                    string text;
-                    Color bg;
                     if (RiddleTitanIndexes.Contains(i) && !RiddleUnlocked(i))
                     {
-                        text = $"{Abbrev[i]} {RiddleProgress(i)}";
-                        bg = UiTheme.Wandoos;
+                        items.Add(new KeyValuePair<string, Color>($"{Abbrev[i]} {RiddleProgress(i)}", UiTheme.Wandoos));
                     }
                     else
                     {
                         bool ak = false;
                         try { ak = ZoneHelpers.AutokillAvailable(i); } catch { }
                         if (ak)
-                        {
-                            text = Versioned(i) ? $"✓ {Abbrev[i]} v{ZoneHelpers.TitanVersion(i)}/{OptimizationAdvisor.AkVersionCount(i)}" : $"✓ {Abbrev[i]}";
-                            bg = UiTheme.Cap;
-                        }
+                            items.Add(new KeyValuePair<string, Color>(
+                                Versioned(i) ? $"✓ {Abbrev[i]} v{ZoneHelpers.TitanVersion(i)}/{OptimizationAdvisor.AkVersionCount(i)}" : $"✓ {Abbrev[i]}",
+                                UiTheme.Cap));
                         else
-                        {
-                            text = $"{Abbrev[i]} queued";
-                            bg = UiTheme.Danger;
-                        }
+                            items.Add(new KeyValuePair<string, Color>($"{Abbrev[i]} queued", UiTheme.Danger));
                     }
-
-                    var chip = new Label
-                    {
-                        Text = text,
-                        AutoSize = false,
-                        Size = new Size(UiLayout.MeasureText(text, UiTheme.Chip) + 14, 18),
-                        Font = UiTheme.Chip,
-                        ForeColor = Color.White,
-                        BackColor = bg,
-                        TextAlign = ContentAlignment.MiddleCenter
-                    };
-                    chips.Add(chip);
-                    _chipArea.Controls.Add(chip);
                 }
                 catch (Exception ex) { LogDebug($"Titan chip {i}: {ex.Message}"); }
+            }
+
+            string sig = string.Join("|", items.Select(kv => $"{kv.Key}:{kv.Value.ToArgb()}").ToArray());
+            if (sig == _chipSig) return;
+            _chipSig = sig;
+
+            // Remove-then-Dispose (the LogsPanel pattern, proven on this Mono).
+            while (_chipArea.Controls.Count > 0)
+            {
+                var old = _chipArea.Controls[_chipArea.Controls.Count - 1];
+                _chipArea.Controls.Remove(old);
+                old.Dispose();
+            }
+
+            var chips = new List<Control>();
+            foreach (var kv in items)
+            {
+                var chip = new Label
+                {
+                    Text = kv.Key,
+                    AutoSize = false,
+                    Size = new Size(UiLayout.MeasureText(kv.Key, UiTheme.Chip) + 14, 18),
+                    Font = UiTheme.Chip,
+                    ForeColor = Color.White,
+                    BackColor = kv.Value,
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                chips.Add(chip);
+                _chipArea.Controls.Add(chip);
             }
             UiLayout.WrapRow(0, 4, 6, _chipArea.Width - 6, 24, chips);
         }
