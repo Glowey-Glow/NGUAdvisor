@@ -131,6 +131,21 @@ namespace NGUAdvisor.Managers
             return cy + rowPitch;
         }
 
+        // THE ONLY SAFE WAY TO EMPTY A CONTAINER on this Mono: Controls.Clear() removes without
+        // disposing, and the orphans keep their native handles until the process GDI budget runs out
+        // (the form dies with GDI+ OutOfMemory and will not reopen). Remove-then-Dispose, back to
+        // front. Idempotent — a container half-built by a failed rebuild is cleaned just the same.
+        public static void DisposeChildren(Control host)
+        {
+            if (host == null) return;
+            while (host.Controls.Count > 0)
+            {
+                var c = host.Controls[host.Controls.Count - 1];
+                host.Controls.Remove(c);
+                c.Dispose();
+            }
+        }
+
         public static void Audit(Control root, string context)
         {
             try

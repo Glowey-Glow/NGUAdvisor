@@ -481,15 +481,8 @@ namespace NGUAdvisor
 
             string sig = string.Join("|", items.Select(kv => $"{kv.Key}:{kv.Value.ToArgb()}").ToArray());
             if (sig == _chipSig) return;
-            _chipSig = sig;
 
-            // Remove-then-Dispose (the LogsPanel pattern, proven on this Mono).
-            while (_chipArea.Controls.Count > 0)
-            {
-                var old = _chipArea.Controls[_chipArea.Controls.Count - 1];
-                _chipArea.Controls.Remove(old);
-                old.Dispose();
-            }
+            UiLayout.DisposeChildren(_chipArea);
 
             var chips = new List<Control>();
             foreach (var kv in items)
@@ -508,6 +501,10 @@ namespace NGUAdvisor
                 _chipArea.Controls.Add(chip);
             }
             UiLayout.WrapRow(0, 4, 6, _chipArea.Width - 6, 24, chips);
+            // Sig LAST: chip construction measures text, which can throw under GDI pressure, and
+            // RefreshHero's catch swallows it. Committing the sig first would pin a half-built strip
+            // until the titan set itself changed; leaving it stale means the next refresh retries.
+            _chipSig = sig;
         }
 
         // Full suffix ladder (matches OptimizationAdvisor.Fmt) — capping at B rendered T6v4's

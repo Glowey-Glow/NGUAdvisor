@@ -67,7 +67,7 @@ namespace NGUAdvisor
         private void RebuildCards()
         {
             _content.SuspendLayout();
-            foreach (var c in _cards) _content.Controls.Remove(c);
+            foreach (var c in _cards) { _content.Controls.Remove(c); c.Dispose(); }
             _cards.Clear();
             foreach (var bp in _data)
             {
@@ -319,7 +319,7 @@ namespace NGUAdvisor
             {
                 row.Height = RowH;
                 row.Changed += (s, e) => { Sync(); UpdateInfo(); };
-                row.RemoveRequested += (s, e) => { _rows.Controls.Remove(row); Restripe(); Sync(); UpdateInfo(); RecalcHeight(); };
+                row.RemoveRequested += (s, e) => { _rows.Controls.Remove(row); row.Dispose(); Restripe(); Sync(); UpdateInfo(); RecalcHeight(); };
                 row.MoveRequested += (s, e) =>
                 {
                     var list = _rows.Controls.Cast<Control>().ToList();
@@ -349,7 +349,7 @@ namespace NGUAdvisor
                 {
                     var ids = ParseIds(Clipboard.GetText());
                     if (ids.Count == 0) { UpdateInfo("Clipboard had no item IDs."); return; }
-                    _rows.Controls.Clear();
+                    UiLayout.DisposeChildren(_rows);
                     _loading = true;
                     foreach (var id in ids) AddRow(new Row(id));
                     _loading = false;

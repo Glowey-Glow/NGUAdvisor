@@ -86,7 +86,11 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             _character.energyMagicPanel.validateInput();
         }
 
-        public static IEnumerable<ResourceBreakpoint> ParseBreakpointArray(JSONNode node, ResourceType type, int rebirthTime = 0)
+        // No rebirthTime parameter: the rebirth deadline is a property of the RUN, not of a parsed
+        // breakpoint. It was never passed by any caller (BR and BestAug both read 0 and their
+        // "will it finish before the rebirth" guards silently never fired); both now read it live
+        // from Main.Profile.NextRebirthTargetSeconds().
+        public static IEnumerable<ResourceBreakpoint> ParseBreakpointArray(JSONNode node, ResourceType type)
         {
             var prios = node.AsArray.Children.Select(x => x.Value.ToUpper());
             foreach (var prio in prios)
@@ -237,8 +241,7 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                         CapPercent = cap,
                         Index = index,
                         IsCap = prio.Contains("CAP"),
-                        Type = type,
-                        RebirthTime = rebirthTime
+                        Type = type
                     };
                 }
                 else if (temp.StartsWith("TM") || temp.StartsWith("CAPTM"))

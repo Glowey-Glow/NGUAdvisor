@@ -101,17 +101,10 @@ namespace NGUAdvisor
                 // held native handles until the process GDI budget ran out (GUI death).
                 var done = block.Where(b => b.Max > 0 && b.Cur >= b.Max)
                     .Select(e => $"✓ {e.Code} {e.Cur}/{e.Max}").ToList();
-                string sig = done.Count == 0 ? "none" : string.Join("|", done.ToArray());
+                string sig = string.Join("|", done.ToArray());
                 if (sig != _doneSig)
                 {
-                    _doneSig = sig;
-                    // Remove-then-Dispose (the LogsPanel pattern, proven on this Mono).
-                    while (_doneChips.Controls.Count > 0)
-                    {
-                        var old = _doneChips.Controls[_doneChips.Controls.Count - 1];
-                        _doneChips.Controls.Remove(old);
-                        old.Dispose();
-                    }
+                    UiLayout.DisposeChildren(_doneChips);
                     var chips = new List<Control>();
                     foreach (var text in done)
                     {
@@ -119,7 +112,7 @@ namespace NGUAdvisor
                         chips.Add(chip);
                         _doneChips.Controls.Add(chip);
                     }
-                    if (chips.Count == 0)
+                    if (done.Count == 0)
                     {
                         var chip = MkChip("NO CHALLENGES COMPLETE YET", UiTheme.Faint);
                         chips.Add(chip);
@@ -127,6 +120,11 @@ namespace NGUAdvisor
                     }
                     int chipBottom = UiLayout.WrapRow(0, 2, 6, _doneChips.Width - 6, 24, chips);
                     _doneChips.Height = chipBottom + 2;
+                    // Sig LAST: a throw mid-rebuild (Mono's text measure can fail under GDI
+                    // pressure — the very thing this guard exists for) is swallowed by the catch
+                    // below, so committing it first would pin the empty strip until the completed
+                    // set changed. Stale sig => the next Refresh2 simply rebuilds.
+                    _doneSig = sig;
                 }
                 int y = _doneChips.Bottom + 8;
 

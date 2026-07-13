@@ -1126,8 +1126,7 @@ namespace NGUAdvisor
                 // gated by its S3 toggle in manual mode; advisor always re-snipes here).
                 if (Character.machine.realBaseGold == 0.0 && Settings.GoldSnipeComplete)
                 {
-                    _furthestZone = -1;
-                    _lastNewZoneTrigger = -1;
+                    ResetFurthestZone();   // one owner for the per-run snipe state, not two in lockstep
                     Settings.TitanMoneyDone = new bool[ZoneHelpers.TitanZones.Length];
                     if (Settings.AdvisorGold || Settings.SnipeOnRebirth)
                     {

@@ -16,9 +16,10 @@ namespace NGUAdvisor.Managers
     //   totalAdvAttack/Defense carry a (1 + 0.1*L^0.4) AT multiplier (slots 1/0), so
     //     projected stat = reference stat * (1 + 0.1*L(t)^0.4) / (1 + 0.1*L0^0.4).
     //
-    // Reference stats (user decision): unbuffed P/T projected onto the optimizer's best
-    // Power/Toughness gear (OptimizationAdvisor.ProjectedBestGear) — AT HOUR wears AT-speed
-    // gear, and thresholds are met in the kill loadout, not in what happens to be equipped.
+    // Reference stats (user decision): live P/T projected onto the optimizer's best Power/Toughness
+    // gear (OptimizationAdvisor.ProjectedBestGear) — AT HOUR wears AT-speed gear, and thresholds are
+    // met in the kill loadout, not in what happens to be equipped. Beast mode is kept for the titan
+    // ladder and divided out for the zone tables, matching what each set of numbers assumes (Decide).
     public static class AtHourPlanner
     {
         private const double NormalEnd = 7200;               // stock boundary: 2h into the run
@@ -78,8 +79,18 @@ namespace NGUAdvisor.Managers
             try { beast = c.adventureController.beastModeBonus(); } catch { }
             if (double.IsNaN(beast) || beast < 1) beast = 1;
             OptimizationAdvisor.ProjectedBestGear(out var atkMult, out var defMult);
-            double refAtk = c.totalAdvAttack() / beast * atkMult;
+
+            // TWO attack references, because the two ladders count beast mode differently and
+            // totalAdvAttack() already includes it:
+            //   titans — the guide's Manual/Idle tables and the game's own AK gate both compare the
+            //            raw totalAdvAttack, i.e. beast ON (see OptimizationAdvisor's TitanGuide
+            //            header, and AdvisorApply/TitansPanel, which pass it through unchanged);
+            //   zones  — ZoneStatHelper divides beast out before FightType, so the zone tables want it OFF.
+            // One reference for both understated attack ~1.5x against the titan ladder and extended
+            // the segment chasing stages the kill loadout already clears. Defense carries no beast bonus.
+            double refAtk = c.totalAdvAttack() * atkMult;   // titan ladder: beast included
             double refDef = c.totalAdvDefense() * defMult;
+            double zoneAtk = refAtk / beast;                // zone tables: beast divided out
             if (double.IsNaN(refAtk) || double.IsNaN(refDef) || refAtk <= 0 || refDef <= 0)
             {
                 Rec("AT hour ends on time", "no usable reference stats");
@@ -134,14 +145,16 @@ namespace NGUAdvisor.Managers
                 {
                     if (kvp.Key > maxReach) break;
                     var st = kvp.Value;
-                    if (st.FightType((float)refAtk, (float)refDef) == 2) continue;
+                    if (st.FightType((float)zoneAtk, (float)refDef) == 2) continue;
 
-                    // Idle-farmable via one-shot power (attack alone beats OPower) or the I pair.
-                    double tOne = Solve(power, tough, st.OPower * 1.0001 / refAtk, 0, window);
-                    double tPair = Solve(power, tough, st.IPower / refAtk, st.IToughness / refDef, window);
+                    // Idle-farmable via one-shot power (attack alone beats OPower) or the I pair. The
+                    // x1.0001 on every threshold mirrors FightType's strict '>' — without it a need of
+                    // exactly 1.0 solves at t=0 and the "crossing" is one the zone tables don't grant.
+                    double tOne = Solve(power, tough, st.OPower * 1.0001 / zoneAtk, 0, window);
+                    double tPair = Solve(power, tough, st.IPower * 1.0001 / zoneAtk, st.IToughness * 1.0001 / refDef, window);
                     double t = Math.Min(tOne, tPair);
-                    double need = Math.Min(st.OPower * 1.0001 / refAtk,
-                        Math.Max(st.IPower / refAtk, st.IToughness / refDef));
+                    double need = Math.Min(st.OPower * 1.0001 / zoneAtk,
+                        Math.Max(st.IPower * 1.0001 / zoneAtk, st.IToughness * 1.0001 / refDef));
                     string name = ZoneHelpers.ZoneList.TryGetValue(kvp.Key, out var zn) ? zn : $"zone {kvp.Key}";
                     Consider(t, $"{name} idle-farm ({ExpBalancer.Fmt(st.IPower)}/{ExpBalancer.Fmt(st.IToughness)})", (need - 1) * 100);
                     break;   // only the NEXT zone is an unlock; higher ones follow on later runs
@@ -152,12 +165,19 @@ namespace NGUAdvisor.Managers
             if (bestLabel != null)
             {
                 // 10% schedule buffer: the forecast holds R constant, but allocation gaps and cap
-                // changes nudge it. The MaxEnd clamp keeps any overshoot inside the 4h law.
-                double end = Math.Min(MaxEnd, runSec + bestT * 1.1);
+                // changes nudge it. Clamped BOTH ways — never past the 4h mark, so NGU MARATHON still
+                // starts on time, and never BEFORE the stock 2h boundary: the decision window opens at
+                // 1h55m, so a crossing a few minutes out would otherwise end the segment early and this
+                // "extension" would cut the very hour it exists to lengthen.
+                double end = Math.Min(MaxEnd, Math.Max(NormalEnd, runSec + bestT * 1.1));
                 double pPct = (Ratio(power, bestT) - 1) * 100;
                 double tPct = (Ratio(tough, bestT) - 1) * 100;
-                Rec($"AT hour extended to {end / 3600.0:0.0}h",
-                    $"projected +{pPct:0}% P / +{tPct:0}% T crosses {bestLabel} around {(runSec + bestT) / 3600.0:0.0}h");
+                if (end <= NormalEnd)
+                    Rec("AT hour ends on time",
+                        $"projected +{pPct:0}% P / +{tPct:0}% T crosses {bestLabel} inside the stock hour — no extension needed");
+                else
+                    Rec($"AT hour extended to {end / 3600.0:0.0}h",
+                        $"projected +{pPct:0}% P / +{tPct:0}% T crosses {bestLabel} around {(runSec + bestT) / 3600.0:0.0}h");
                 return end;
             }
 

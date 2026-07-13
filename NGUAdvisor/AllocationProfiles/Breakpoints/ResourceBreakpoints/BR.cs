@@ -4,8 +4,6 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 {
     public class BR : ResourceBreakpoint
     {
-        public int RebirthTime { get; set; }
-
         protected override bool CorrectResourceType() => Type == ResourceType.Magic;
 
         protected override bool Unlocked() => _character.buttons.bloodMagic.interactable;
@@ -14,10 +12,21 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         public override bool Allocate() => CastRituals(Index) > 0;
 
+        // The run's planned end, read from the LIVE profile (as BestAug/BloodPlanner/WandoosAdvisor do).
+        // The old `RebirthTime` property was never populated: ParseBreakpointArray took a rebirthTime
+        // argument that no caller ever passed, so it stayed 0, the guard below could never fire, and
+        // rituals that cannot finish before the rebirth were funded anyway. -1 = no scheduled rebirth.
+        private double RebirthDeadline()
+        {
+            if (!Main.Settings.AutoRebirth) return -1;
+            try { return Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; } catch { return -1; }
+        }
+
         private long CastRituals(int secondsToRun)
         {
             long allocationLeft = MaxAllocation;
             var totalAllocated = 0L;
+            double deadline = RebirthDeadline();
 
             for (var i = _character.bloodMagic.ritual.Count - 1; i >= 0; i--)
             {
@@ -42,7 +51,7 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                     double completeTime = _character.rebirthTime.totalseconds + tLeft;
 
                     // Ritual will not finish before rebirth
-                    if (RebirthTime > 0 && Main.Settings.AutoRebirth && completeTime > RebirthTime)
+                    if (deadline > 0 && completeTime > deadline)
                     {
                         shouldSkip = true;
                     }
