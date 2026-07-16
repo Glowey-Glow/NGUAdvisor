@@ -30,7 +30,12 @@ namespace NGUAdvisor
         private Panel _boostPage;
         private Panel _xformPage;
 
-        private Button _srcToggle;
+        // AUTOMATION = Settings.ManageInventory — INVENTORY-WIDE (Main.cs:846 gates filtering,
+        // convertibles, four merge passes, equipped boosting, the cube and boost conversion; AdvisorApply:76
+        // gates the advisor's priority write). DECISIONS = Settings.AutoBoostPriority — despite the name,
+        // a strategy field: it chooses who writes the boost priority list, not whether boosting runs.
+        // The two have DIFFERENT SCOPES, and the bar's text says so instead of implying symmetry.
+        private SystemControlBar _controlBar;
         private ComboBox _cube;
         private ComboBox _guffin;
         private Panel _advisorView;
@@ -92,6 +97,29 @@ namespace NGUAdvisor
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
 
+            // PANEL-LEVEL bar, not a BOOSTING-column one. AUTOMATION here is Settings.ManageInventory,
+            // and that gate is INVENTORY-WIDE (Main.cs:846 runs filtering, convertibles, four merge
+            // passes, equipped boosting, the infinity cube and boost conversion). Parking an
+            // inventory-wide switch inside a column headed BOOSTING would tell the user it only turns
+            // boosting off, and they would find out otherwise by losing their merges. DECISIONS is the
+            // narrow one — boost priority only — and the text says so rather than letting the pairing
+            // imply equal scope. TRANSFORMS keeps its own rules and is untouched by the decisions layer.
+            _controlBar = new SystemControlBar(
+                _w - 34,
+                () => Settings.ManageInventory, v => Settings.ManageInventory = v,
+                () => Settings.AutoBoostPriority, v => Settings.AutoBoostPriority = v,
+                "Inventory automation is on (boosts, merges, filters). The advisor sets boost priority; transforms keep their own rules.",
+                "Inventory automation is on (boosts, merges, filters). Your priority list below drives boosting.",
+                "Inventory automation is off — no boosting, merging, filtering or convertibles.",
+                null,
+                "Advisor idle — inventory automation is off. Boosts, merges, filters and convertibles are all disabled.");
+            _controlBar.Changed += SyncFromSettings;
+            _controlBar.Location = new Point(10, 10);
+            Controls.Add(_controlBar);
+
+            // Everything below the bar.
+            int top = 10 + SystemControlBar.BarHeight + 8;
+
             {
                 int bx = 10;
                 foreach (var name in new[] { "BOOSTING", "TRANSFORMS" })
@@ -99,7 +127,7 @@ namespace NGUAdvisor
                     var b = new Button
                     {
                         Text = name,
-                        Location = new Point(bx, 6),
+                        Location = new Point(bx, top),
                         Size = new Size(Math.Max(88, UiLayout.MeasureText(name, UiTheme.Ui) + 26), 25),
                         Font = UiTheme.Ui,
                         FlatStyle = FlatStyle.Flat,
@@ -114,16 +142,16 @@ namespace NGUAdvisor
             _segBoost.Click += (s, e) => SelectPage(boost: true);
             _segXform.Click += (s, e) => SelectPage(boost: false);
 
-            BuildBoostPage();
-            BuildXformPage();
+            BuildBoostPage(top);
+            BuildXformPage(top);
             if (_sideBySide)
             {
                 // Both pages visible at once: BOOSTING left, TRANSFORMS right, headers instead of
                 // the segmented pair.
-                Controls.Add(new Label { Text = "BOOSTING", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, 12) });
-                Controls.Add(new Label { Text = "TRANSFORMS", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(_pw + 30, 12) });
-                _boostPage.Location = new Point(10, 34);
-                _xformPage.Location = new Point(_pw + 30, 34);
+                Controls.Add(new Label { Text = "BOOSTING", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, top + 2) });
+                Controls.Add(new Label { Text = "TRANSFORMS", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(_pw + 30, top + 2) });
+                _boostPage.Location = new Point(10, top + 24);
+                _xformPage.Location = new Point(_pw + 30, top + 24);
                 _boostPage.Visible = true;
                 _xformPage.Visible = true;
                 SyncFromSettings();
@@ -153,21 +181,13 @@ namespace NGUAdvisor
             UiLayout.AuditOnce(boost ? _boostPage : _xformPage, boost ? "Boosts/BOOSTING" : "Boosts/TRANSFORMS");
         }
 
-        private void BuildBoostPage()
+        private void BuildBoostPage(int top)
         {
-            _boostPage = new Panel { Location = new Point(0, 38), Size = new Size(_pw, 312), BackColor = UiTheme.Ground, Visible = false };
+            _boostPage = new Panel { Location = new Point(0, top + 32), Size = new Size(_pw, 312), BackColor = UiTheme.Ground, Visible = false };
             Controls.Add(_boostPage);
 
-            _srcToggle = new Button { Text = "ADVISOR ACTIVE", Location = new Point(10, 10), Size = new Size(150, 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
-            _srcToggle.FlatAppearance.BorderColor = UiTheme.Border;
-            _srcToggle.Click += (s, e) =>
-            {
-                if (Settings == null) return;
-                Settings.AutoBoostPriority = !Settings.AutoBoostPriority;
-                SyncFromSettings();
-            };
-            _boostPage.Controls.Add(_srcToggle);
-
+            // The old "ADVISOR ACTIVE / MANUAL MODE" button lived here and wrote AutoBoostPriority — the
+            // DECISIONS layer under a name that reads like a permission. It is now in the bar.
             var cubeLbl = new Label { Text = "Cube", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
             _boostPage.Controls.Add(cubeLbl);
             _cube = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList, Font = UiTheme.Ui };
@@ -198,7 +218,7 @@ namespace NGUAdvisor
             _boostPage.Controls.Add(refresh);
 
             // Measured row layout — the old hand-placed "Cube" label overlapped its combo by 3px.
-            UiLayout.Row(10, 10, 8, _srcToggle, cubeLbl, _cube, gufLbl, _guffin, refresh);
+            UiLayout.Row(10, 10, 8, cubeLbl, _cube, gufLbl, _guffin, refresh);
 
             // ADVISOR view: computed order readout.
             _advisorView = new Panel { Location = new Point(0, 44), Size = new Size(_pw - 0, 268), BackColor = UiTheme.Ground, Visible = false };
@@ -293,9 +313,9 @@ namespace NGUAdvisor
 
         // Two-line cards, 54px pitch. Toggles right-aligned at edge 610 with MEASURED widths (the
         // "Keep Ma" truncation came from hardcoded widths); the name gets everything left of them.
-        private void BuildXformPage()
+        private void BuildXformPage(int top)
         {
-            _xformPage = new Panel { Location = new Point(0, 38), Size = new Size(_pw, 312), BackColor = UiTheme.Ground, Visible = false, AutoScroll = true };
+            _xformPage = new Panel { Location = new Point(0, top + 32), Size = new Size(_pw, 312), BackColor = UiTheme.Ground, Visible = false, AutoScroll = true };
             Controls.Add(_xformPage);
             _xformContent = new Panel { Location = new Point(0, 0), Size = new Size(_pw - 16, 312), BackColor = UiTheme.Ground };
             _xformPage.Controls.Add(_xformContent);
@@ -462,9 +482,14 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
+                // Reflects both layers, incl. a flip made from the Settings grid (the other reachable
+                // writer of ManageInventory) or a settings reload. Sync() never raises Changed.
+                _controlBar?.Sync();
+
                 bool auto = Settings.AutoBoostPriority;
-                _srcToggle.Text = auto ? "ADVISOR ACTIVE" : "MANUAL MODE";
-                UiTheme.ApplyState(_srcToggle, auto ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                // MANUAL is not degraded: the user's priority list simply stays authoritative. Nothing
+                // here writes PriorityBoosts — only the advisor's own pass does (AdvisorApply:82), and
+                // only when this flag is on. Opening or syncing the panel never overwrites a manual list.
                 _advisorView.Visible = auto;
                 _manualView.Visible = !auto;
 

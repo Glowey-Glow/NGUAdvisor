@@ -9,7 +9,7 @@ namespace NGUAdvisor
 {
     // The TOP ACTIONS column — split out of the old StatusBoardPanel for the M1 Control Room shell.
     // Master toggles (AUTO PROFILE / CHALLENGE OVERLAYS) ride the top row; severity-ranked action
-    // cards below with per-system AUTO/MANUAL chips; last slot doubles as the collapsed "n optimal"
+    // cards below with per-system ADVISOR/MANUAL chips; last slot doubles as the collapsed "n optimal"
     // card (click to expand/collapse).
     public class ActionsPanel : Panel
     {
@@ -61,7 +61,7 @@ namespace NGUAdvisor
 
             var head = new Label
             {
-                Text = "TOP ACTIONS", AutoSize = true, Font = UiTheme.ColHeader,
+                Text = "ADVISOR PRIORITIES", AutoSize = true, Font = UiTheme.ColHeader,
                 ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(0, 38)
             };
             Controls.Add(head);
@@ -230,8 +230,11 @@ namespace NGUAdvisor
                     a.Chip.Visible = hasKey;
                     if (hasKey)
                     {
+                        // These chips read/write the Advisor* fields — they ARE the DECISIONS layer, so
+                        // they use its vocabulary. ("AUTO" was the old word and collides with the
+                        // AUTOMATION permission, which is a different question entirely.)
                         bool on = GetAuto(rec.AutoKey);
-                        a.Chip.Text = on ? "AUTO" : "MANUAL";
+                        a.Chip.Text = on ? SystemControlBar.Advisor : SystemControlBar.Manual;
                         a.Chip.BackColor = on ? UiTheme.Cap : UiTheme.Faint;
                     }
                 }

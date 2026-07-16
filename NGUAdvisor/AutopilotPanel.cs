@@ -9,13 +9,14 @@ using static NGUAdvisor.Main;
 
 namespace NGUAdvisor
 {
-    // AUTO PROFILE card (B1, user-approved): one full-width card on the Advisors home — the run
-    // plan (segment chips + E/M/R3 token lines) on the left, the profile strip (recommendation,
-    // switcher, caps/run notes) docked on the right. Fully reflowed per refresh: wrapped text grows
-    // rows, never "…" on plan tokens. The challenge block owns everything below this panel.
+    // AUTO PROFILE card (B1) — the run plan (segment chips + E/M/R3 token lines) on the left, and a
+    // READ-ONLY profile summary on the right. UI4 moved every MUTABLE profile control (the mode toggle,
+    // file selector, SWITCH/EDIT/FILES/APPLY) out to the dedicated PROFILE section; this card now only
+    // SHOWS allocation source / selected(standby) file / recommendation, with OPEN PROFILE as the route
+    // to change any of it. Fully reflowed per refresh: wrapped text grows rows, never "…" on plan tokens.
     public class AutopilotPanel : Panel
     {
-        private Button _toggle;
+        private Button _openBtn;
         private Button _refresh;
         private Panel _card;
         private Label _title;
@@ -27,11 +28,10 @@ namespace NGUAdvisor
         private static readonly string[] SegOrder = { "TM HOUR", "AT HOUR", "RECOVERY", "MARATHON" };
         private readonly Label[] _segChips = new Label[4];
         private readonly SettingsForm _form;
-        private Label _recProfile;
-        private Button _applyRec;
-        private ComboBox _profileCombo;
-        private Button _switchBtn, _editBtn, _filesBtn;
-        private string _recommended = "";
+        private Label _srcLine;      // read-only: allocation source
+        private Label _fileLine;     // read-only: active/standby file
+        private Label _recProfile;   // read-only: recommendation
+        private readonly ToolTip _tips = new ToolTip();
         private readonly int _planW;    // left zone width
         private readonly int _stripX;   // right zone x inside the card
 
@@ -42,28 +42,20 @@ namespace NGUAdvisor
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
 
-            _toggle = new Button { Text = "AUTO PROFILE ACTIVE", Size = new Size(UiLayout.BtnWidth("AUTO PROFILE ACTIVE"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
-            _toggle.FlatAppearance.BorderColor = UiTheme.Border;
-            _toggle.Click += (s, e) =>
-            {
-                if (Settings == null) return;
-                Settings.AutoProfile = !Settings.AutoProfile;
-                Log(Settings.AutoProfile
-                    ? "Auto profile ON — allocation now generated (profile file on standby)"
-                    : $"Auto profile OFF — back to {Settings.AllocationFile ?? "profile"} timeline");
-                SyncFromSettings();
-            };
+            _openBtn = new Button { Text = "OPEN PROFILE →", Size = new Size(UiLayout.BtnWidth("OPEN PROFILE →"), 24), Font = UiTheme.Ui };
+            UiTheme.StyleFlat(_openBtn);
+            _openBtn.Click += (s, e) => { try { _form?.NavigateTo(Destinations.Profile); } catch (Exception ex) { LogDebug($"Open profile: {ex.Message}"); } };
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
             _refresh.Click += (s, e) => RefreshView();
-            Controls.Add(_toggle);
+            Controls.Add(_openBtn);
             Controls.Add(_refresh);
-            UiLayout.Row(10, 8, 8, _toggle, _refresh);
+            UiLayout.Row(10, 8, 8, _openBtn, _refresh);
 
             _card = new Panel { Location = new Point(10, 40), Size = new Size(W - 40, 170), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
             Controls.Add(_card);
 
-            // Zones: plan left, profile strip right (B1). A vertical divider keeps them readable.
+            // Zones: plan left, read-only profile summary right (B1). A vertical divider keeps them readable.
             _stripX = _card.Width * 3 / 5 + 20;
             _planW = _stripX - 30;
             int stripW = _card.Width - _stripX - 10;
@@ -86,37 +78,34 @@ namespace NGUAdvisor
             _mLine = MkLine();
             _rLine = MkLine();
 
-            _recProfile = new Label { Text = "", AutoSize = false, Size = new Size(stripW, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Accent, BackColor = UiTheme.Surface, Location = new Point(_stripX, 6) };
-            _card.Controls.Add(_recProfile);
-            _profileCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = Math.Min(220, stripW - 8), Font = UiTheme.Ui };
-            _card.Controls.Add(_profileCombo);
-            _switchBtn = MkStripBtn("SWITCH");
-            _switchBtn.Click += (s, e) => { var sel = _profileCombo.SelectedItem?.ToString(); if (!string.IsNullOrEmpty(sel)) ApplyProfileByName(sel); };
-            _editBtn = MkStripBtn("EDIT");
-            _editBtn.Click += (s, e) => { try { ProfileEditorForm.ShowEditor(GetProfilesDir(), Settings.AllocationFile); } catch (Exception ex) { LogDebug($"Autopilot edit: {ex.Message}"); } };
-            _filesBtn = MkStripBtn("FILES");
-            _filesBtn.Click += (s, e) => { try { System.Diagnostics.Process.Start(GetProfilesDir()); } catch (Exception ex) { LogDebug($"Autopilot files: {ex.Message}"); } };
-            _applyRec = new Button { Text = "APPLY", Size = new Size(UiLayout.BtnWidth("APPLY"), 24), Font = UiTheme.Ui, Visible = false };
-            UiTheme.StylePrimary(_applyRec);
-            _applyRec.Click += (s, e) => { if (!string.IsNullOrEmpty(_recommended)) ApplyProfileByName(_recommended); };
-            _card.Controls.Add(_applyRec);
+            // Read-only profile summary (right strip): source -> file -> recommendation. The mutable controls
+            // live on the PROFILE page now; OPEN PROFILE (top row) is the route to them.
+            _srcLine = MkStripLabel(stripW, 6, UiTheme.Ink);
+            _fileLine = MkStripLabel(stripW, 32, UiTheme.Ink);
+            _recProfile = MkStripLabel(stripW, 58, UiTheme.Accent);
 
             _note1 = new Label { Text = "", AutoSize = false, Size = new Size(stripW, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Surface, Location = new Point(_stripX, 100) };
             _note2 = new Label { Text = "", AutoSize = false, Size = new Size(stripW, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Faint, BackColor = UiTheme.Surface, Location = new Point(_stripX, 126) };
             _card.Controls.Add(_note1);
             _card.Controls.Add(_note2);
 
-            LoadProfiles();
             VisibleChanged += (s, e) => { if (Visible) RefreshView(); };
-            SyncFromSettings();
+            RefreshView();
         }
 
-        private Button MkStripBtn(string text)
+        private Label MkStripLabel(int stripW, int y, Color fore)
         {
-            var b = new Button { Text = text, Size = new Size(UiLayout.BtnWidth(text), 24), Font = UiTheme.Ui };
-            UiTheme.StyleFlat(b);
-            _card.Controls.Add(b);
-            return b;
+            var l = new Label { Text = "", AutoSize = false, Size = new Size(stripW, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = fore, BackColor = UiTheme.Surface, AutoEllipsis = false, Location = new Point(_stripX, y) };
+            _card.Controls.Add(l);
+            return l;
+        }
+
+        // Fixed-width measured fit + full text in the shared tooltip (Mono blanks an overflowing fixed label).
+        private void SetSummary(Label l, string text)
+        {
+            _tips.SetToolTip(l, text ?? "");
+            string fit = UiLayout.FitText(text ?? "", l.Font, l.Width);
+            if (l.Text != fit) l.Text = fit;
         }
 
         private Label MkLine()
@@ -126,47 +115,24 @@ namespace NGUAdvisor
             return l;
         }
 
-        private void LoadProfiles()
+        // Read-only summary of the profile state — mirrors the PROFILE page's three concepts, no controls.
+        private void UpdateSummary()
         {
             try
             {
-                var names = System.IO.Directory.GetFiles(GetProfilesDir())
-                    .Select(System.IO.Path.GetFileNameWithoutExtension).OrderBy(n => n).ToArray();
-                _profileCombo.Items.Clear();
-                _profileCombo.Items.AddRange(names);
-                if (Settings != null) _profileCombo.SelectedItem = Settings.AllocationFile;
+                if (Settings == null) return;
+                bool advisor = Settings.AutoProfile;
+                string file = Settings.AllocationFile ?? "-";
+                // Bounded FIXED-HEIGHT fit (never FitOrGrow): a long file/recommendation name must not grow
+                // the summary label downward into the run-plan/notes — it truncates with the full text in a
+                // tooltip. RefreshView is show/refresh-driven (not per-frame), so the tooltip set is cheap.
+                SetSummary(_srcLine, advisor ? "Allocation source: advisor-generated" : "Allocation source: profile file");
+                SetSummary(_fileLine, advisor ? $"Standby file: {file}" : $"Active file: {file}");
+                string rec = "";
+                try { var prog = ProgressionAnalyzer.Detect(); rec = prog.Known ? prog.RecommendedProfile : ""; } catch { }
+                SetSummary(_recProfile, string.IsNullOrEmpty(rec) ? "Recommended: —" : $"Recommended: {rec}");
             }
-            catch (Exception e) { LogDebug($"Autopilot LoadProfiles: {e.Message}"); }
-        }
-
-        private void ApplyProfileByName(string name)
-        {
-            try
-            {
-                _form?.ApplyProfile(name);
-                LoadProfiles();
-                RefreshView();
-            }
-            catch (Exception e) { LogDebug($"Autopilot apply: {e.Message}"); }
-        }
-
-        private void UpdateProfileStrip()
-        {
-            try
-            {
-                var prog = ProgressionAnalyzer.Detect();
-                _recommended = prog.Known ? prog.RecommendedProfile : "";
-                string active = Settings?.AllocationFile ?? "";
-                bool applyVisible = !string.IsNullOrEmpty(_recommended) && _recommended != active;
-                string recText = string.IsNullOrEmpty(_recommended) ? ""
-                    : applyVisible ? $"Recommended: {_recommended} — {prog.RecommendReason}"
-                    : $"Recommended: {_recommended} (current ✓)";
-                UiLayout.FitOrGrow(_recProfile, recText);
-                _applyRec.Visible = applyVisible;
-                if (_profileCombo.SelectedItem?.ToString() != active)
-                    _profileCombo.SelectedItem = active;
-            }
-            catch (Exception e) { LogDebug($"Autopilot strip: {e.Message}"); }
+            catch (Exception e) { LogDebug($"Autopilot summary: {e.Message}"); }
         }
 
         private static readonly string[] ENguNames = { "Augs", "Wandoos", "Respawn", "Gold", "Adv-α", "Power-α", "DC", "Magic", "PP" };
@@ -204,9 +170,6 @@ namespace NGUAdvisor
         public void SyncFromSettings()
         {
             if (Settings == null) return;
-            bool on = Settings.AutoProfile;
-            _toggle.Text = on ? "AUTO PROFILE ACTIVE" : "AUTO PROFILE OFF";
-            UiTheme.ApplyState(_toggle, on ? UiTheme.Cap : UiTheme.Danger, Color.White);
             RefreshView();
         }
 
@@ -215,7 +178,7 @@ namespace NGUAdvisor
             try
             {
                 if (Settings == null) return;
-                UpdateProfileStrip();
+                UpdateSummary();
                 bool on = Settings.AutoProfile;
                 string challenge = null;
                 try { challenge = ChallengeDetector.Current(); } catch { }
@@ -291,18 +254,11 @@ namespace NGUAdvisor
                 _mLine.Top = _eLine.Bottom + 2;
                 _rLine.Top = _mLine.Bottom + 2;
 
-                // Profile strip (right): recommendation → combo row → APPLY/buttons → notes.
-                int sy = _recProfile.Bottom + 6;
-                _profileCombo.Location = new Point(_stripX, sy);
-                int bx = _stripX;
-                int by = sy + 30;
-                foreach (var b in new[] { _switchBtn, _editBtn, _filesBtn, _applyRec })
-                {
-                    if (bx + b.Width > _card.Width - 10 && bx > _stripX) { bx = _stripX; by += 30; }
-                    b.Location = new Point(bx, by);
-                    bx += b.Width + 6;
-                }
-                _note1.Top = by + 32;
+                // Profile summary (right): source → file → recommendation → notes (all read-only).
+                _srcLine.Top = 6;
+                _fileLine.Top = _srcLine.Bottom + 4;
+                _recProfile.Top = _fileLine.Bottom + 8;
+                _note1.Top = _recProfile.Bottom + 12;
                 _note2.Top = _note1.Bottom + 4;
 
                 _card.Height = Math.Max(_rLine.Bottom, _note2.Bottom) + 10;

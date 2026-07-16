@@ -53,12 +53,6 @@ namespace NGUAdvisor
             this.AutoBuyAdv = new System.Windows.Forms.CheckBox();
             this.tabPage2 = new System.Windows.Forms.TabPage();
             this.tableLayoutPanel1 = new System.Windows.Forms.TableLayoutPanel();
-            this.tableLayoutPanel3 = new System.Windows.Forms.TableLayoutPanel();
-            this.AllocationProfileFileLabel = new System.Windows.Forms.Label();
-            this.ChangeProfileFile = new System.Windows.Forms.Button();
-            this.ProfileEditButton = new System.Windows.Forms.Button();
-            this.OpenProfileFolder = new System.Windows.Forms.Button();
-            this.AllocationProfileFile = new System.Windows.Forms.ComboBox();
             this.tableLayoutPanel4 = new System.Windows.Forms.TableLayoutPanel();
             this.ManageEnergy = new System.Windows.Forms.CheckBox();
             this.ManageWandoos = new System.Windows.Forms.CheckBox();
@@ -450,7 +444,6 @@ namespace NGUAdvisor
             this.flowLayoutPanel2.SuspendLayout();
             this.tabPage2.SuspendLayout();
             this.tableLayoutPanel1.SuspendLayout();
-            this.tableLayoutPanel3.SuspendLayout();
             this.tableLayoutPanel4.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.DiggerCap)).BeginInit();
             this.tableLayoutPanel5.SuspendLayout();
@@ -733,56 +726,12 @@ namespace NGUAdvisor
             // tableLayoutPanel1
             // 
             resources.ApplyResources(this.tableLayoutPanel1, "tableLayoutPanel1");
-            this.tableLayoutPanel1.Controls.Add(this.tableLayoutPanel3, 0, 0);
             this.tableLayoutPanel1.Controls.Add(this.tableLayoutPanel4, 0, 2);
             this.tableLayoutPanel1.Controls.Add(this.tableLayoutPanel5, 0, 4);
             this.tableLayoutPanel1.Controls.Add(this.Separator2, 0, 3);
             this.tableLayoutPanel1.Controls.Add(this.Separator1, 0, 1);
             this.tableLayoutPanel1.Name = "tableLayoutPanel1";
-            // 
-            // tableLayoutPanel3
-            // 
-            resources.ApplyResources(this.tableLayoutPanel3, "tableLayoutPanel3");
-            this.tableLayoutPanel3.Controls.Add(this.AllocationProfileFileLabel, 0, 0);
-            this.tableLayoutPanel3.Controls.Add(this.ChangeProfileFile, 2, 0);
-            this.tableLayoutPanel3.Controls.Add(this.ProfileEditButton, 3, 0);
-            this.tableLayoutPanel3.Controls.Add(this.OpenProfileFolder, 2, 1);
-            this.tableLayoutPanel3.Controls.Add(this.AllocationProfileFile, 1, 0);
-            this.tableLayoutPanel3.Name = "tableLayoutPanel3";
-            // 
-            // AllocationProfileFileLabel
-            // 
-            resources.ApplyResources(this.AllocationProfileFileLabel, "AllocationProfileFileLabel");
-            this.AllocationProfileFileLabel.Name = "AllocationProfileFileLabel";
-            // 
-            // ChangeProfileFile
-            // 
-            resources.ApplyResources(this.ChangeProfileFile, "ChangeProfileFile");
-            this.ChangeProfileFile.Name = "ChangeProfileFile";
-            this.ChangeProfileFile.UseVisualStyleBackColor = true;
-            this.ChangeProfileFile.Click += new System.EventHandler(this.ChangeProfileFile_Click);
-            // 
-            // ProfileEditButton
-            // 
-            resources.ApplyResources(this.ProfileEditButton, "ProfileEditButton");
-            this.ProfileEditButton.Name = "ProfileEditButton";
-            this.ProfileEditButton.UseVisualStyleBackColor = true;
-            this.ProfileEditButton.Click += new System.EventHandler(this.ProfileEditButton_Click);
-            // 
-            // OpenProfileFolder
-            // 
-            resources.ApplyResources(this.OpenProfileFolder, "OpenProfileFolder");
-            this.OpenProfileFolder.Name = "OpenProfileFolder";
-            this.OpenProfileFolder.UseVisualStyleBackColor = true;
-            this.OpenProfileFolder.Click += new System.EventHandler(this.OpenProfileFolder_Click);
-            // 
-            // AllocationProfileFile
-            // 
-            resources.ApplyResources(this.AllocationProfileFile, "AllocationProfileFile");
-            this.AllocationProfileFile.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.AllocationProfileFile.FormattingEnabled = true;
-            this.AllocationProfileFile.Name = "AllocationProfileFile";
-            // 
+            //
             // tableLayoutPanel4
             // 
             resources.ApplyResources(this.tableLayoutPanel4, "tableLayoutPanel4");
@@ -3874,8 +3823,6 @@ namespace NGUAdvisor
             this.tabPage2.PerformLayout();
             this.tableLayoutPanel1.ResumeLayout(false);
             this.tableLayoutPanel1.PerformLayout();
-            this.tableLayoutPanel3.ResumeLayout(false);
-            this.tableLayoutPanel3.PerformLayout();
             this.tableLayoutPanel4.ResumeLayout(false);
             this.tableLayoutPanel4.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.DiggerCap)).EndInit();
@@ -4091,8 +4038,6 @@ namespace NGUAdvisor
         private System.Windows.Forms.CheckBox AutoFightBosses;
         private System.Windows.Forms.TabPage tabPage2;
         private System.Windows.Forms.CheckBox ManageNGUDiff;
-        private System.Windows.Forms.Button ChangeProfileFile;
-        private System.Windows.Forms.Label AllocationProfileFileLabel;
         private System.Windows.Forms.CheckBox ManageR3;
         private System.Windows.Forms.TextBox BloodNumberThreshold;
         private System.Windows.Forms.Label label18;
@@ -4211,7 +4156,6 @@ namespace NGUAdvisor
         private System.Windows.Forms.CheckBox BalanceMayo;
         private System.Windows.Forms.CheckBox TrashCards;
         private System.Windows.Forms.CheckBox AutoCastCards;
-        private System.Windows.Forms.Button ProfileEditButton;
         private System.Windows.Forms.CheckBox GuffAOnRebirth;
         private System.Windows.Forms.CheckBox IronPillOnRebirth;
         private System.Windows.Forms.CheckBox GuffBOnRebirth;
@@ -4223,7 +4167,6 @@ namespace NGUAdvisor
         private System.Windows.Forms.CheckBox ManageQuestLoadout;
         private System.Windows.Forms.Label label35;
         private System.Windows.Forms.Button OpenSettingsFolder;
-        private System.Windows.Forms.Button OpenProfileFolder;
         private System.Windows.Forms.CheckBox QuestBeastMode;
         private System.Windows.Forms.CheckBox TitanBeastMode;
         private System.Windows.Forms.Label label36;
@@ -4306,7 +4249,6 @@ namespace NGUAdvisor
         private System.Windows.Forms.CheckBox Autosave;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel2;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel4;
-        private System.Windows.Forms.TableLayoutPanel tableLayoutPanel3;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel5;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel7;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel12;
@@ -4375,7 +4317,6 @@ namespace NGUAdvisor
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel8;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel9;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel10;
-        private System.Windows.Forms.ComboBox AllocationProfileFile;
         private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel11;
         private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel12;
         private System.Windows.Forms.CheckBox CastProtectedCards;

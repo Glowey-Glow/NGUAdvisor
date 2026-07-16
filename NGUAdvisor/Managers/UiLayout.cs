@@ -175,12 +175,9 @@ namespace NGUAdvisor.Managers
                     var b = kids[j];
                     if (!b.Visible) continue;
                     if (Equals(a.Tag, "exclusive") && Equals(b.Tag, "exclusive")) continue;
-                    // 1px tolerance: control chrome may touch; real glyph collisions must flag.
-                    var ra = EffectiveBounds(a);
-                    var rb = EffectiveBounds(b);
-                    ra.Inflate(-1, -1);
-                    rb.Inflate(-1, -1);
-                    if (ra.Width > 0 && ra.Height > 0 && rb.Width > 0 && rb.Height > 0 && ra.IntersectsWith(rb))
+                    // ONE authoritative overlap path (see Overlaps): canonical EffectiveBounds + the 1px
+                    // tolerance — control chrome may touch; only real glyph collisions flag.
+                    if (Overlaps(a, b))
                     {
                         Main.LogDebug($"UI AUDIT [{context}]: OVERLAP '{Desc(a)}' {EffectiveBounds(a)} x '{Desc(b)}' {EffectiveBounds(b)}");
                         issues++;
@@ -219,6 +216,22 @@ namespace NGUAdvisor.Managers
                 h = Math.Max(cb.Font.Height, h - 4);
             }
             return new Rectangle(c.Left, c.Top, w, h);
+        }
+
+        // THE overlap authority for the whole app — Audit calls it, and so does anything else that needs
+        // "do these two controls collide?" (BasicSettingsPanel's filtered-layout audit). The geometry is
+        // NOT re-stated here: it is exactly EffectiveBounds (rendered height minus glyph padding) shrunk by
+        // the same 1px tolerance Audit has always used, so a 1px chrome touch between AutoSize controls on
+        // a tight row pitch does not read as a collision while a real glyph overlap does. Visibility and the
+        // "exclusive" tag stay the caller's business, exactly as before.
+        public static bool Overlaps(Control first, Control second)
+        {
+            if (first == null || second == null) return false;
+            var a = EffectiveBounds(first);
+            var b = EffectiveBounds(second);
+            a.Inflate(-1, -1);
+            b.Inflate(-1, -1);
+            return a.Width > 0 && a.Height > 0 && b.Width > 0 && b.Height > 0 && a.IntersectsWith(b);
         }
 
         // Once-per-context audit for lazily shown views (called from page/segment switchers).

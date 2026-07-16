@@ -16,8 +16,14 @@ namespace NGUAdvisor
         private readonly List<Button> _segButtons = new List<Button>();
         private readonly List<Panel> _pages = new List<Panel>();
 
+        // AUTOMATION = Settings.CombatEnabled — the ADVENTURE ROUTING gate (Main.cs:1218, AdvisorApply:513).
+        // It does NOT gate all combat: titan (Main.cs:1183), quest (:1196) and gold-CBlock (:1202) routing
+        // all DoZone() and return BEFORE it. DECISIONS = Settings.AdvisorZones — who picks the FARM ZONE
+        // (SnipeZone), and only that: Gear Hunt (:1223) and Target ITOPOD (:1225) both outrank it.
+        private SystemControlBar _controlBar;
+        private int _pageTop;
+
         // ZONES view
-        private Button _srcToggle;
         private Button _farmGear;
         private Button _farmBoost;
         private ComboBox _zoneCombo;
@@ -29,7 +35,6 @@ namespace NGUAdvisor
         private Label _boostLine1;
         private Label _boostLine2;
         private Label _gearLine;
-        private Button _combat;
         private Button _beast;
         private Button _bossesOnly;
         private Button _fallthrough;
@@ -58,12 +63,39 @@ namespace NGUAdvisor
             _w = canvasW > 0 ? canvasW : UiLayout.PanelW;
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
+            // NO AutoScroll here. The bar costs 72px in a column that was already ~30px from full, and an
+            // AutoScroll host is a trap: the vertical bar eats ~17px of client width, so content laid out
+            // to the full width then summons a HORIZONTAL bar too (seen in game). The column is given the
+            // height it needs in SettingsForm instead — the Combat section already scrolls.
+
+            // PANEL-LEVEL, not inside ZONES. CombatEnabled gates the whole adventure routing tail —
+            // which feeds the ITOPOD page's Target ITOPOD as much as the ZONES page's farm zone — so it
+            // is not a zones-only switch. DECISIONS is the narrow one (who picks the farm zone), and the
+            // text says so. It also says what AUTOMATION does NOT stop: titan, quest and gold-snipe
+            // routing all DoZone() and return BEFORE the CombatEnabled check (Main.cs:1183/1196/1202 vs
+            // :1218), so "combat off" has never meant "no combat".
+            // Width matches the pages' right edge (_w - 34 at x=0), so nothing sticks out past the widest
+            // sibling — the thing that summoned the horizontal scrollbar.
+            _controlBar = new SystemControlBar(
+                _w - 44,
+                () => Settings.CombatEnabled, v => Settings.CombatEnabled = v,
+                () => Settings.AdvisorZones, v => Settings.AdvisorZones = v,
+                "Advisor picks the farm zone. Gear Hunt and ITOPOD outrank it.",
+                "Your zone is the farm zone. Gear Hunt and ITOPOD outrank it.",
+                "Adventure routing off — titan and quest zones still run.",
+                null,
+                "Advisor idle — adventure routing off (titans/quests run).");
+            _controlBar.Changed += SyncFromSettings;
+            _controlBar.Location = new Point(10, 10);
+            Controls.Add(_controlBar);
+
+            _pageTop = 10 + SystemControlBar.BarHeight + 8;
 
             int bx = 10;
             foreach (var name in new[] { "ZONES", "ITOPOD", "BLACKLIST" })
             {
                 var b = MkBtn(name, Math.Max(88, UiLayout.BtnWidth(name)));
-                b.Location = new Point(bx, 6);
+                b.Location = new Point(bx, _pageTop);
                 int idx = _segButtons.Count;
                 b.Click += (s, e) => SelectPage(idx);
                 Controls.Add(b);
@@ -133,7 +165,7 @@ namespace NGUAdvisor
             UiLayout.AuditOnce(_pages[idx], $"Adventure/{_segButtons[idx].Text}");
         }
 
-        private Panel NewPage() => new Panel { Location = new Point(0, 38), Size = new Size(_w - 34, 440), BackColor = UiTheme.Ground, Visible = false };
+        private Panel NewPage() => new Panel { Location = new Point(0, _pageTop + 32), Size = new Size(_w - 34, 440), BackColor = UiTheme.Ground, Visible = false };
 
         private Button MkToggle(string text, Action onClick)
         {
@@ -157,7 +189,8 @@ namespace NGUAdvisor
             head.Location = new Point(10, y);
             y += UiTheme.HeadPitch;
 
-            _srcToggle = MkToggle("ADVISOR ROUTES ZONES", () => Settings.AdvisorZones = !Settings.AdvisorZones);
+            // The old "ADVISOR ROUTES ZONES / MANUAL ZONE" toggle wrote AdvisorZones and lived here; it is
+            // the DECISIONS layer and now sits in the bar. The zone picker stays — it IS the manual choice.
             _zoneLbl = MkLbl("Zone");
             _zoneCombo = new ComboBox { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList, Font = UiTheme.Ui };
             foreach (var kv in ZoneHelpers.ZoneList)
@@ -172,10 +205,9 @@ namespace NGUAdvisor
                 if (_syncing || Settings == null || _zoneCombo.SelectedItem == null) return;
                 Settings.SnipeZone = ((KeyValuePair<int, string>)_zoneCombo.SelectedItem).Key;
             };
-            page.Controls.Add(_srcToggle);
             page.Controls.Add(_zoneLbl);
             page.Controls.Add(_zoneCombo);
-            y = UiLayout.Row(10, y, 10, _srcToggle, _zoneLbl, _zoneCombo) + 6;
+            y = UiLayout.Row(10, y, 10, _zoneLbl, _zoneCombo) + 6;
 
             // Advisor strategies (visible in advisor mode): gear-capping farm outranks the boost
             // farm; the boost farm only leaves the ITOPOD while something consumes boosts.
@@ -252,7 +284,9 @@ namespace NGUAdvisor
             chead.Location = new Point(10, y);
             y += UiTheme.HeadPitch;
 
-            _combat = MkToggle("Combat", () => Settings.CombatEnabled = !Settings.CombatEnabled);
+            // "Combat" (CombatEnabled) is GONE from this row — it was never a combat STYLE, it was the
+            // AUTOMATION gate sitting among posture options, which is how "combat off" came to look like
+            // it stopped all fighting when titan and quest zones carry on regardless.
             _beast = MkToggle("Beast Mode", () => Settings.BeastMode = !Settings.BeastMode);
             _bossesOnly = MkToggle("Bosses Only", () => Settings.SnipeBossOnly = !Settings.SnipeBossOnly);
             _fallthrough = MkToggle("Fallthrough", () => Settings.AllowZoneFallback = !Settings.AllowZoneFallback);
@@ -260,10 +294,10 @@ namespace NGUAdvisor
             _combatMode = new ComboBox { Width = 110, DropDownStyle = ComboBoxStyle.DropDownList, Font = UiTheme.Ui };
             _combatMode.Items.AddRange(new object[] { "Idle", "Snipe", "Defensive", "Offensive" });
             _combatMode.SelectedIndexChanged += (s, e) => { if (!_syncing && Settings != null) Settings.CombatMode = _combatMode.SelectedIndex; };
-            foreach (Control c in new Control[] { _combat, _beast, _bossesOnly, _fallthrough, modeLbl, _combatMode })
+            foreach (Control c in new Control[] { _beast, _bossesOnly, _fallthrough, modeLbl, _combatMode })
                 page.Controls.Add(c);
-            // Wraps in narrow M1 columns (six controls run ~550px).
-            y = UiLayout.WrapRow(10, y, 8, page.Width - 10, 30, new Control[] { _combat, _beast, _bossesOnly, _fallthrough, modeLbl, _combatMode }) + 8;
+            // Wraps in narrow M1 columns.
+            y = UiLayout.WrapRow(10, y, 8, page.Width - 10, 30, new Control[] { _beast, _bossesOnly, _fallthrough, modeLbl, _combatMode }) + 8;
 
             // Two short stacked lines: the single long line measured past the page edge and clipped.
             var note1 = MkLbl("Advisor routing: gold and quest logic keep their overrides;");
@@ -396,9 +430,11 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
+                // Reflects both layers, incl. a flip from the Settings grid ("Adventure Combat" is the
+                // other reachable writer of CombatEnabled) or a settings reload. Sync() never raises Changed.
+                _controlBar?.Sync();
+
                 bool advisor = Settings.AdvisorZones;
-                _srcToggle.Text = advisor ? "ADVISOR ROUTES ZONES" : "MANUAL ZONE";
-                StyleOnOff(_srcToggle, advisor);
                 _zoneCombo.Visible = _zoneLbl.Visible = !advisor;
                 _farmGear.Visible = _farmBoost.Visible = advisor;
                 StyleOnOff(_farmGear, Settings.AdvisorFarmGear);
@@ -429,7 +465,6 @@ namespace NGUAdvisor
                 }
                 UiLayout.FitOrGrow(_huntLine, hunt, 2);
 
-                StyleOnOff(_combat, Settings.CombatEnabled);
                 StyleOnOff(_beast, Settings.BeastMode);
                 StyleOnOff(_bossesOnly, Settings.SnipeBossOnly);
                 StyleOnOff(_fallthrough, Settings.AllowZoneFallback);

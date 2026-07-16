@@ -104,7 +104,6 @@ namespace NGUAdvisor
         private readonly ItemControlGroup _cookingControls;
 
         // Mode-loadout optimizer sections (route C3 3.2), one per mode; installed over the manual loadout UI.
-        private readonly List<ModeLoadoutUI> _modeSections = new List<ModeLoadoutUI>();
         private LoadoutsPanel _loadoutsPanel;
         private InventoryAdvisorPanel _invPanel;
         private BoostsPanel _boostsPanel;
@@ -123,6 +122,7 @@ namespace NGUAdvisor
         private QuestsPanel _questsPanel;
         private BloodPanel _bloodPanel;
         private AutopilotPanel _autopilotPanel;
+        private ProfilePanel _profilePanel;
 
         // M1 Control Room shell: left rail nav + one canvas per section (tabControl1 stays alive but
         // hidden — the legacy pages' controls keep their bindings).
@@ -147,7 +147,7 @@ namespace NGUAdvisor
         private static readonly System.Collections.Generic.Dictionary<string, string[]> RailChildren
             = new System.Collections.Generic.Dictionary<string, string[]>
             {
-                { "Advisors", new[] { "Status", "Top Actions" } },
+                { "Advisors", new[] { "Overview", "Priorities" } },
                 { "Systems", new[] { "Yggdrasil", "Quests", "Boosts", "Inventory", "Cooking", "Blood" } },
                 { "Loadouts", new[] { "Titan", "Gold", "Quest", "Yggdrasil", "Cooking", "Loot Hunter", "Shockwave" } },
                 { "Logs", new[] { "Advisor", "Loot", "Session" } },
@@ -164,6 +164,8 @@ namespace NGUAdvisor
         private LogSliver _combatSliver;
         private LogSliver _pitSliver;
         private GrowthPanel _growthPanel;
+        private ActivityRibbon _ribbon;
+        private SystemIndexPanel _systemIndex;
 
         // Live status strip docked to the bottom of this window (route C3 Phase 2, in-GUI).
         private StatusPanel _statusPanel;
@@ -352,7 +354,6 @@ namespace NGUAdvisor
                 try
                 {
                     UiTheme.ApplyTo(this);
-                    UiTheme.StylePrimary(ProfileEditButton);
                 }
                 catch (Exception themeEx)
                 {
@@ -419,6 +420,7 @@ namespace NGUAdvisor
                         if (_actions != null) UiLayout.Audit(_actions, "Actions");
                         if (_logsPanel != null) UiLayout.Audit(_logsPanel, "Logs");
                         if (_basicSettings != null) UiLayout.Audit(_basicSettings, "Settings");
+                        if (_systemIndex != null) UiLayout.Audit(_systemIndex, "SystemIndex");
                         if (_rail != null) UiLayout.Audit(_rail, "Rail");
                     }
                     catch (Exception shownEx) { LogDebug($"Shown sizing: {shownEx.Message}"); }
@@ -556,8 +558,8 @@ namespace NGUAdvisor
             }
             catch (Exception questEx) { LogDebug($"Quests section init failed: {questEx.Message}"); }
 
-            // Advisors panels (B1): STATUS home = lights → AUTO PROFILE card → CHALLENGES with the
-            // whole bottom; TOP ACTIONS is its own rail sub-page (full list, optimal inline).
+            // Advisors panels (B1): OVERVIEW home = lights → AUTO PROFILE card → CHALLENGES with the
+            // whole bottom; PRIORITIES is its own rail sub-page (full ranked list, optimal inline).
             try
             {
                 _lights = new LightsPanel(this, CanvasW, 6);
@@ -569,35 +571,63 @@ namespace NGUAdvisor
             }
             catch (Exception chEx) { LogDebug($"Advisors section init failed: {chEx.Message}"); }
 
+            // PROFILE panel (UI4) — the mutable profile home, moved out of the Overview AUTO PROFILE card.
+            // Inset width (CanvasW - 40) like the other placed panels, so a x=20 placement leaves a right
+            // margin and never pushes past the section edge / summons a horizontal scrollbar.
+            try { _profilePanel = new ProfilePanel(this, CanvasW - 40); }
+            catch (Exception pEx) { LogDebug($"Profile panel init failed: {pEx.Message}"); }
+
             // ---- section canvases (A1: sections with children host sub-pages) ----
             var advisors = NewSection("Advisors");
             advisors.AutoScroll = false;   // the sub-pages scroll, not the host
-            var advStatus = NewSubPage(advisors, "Advisors/Status");
-            var advActions = NewSubPage(advisors, "Advisors/Top Actions");
-            _childNav["Advisors/Status"] = ShowSubPage("Advisors", "Advisors/Status");
-            _childNav["Advisors/Top Actions"] = ShowSubPage("Advisors", "Advisors/Top Actions");
-            if (_lights != null) Place(advStatus, _lights, 20, 12, CanvasW, _lights.Height);
+            var advStatus = NewSubPage(advisors, Destinations.Overview);
+            var advActions = NewSubPage(advisors, Destinations.Priorities);
+            _childNav[Destinations.Overview] = ShowSubPage("Advisors", Destinations.Overview);
+            _childNav[Destinations.Priorities] = ShowSubPage("Advisors", Destinations.Priorities);
+            // Page-title heading (UI2). PRIORITIES' heading lives in ActionsPanel ("ADVISOR PRIORITIES");
+            // the OVERVIEW page had none, so it gets one here and everything below shifts down one head
+            // pitch (uniform +26 → relative spacing unchanged, no new overlap). AutoSize = immune to clip.
+            var advOverviewHead = new Label
+            {
+                Text = "ADVISOR OVERVIEW", AutoSize = true, Font = UiTheme.ColHeader,
+                ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new System.Drawing.Point(20, 12)
+            };
+            advStatus.Controls.Add(advOverviewHead);
+            if (_lights != null) Place(advStatus, _lights, 20, 38, CanvasW, _lights.Height);
             // GROWTH band (G1): rate tiles between the lights and the plan card.
             _growthPanel = new GrowthPanel(CanvasW);
-            Place(advStatus, _growthPanel, 20, 114, CanvasW, _growthPanel.Height);
-            if (_autopilotPanel != null) Place(advStatus, _autopilotPanel, 20, 230, CanvasW, 240);
+            Place(advStatus, _growthPanel, 20, 140, CanvasW, _growthPanel.Height);
+            if (_autopilotPanel != null) Place(advStatus, _autopilotPanel, 20, 256, CanvasW, 240);
             if (_challengesPanel != null)
             {
-                Place(advStatus, _challengesPanel, 20, 482, CanvasW, 150);   // placeholder; panel self-sizes to content on refresh
+                Place(advStatus, _challengesPanel, 20, 508, CanvasW, 150);   // placeholder; panel self-sizes to content on refresh
                 // The autopilot card reflows (wrapped titles/plans) — challenges rides below it.
                 if (_autopilotPanel != null)
                     _autopilotPanel.SizeChanged += (s, e) =>
                     {
-                        try { _challengesPanel.Top = Math.Max(482, _autopilotPanel.Bottom + 12); } catch { }
+                        try { _challengesPanel.Top = Math.Max(508, _autopilotPanel.Bottom + 12); } catch { }
                     };
             }
             if (_actions != null) Place(advActions, _actions, 20, 12, CanvasW - 40, 700);
 
+            // PROFILE (UI4): a distinct top-level section (not an Advisors child) — the canonical mutable
+            // home for allocation source + selected file + recommendation. Reuses ApplyProfile/ShowEditor.
+            var profileSec = NewSection("Profile");
+            if (_profilePanel != null) Place(profileSec, _profilePanel, 20, 12, CanvasW - 40, _profilePanel.Height);
+
             var combat = NewSection("Combat");
             if (_titansPanel != null) Place(combat, _titansPanel, 20, 12, 505, 500);
-            if (_adventurePanel != null) Place(combat, _adventurePanel, 545, 12, 505, 500);
-            _combatSliver = new LogSliver("COMBAT LOG — live tail of combat.log", "combat.log", CanvasW, 210);
-            Place(combat, _combatSliver, 20, 524, CanvasW, 210);
+            // Adventure is 80px taller than Titans: the two-layer control bar cost it 72px and its content
+            // was already near the old 500px ceiling. Giving it the height is better than making the column
+            // scroll inside itself — an AutoScroll host whose content fills the width summons a horizontal
+            // scrollbar as well as a vertical one. This section canvas already scrolls, so nothing is lost.
+            if (_adventurePanel != null) Place(combat, _adventurePanel, 545, 12, 505, 580);
+            // The 72px the control bar cost Adventure is paid for by the log tail, NOT by a scrollbar:
+            // the section's total content height stays at its pre-migration 734px, so Combat still fits
+            // the viewport with nothing below the fold. The sliver is a convenience tail — the full log
+            // is one click away in LOGS — which makes it the cheapest 80px on this screen.
+            _combatSliver = new LogSliver("COMBAT LOG — live tail of combat.log", "combat.log", CanvasW, 130);
+            Place(combat, _combatSliver, 20, 604, CanvasW, 130);
 
             var economy = NewSection("Economy");
             if (_goldPanel != null) Place(economy, _goldPanel, 20, 12, 520, 520);
@@ -659,14 +689,74 @@ namespace NGUAdvisor
             try
             {
                 _basicSettings = new BasicSettingsPanel();
-                settingsSec.Controls.Add(_basicSettings);   // keeps its own Dock.Fill + scrolling
+                settingsSec.Controls.Add(_basicSettings);   // Dock.Top + explicit height; no scroll of its own
                 _basicSettings.Sync();
+
+                // SYSTEM INDEX above APPLICATION SETTINGS — ONE document, ONE scrollbar (slice 7.5A).
+                //
+                // Docking order, same rule as the rail and the ribbon: WinForms lays docked children out
+                // from the LAST index to the FIRST, so the control at the BACK of the z-order claims its
+                // edge first. Both children are Dock.Top now, so the back one takes the TOP strip: the
+                // index is added after BasicSettingsPanel (landing at the back) and SendToBack() says so
+                // explicitly; BasicSettingsPanel comes to the front and stacks underneath it.
+                //
+                // SCROLL OWNERSHIP: the SECTION (already AutoScroll) is the single scroll owner. Neither
+                // child scrolls. The full document — index + settings — scrolls as one surface, so the
+                // index no longer steals a fixed slice of the settings' viewport, and there is no nested
+                // scroll to trap the wheel.
+                _systemIndex = new SystemIndexPanel();
+                settingsSec.Controls.Add(_systemIndex);
+                _systemIndex.SendToBack();
+                _basicSettings.BringToFront();
+
+                // ONE QUERY, TWO RENDERERS, NO OWNER. The index owns the search box and its own rows; the
+                // settings panel owns its own canonical controls. Neither knows the other exists — the form
+                // is only a wire between them, which is all a coordinator should be. Both then ask the same
+                // pure matcher the same question, so the product has exactly one set of matching rules and
+                // no search "service" to keep in step with itself.
+                //
+                // EVERY QUERY LANDS AT THE TOP. One keystroke can take this document from 824px to 76px, and
+                // an offset measured against the old document is meaningless against the new one — it is how
+                // you end up staring at blank space with your results scrolled off above. There is nothing to
+                // preserve: the search box and the first results are at the top, which is exactly where you
+                // want to be. Same assignment the section already uses when Settings is opened (:704), same
+                // scroll owner, no new container, no ScrollControlIntoView.
+                //
+                // No silent catch: Filter() already logs its own failures, and a second empty `catch {}` here
+                // would swallow anything it did not. A search that quietly stops working is worse than one
+                // that visibly breaks.
+                _systemIndex.SearchChanged += q =>
+                {
+                    _basicSettings.Filter(q);
+                    settingsSec.AutoScrollPosition = new System.Drawing.Point(0, 0);
+                };
+
+                // Re-homed from BasicSettingsPanel, which used to own the scroll: Mono can restore a
+                // section mid-scroll on return, so land at the top whenever Settings is shown.
+                settingsSec.VisibleChanged += (s, e) =>
+                {
+                    if (settingsSec.Visible) settingsSec.AutoScrollPosition = new System.Drawing.Point(0, 0);
+                };
             }
             catch (Exception basicEx) { LogDebug($"Settings section init failed: {basicEx.Message}"); }
 
             // Cards: the two unlock-gated legacy pages as rail children (untouched otherwise).
             var cardsSec = NewSection("Cards");
             BuildCardsSection(cardsSec, pages);
+
+            // ACTIVITY RIBBON — the shell-level feedback surface, so no panel has to grow its own.
+            //
+            // Docking order is the whole trick here. WinForms lays docked children out from the LAST index
+            // in Controls to the FIRST, so the control at the BACK of the z-order gets first claim on the
+            // client area and a Dock.Fill sibling must be in FRONT of it to compute afterwards (the same
+            // rule the rail/canvas pair already relies on). Every section was added to _canvasHost before
+            // this, so adding the ribbon now puts it at the back = docked first = it takes the top strip,
+            // and the Fill sections lay out in what remains. SendToBack() is belt-and-braces.
+            //
+            // Hidden => excluded from the dock pass entirely => zero footprint, no reserved gap.
+            _ribbon = new ActivityRibbon(this);
+            _canvasHost.Controls.Add(_ribbon);
+            _ribbon.SendToBack();
 
             // Retired pages tidy-up (tab strip is hidden, but keep the collection clean). Controls
             // stay alive for the legacy bindings.
@@ -788,7 +878,7 @@ namespace NGUAdvisor
             };
             _rail.Controls.Add(_railMaster);
 
-            foreach (var name in new[] { "Advisors", "Combat", "Economy", "Systems", "Loadouts", "Logs", "Settings", "Cards" })
+            foreach (var name in new[] { "Advisors", "Profile", "Combat", "Economy", "Systems", "Loadouts", "Logs", "Settings", "Cards" })
             {
                 var it = new RailItem { Name = name };
                 it.Row = new Panel { Bounds = new System.Drawing.Rectangle(4, 56, RailW - 10, 30), BackColor = UiTheme.Ground, Cursor = Cursors.Hand };
@@ -1104,7 +1194,6 @@ namespace NGUAdvisor
             UnloadButton.Height = OpenSettingsFolder.Height;
 
             // Allocation Tab
-            ChangeProfileFile.Size = OpenProfileFolder.Size;
             AlignWidth(SpaghettiCap, AutoSpellSwap);
             AlignWidth(CounterfeitCap, AutoSpellSwap);
             AlignWidth(BloodNumberThreshold, AutoSpellSwap);
@@ -1429,8 +1518,6 @@ namespace NGUAdvisor
             ManageCookingLoadout.Checked = newSettings.ManageCookingLoadouts;
             _cookingControls.UpdateList(newSettings.CookingLoadout);
 
-            // Keep the optimizer pickers in sync if settings were reloaded (cheap; does not re-run optimize).
-            foreach (var s in _modeSections) s.SyncState();
             _loadoutsPanel?.SyncFromSettings();
             _boostsPanel?.SyncFromSettings();
             _adventurePanel?.SyncFromSettings();
@@ -1443,6 +1530,7 @@ namespace NGUAdvisor
             _questsPanel?.SyncFromSettings();
             _bloodPanel?.SyncFromSettings();
             _autopilotPanel?.SyncFromSettings();
+            _systemIndex?.Sync();   // the index reads the same authoritative settings as its owner panel
 
             Refresh();
             _initializing = false;
@@ -1577,9 +1665,10 @@ namespace NGUAdvisor
 
         public void UpdateProfileList(string[] profileList, string selectedProfile)
         {
-            AllocationProfileFile.DataSource = null;
-            AllocationProfileFile.DataSource = new BindingSource(profileList, null);
-            AllocationProfileFile.SelectedItem = selectedProfile;
+            // The PROFILE page (UI4) is the live profile-list UI and re-scans the folder itself on this
+            // AllocationWatcher-driven refresh (main thread — from Update's flag drain). Signature kept for
+            // its caller (Main.LoadAllocationProfiles); the args are advisory now (ProfilePanel reads disk).
+            _profilePanel?.OnFilesChanged();
         }
 
         public void UpdateProgressBar(int progress)
@@ -1592,6 +1681,10 @@ namespace NGUAdvisor
         // Refresh the docked live status strip + dashboard (called each frame from Main.Update; throttled).
         public void UpdateStatus()
         {
+            // Ages out temporary outcomes with no user interaction (nothing here schedules — this tick
+            // already exists). Cheap by construction: Sync returns after two comparisons when the painted
+            // state is current, which is every frame except the one where an outcome arrives or expires.
+            _ribbon?.Sync(DateTime.UtcNow);
             _statusPanel?.UpdateStatus();
             _titansPanel?.TickCountdown();
             _lights?.TickBoard();                    // 3s cadence while the Advisors canvas shows
@@ -1614,7 +1707,6 @@ namespace NGUAdvisor
             WarnIfProfileInvalid(name);
             Settings.AllocationFile = name;
             Main.RequestAllocationReload();   // main-thread rule: Update() performs the load
-            try { AllocationProfileFile.SelectedItem = name; } catch { }
         }
 
         public void UpdateTitanVersions()
@@ -2081,18 +2173,6 @@ namespace NGUAdvisor
             Settings.ManageNGUDiff = ManageNGUDiff.Checked;
         }
 
-        private void ChangeProfileFile_Click(object sender, EventArgs e)
-        {
-            if (_initializing) return;
-            var selected = AllocationProfileFile.SelectedItem?.ToString();
-            if (string.IsNullOrEmpty(selected)) return;
-
-            WarnIfProfileInvalid(selected);
-
-            Settings.AllocationFile = selected;
-            Main.RequestAllocationReload();   // main-thread rule: Update() performs the load
-        }
-
         // The advisor parses profiles with SimpleJSON, which silently misparses malformed JSON
         // (it treats } and ] as interchangeable and ignores stray commas) instead of erroring - so a
         // broken profile just makes the bot misbehave with no feedback. Validate strictly here and
@@ -2167,13 +2247,34 @@ namespace NGUAdvisor
 
         private void HarvestAllButton_Click(object sender, EventArgs e)
         {
-            if (YggdrasilManager.AnyHarvestable())
+            if (!YggdrasilManager.AnyHarvestable())
+                return;
+
+            // Same boundary as the YggPanel button: R6/R8 clean up state and rethrow the primary, which
+            // otherwise escapes into the WinForms/Unity pump with no diagnostic and no user feedback. This
+            // handler has no cosmetic refresh, so only the core op and completion need bounding.
+            bool beganHarvest;
+            try
             {
-                if (LockManager.TryYggdrasilSwap(true))
+                beganHarvest = LockManager.TryYggdrasilSwap(true);
+                if (beganHarvest)
                     YggdrasilManager.HarvestAll(true);
-                else
-                    Log("Unable to harvest now");
             }
+            catch (Exception ex)
+            {
+                try { Activity.Failed("Harvest failed. See Logs.", null, true); } catch { }
+                try { LogDebug($"Manual Yggdrasil harvest failed:\n{ex}"); } catch { }
+                return;
+            }
+
+            if (!beganHarvest)
+            {
+                Log("Unable to harvest now");
+                return;
+            }
+
+            try { Activity.Completed("Harvest completed."); }
+            catch (Exception reportEx) { try { LogDebug($"Manual Yggdrasil harvest completion report failed:\n{reportEx}"); } catch { } }
         }
 
         private void TargetITOPOD_CheckedChanged(object sender, EventArgs e)
@@ -2405,21 +2506,11 @@ namespace NGUAdvisor
 
         private void OpenSettingsFolder_Click(object sender, EventArgs e) => Process.Start(GetSettingsDir());
 
-        private void OpenProfileFolder_Click(object sender, EventArgs e) => Process.Start(GetProfilesDir());
-
-        private void ProfileEditButton_Click(object sender, EventArgs e)
-        {
-            // Opens the built-in visual Profile Editor for the active profile (also available via F9).
-            ProfileEditorForm.ShowEditor(GetProfilesDir(), Settings.AllocationFile);
-        }
-
         // Loadouts-tab restructure (user decision 2): the five in-panel mode-loadout sections retire —
         // list + edit controls hidden, label becomes a pointer. All configuration and previews now live
         // on the LOADOUTS tab (LoadoutsPanel), bound to the same settings.
         private void InstallModeLoadouts()
         {
-            _modeSections.Clear();
-
             void Retire(ListBox list, Control label, Control[] editing)
             {
                 try
