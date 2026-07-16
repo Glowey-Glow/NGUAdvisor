@@ -4,19 +4,39 @@ NGUAdvisor is an automation platform for the steam version of NGU Idle. It reads
 
 > **Fair-use / ToS note:** this is a third-party tool that injects into the Steam build of NGU Idle. Use it at your own risk.
 
+**Current release: v1.1.0** — see [CHANGELOG.md](CHANGELOG.md) for what changed.
+
 # The interface
 
-NGU Advisor is one window: a **sidebar** of sections on the left, a **status bar** pinned along the bottom (Auto · Gear · Stage · Rebirth · Profile · Resources · Current Goal · Next Goal), and the selected screen in the middle.
+NGU Advisor is one window with a two-level layout: a **primary rail** down the left with the top-level destinations, a **category strip** that opens the pages inside a destination, and the selected screen in the middle. A **status strip** stays pinned across the Advisor pages showing eight live cells (below).
 
-Set it to **Auto** and the advisor drives every system, explaining each decision as it goes — or open any section to take manual control. Key hotkeys: **F1** opens the window, **F2** pauses/resumes all automation, **F9** opens the Profile Editor (full list [below](#hotkeys)).
+Set it to **Auto** (the master toggle in the status strip's AUTO cell) and the advisor drives every system, explaining each decision as it goes — or open any section to take manual control. Key hotkeys: **F1** opens the window, **F2** pauses/resumes all automation, **F9** opens the Profile Editor (full list [below](#hotkeys)).
 
 ## Advisors
 
-Your home base. **Status** is the at-a-glance health board — state tiles across the top, a growth graph, and the auto-profile the advisor is currently running. **Top Actions** is one prioritized to-do list spanning every system, with a green **AUTO** badge on anything the advisor already handles for you.
+Your home base, split into two pages:
 
-| Status | Top Actions |
+- **Overview** — the at-a-glance summary of configuration and current state: state tiles, a growth graph, and the auto-profile the advisor is currently running. At the normal window size Overview uses a vertical scrollbar; everything stays reachable by scrolling down (there is no horizontal scrolling).
+- **Priorities** — one prioritized, ordered to-do list spanning every system, with a green **AUTO** badge on anything the advisor already handles for you.
+
+### Status strip
+
+Pinned across the Advisor interface, eight cells give a persistent read of where you are:
+
+| Cell | Meaning |
 |---|---|
-| ![Advisors Status](media/screenshots/advisors-status.png) | ![Advisors Top Actions](media/screenshots/advisors-top-actions.png) |
+| **AUTO** | The global automation master (ON/OFF) — the same kill-switch **F2** toggles. |
+| **STAGE** | The progression stage the advisor has detected. |
+| **PROFILE** | The auto-profile currently applied. |
+| **CURRENT GOAL** | What the advisor is working toward right now. |
+| **GEAR** | The active gear state / loadout. |
+| **REBIRTH** | Rebirth timing and state. |
+| **RESOURCES** | A summary of your resource state. |
+| **NEXT GOAL** | What comes after the current goal. |
+
+## Profile
+
+The dedicated home for allocation profiles. It shows the **current profile** and its **allocation source/status**, with buttons to **SWITCH** (change which profile is active), **APPLY** (apply the selected profile now), **EDIT** (open the Profile Editor), **FILES** (open the profiles folder), and **REFRESH** (re-read the profile list). New or edited profile files are picked up automatically; **REFRESH** is there if you want to force a re-scan. Profiles from 1.0.0 load unchanged.
 
 ## Combat
 
@@ -29,6 +49,8 @@ The current target with idle vs. next-version kill odds, champion toggles, zone 
 Gold in and gold out: zone-snipe state, the Time Machine counterfeit, the titan bank, money-pit tosses with reward prediction, and a gold-drain breakdown (diggers / blood rituals / augments) over a live pit-spin log.
 
 ![Economy](media/screenshots/economy.png)
+
+**Money Pit ownership.** Two settings can both stay on at once: **Auto Money Pit** (the standard automatic throw) and **AUTO THROW** (the advisor's pit timing). With AUTO THROW enabled the advisor owns automatic pit timing; with it disabled the standard Auto Money Pit path runs instead — so exactly one automatic path acts at a time and they never compete. **Throw Now** is always an independent, explicit action.
 
 ## Systems
 
@@ -48,15 +70,15 @@ Per-system detail, one sub-tab each.
 
 ## Loadouts
 
-Gear sets the advisor optimises live and swaps in at the right moment — each with a source, an objective, and the exact items that will be equipped. **Titan / Gold / Quest / Yggdrasil** are advisor-optimised; **Cooking / Shockwave** are manual (you enter the gear IDs).
+Seven gear sets the advisor manages, each with its own page: **Titan**, **Gold**, **Quest**, **Yggdrasil**, **Cooking**, **Loot Hunter**, and **Shockwave**. Titan / Gold / Quest / Yggdrasil / Loot Hunter are advisor-optimised; **Cooking** and **Shockwave** are manual (you enter the gear IDs, or capture them from your equipped gear).
 
-| Titan | Gold | Quest |
-|---|---|---|
-| ![Loadouts Titan](media/screenshots/loadouts-titan.png) | ![Loadouts Gold](media/screenshots/loadouts-gold.png) | ![Loadouts Quest](media/screenshots/loadouts-quest.png) |
+Each page keeps three things separate so you always know what will happen:
 
-| Yggdrasil | Cooking (manual) | Shockwave (manual) |
-|---|---|---|
-| ![Loadouts Yggdrasil](media/screenshots/loadouts-yggdrasil.png) | ![Loadouts Cooking](media/screenshots/loadouts-cooking.png) | ![Loadouts Shockwave](media/screenshots/loadouts-shockwave.png) |
+- **the configured loadout** — what the mode is set to (its source and IDs);
+- **WILL EQUIP** — the set that will actually be requested at the next swap;
+- **CURRENTLY EQUIPPED — SNAPSHOT** — a read-only snapshot of your live gear.
+
+Selecting a mode does **not** equip anything, and neither does **REFRESH**. The **CURRENTLY EQUIPPED** snapshot is captured when the page opens and when you press **REFRESH STATE** — it does not update on its own and it is not a live feed. Only an explicit equip/apply, or an automatic swap the advisor performs, changes your gear.
 
 ## Logs
 
@@ -68,9 +90,9 @@ The receipts, filterable and live. **Advisor** is the decision log (why it did w
 
 ## Settings
 
-The master switchboard — four columns of subsystem toggles (Manage / Auto / Swap Gear For / Combat + ITOPOD) plus Misc controls and an Unload button. The fine detail (loadout IDs, zones, thresholds, priorities) lives in the sections above; turning the top-left toggle off stops the advisor entirely.
+The master switchboard — subsystem toggles (Manage / Auto / Swap Gear For / Combat + ITOPOD) plus Misc controls and an **Unload Advisor** button. Turning the top-left master toggle off stops the advisor entirely.
 
-![Settings](media/screenshots/settings.png)
+Settings also has a **search box**: start typing and the list filters to the settings that match (try `daily save` or `titan`); clear the box and the full list comes back, and a query with no matches simply shows nothing. Some settings are shown on the system page that owns them rather than in this list.
 
 ## Cards
 
@@ -84,15 +106,39 @@ The master switchboard — four columns of subsystem toggles (Manage / Auto / Sw
 
 A separate window where the auto-profiles are built: time breakpoints along the rebirth, and within each a prioritised list per system (Energy, Magic, R3, Gear, Diggers, Beards, Wandoos+Diff, Misc). The advisor applies the latest breakpoint whose time has passed. The token grammar these lists use is documented under [Allocation](#allocation).
 
+You can open the editor two ways, depending on which window has focus: **PROFILE → EDIT** works while Advisor Settings has focus, and **F9** opens it while the NGU Idle game window has focus (F9 is an in-game shortcut).
+
+Pasting gear IDs into a loadout is safe: the paste is parsed and validated first, you confirm the result before it replaces anything, and invalid or empty input changes nothing. A short single-level **undo** is available right after a paste.
+
 ![Profile Editor](media/screenshots/profile-editor.png)
 
 # Instructions
 
-Releases can be found in the [releases section](https://github.com/Glowey-Glow/NGUAdvisor/releases) of this repo. Do not download the "Source code" archive — download the zip with the release version in the name (`dist_1.0.0.zip`, for example). Extract it anywhere, launch NGU Idle, then run `Run NGU Advisor.bat` from the extracted folder.
+Releases can be found in the [releases section](https://github.com/Glowey-Glow/NGUAdvisor/releases) of this repo. Do not download the "Source code" archive — download the zip with the release version in the name (`dist_1.1.0.zip`, for example). Extract it anywhere, launch NGU Idle, then run `Run NGU Advisor.bat` from the extracted folder.
 
-You'll know injection worked when the overlay appears in the upper-left corner of the game. Open the window with **F1** and start on **Advisors › Status**.
+You'll know injection worked when the overlay appears in the upper-left corner of the game. Open the window with **F1** and start on **Advisors › Overview**.
 
-To upgrade to a new release, unload from the **Settings** section (**Unload Advisor**), replace the extracted folder with the new release, and run `Run NGU Advisor.bat` again.
+To update to a new release:
+
+1. In **Settings**, click **Unload Advisor**.
+2. Fully restart NGU Idle (the injected DLL is replaced on a fresh game start).
+3. Extract the new release, replacing the old extracted files.
+4. Start NGU Idle.
+5. Run `Run NGU Advisor.bat` again.
+
+Your settings and profiles live in your AppData folder (see [Configuration](#configuration)), not in the release folder, so replacing the extracted files leaves them untouched — don't delete the AppData `NGUAdvisor` folder during an update. Settings and profiles from 1.0.0 remain compatible with 1.1.0; no migration is needed.
+
+# Expected behavior
+
+A few things that work as intended:
+
+- **F9** opens the Profile Editor only when the **NGU Idle game window** has focus (it is an in-game shortcut). If Advisor Settings has focus instead, use **PROFILE → EDIT**.
+- **Overview** uses a vertical scrollbar at the normal window size — scroll down to reach everything; there is no horizontal scrolling.
+- **CURRENTLY EQUIPPED** on a Loadouts page is a snapshot: it updates when you open the page or press **REFRESH STATE**, and it does not update by itself.
+- There is no in-app reload button. To reinject (for example after installing a new build), **Unload Advisor**, fully restart NGU Idle, and run `Run NGU Advisor.bat` again.
+- Existing settings and profiles need no migration for 1.1.0.
+
+If something isn't working, check **debug.log** in the AppData folder first (see [Configuration](#configuration)).
 
 # Configuration
 
