@@ -22,6 +22,7 @@ Existing settings and profile files remain compatible with version 1.1.0.
 - Automatic Money Pit actions use a single configured owner, preventing competing automatic throw paths.
 - Public release builds no longer embed local build-machine paths.
 - Current-equipment snapshots update explicitly through REFRESH STATE rather than implying a live feed.
+- The advisor now holds automatic Iron Pill casts until the pill has been available for at least 30 minutes and would add at least 10% of current base adventure power.
 
 ### Fixed
 
