@@ -799,7 +799,25 @@ namespace NGUAdvisor
 
                 QuestManager.ManageQuests();
 
-                if (Settings.AutoMoneyPit)
+                // ADVISOR PIT OWNS AUTOMATIC THROW TIMING (slice 7.6C2A-1). Both callers reach the same
+                // CheckMoneyPit(), and without this guard they RACE — one that the standard path wins
+                // essentially every time, because it polls here every 0.5s while the advisor evaluates at
+                // most once every 60s (AdvisorApply: 30s Tick throttle, then ApplyPit's own 60s throttle).
+                // So the moment the pit came off cooldown with gold past the manual threshold, this caller
+                // threw — straight through an advisor that was deliberately HOLDING for a reward tier
+                // ("WAIT — 1e15 in ~8m", MoneyPitManager.AdvisorPlan). The cooldown never arbitrated that;
+                // it only made the loser's later call a no-op. The advisor's hold is a pure recomputed
+                // function with no latch, so there is nothing this path could have read to know better —
+                // it has to yield instead.
+                //
+                // RUNTIME PRIORITY, NOT SETTINGS NORMALIZATION: AutoMoneyPit stays exactly as the user saved
+                // it. Both switches remain legally true at once; that combination now means "standard auto is
+                // configured, and the advisor is currently driving". Nothing here writes a setting.
+                //
+                // Not gated: Throw Now (PitPanel calls AdvisorThrow directly — an explicit click is explicit
+                // intent), and Daily Spin below, which is a different game system (dailyController, its own
+                // cooldown, no advisor policy at all) and stays deliberately OUTSIDE this guard.
+                if (Settings.AutoMoneyPit && !Settings.AdvisorPit)
                     MoneyPitManager.CheckMoneyPit();
 
                 if (Settings.AutoSpin)
