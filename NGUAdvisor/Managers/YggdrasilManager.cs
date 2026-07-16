@@ -138,36 +138,99 @@ namespace NGUAdvisor.Managers
                 HarvestAll();
         }
 
+        // Owns the Yggdrasil lock from the moment TryYggdrasilSwap() hands it over: every caller —
+        // the automatic pass, PreRebirth, and both manual buttons — does all of its lock-held work
+        // right here. A throw used to walk out with the lock still on, and nothing could take it
+        // back: the unharvested fruit keeps NeedsHarvest() true, which is precisely the state in
+        // which TryYggdrasilSwap() refuses to restore. The lock stayed for the session, CanSwap()
+        // stayed false, and RebirthAvailable() (BaseRebirth:157) never returned — the run could not
+        // end. So the restoration is reached from both exits now, and the harvest fault survives it.
         public static void HarvestAll(bool tierOver1 = false)
         {
-            ReadTooltipLog(false);
-            var macguffinFruit = Fruits[10];
-            if (tierOver1)
+            try
             {
-                if (macguffinFruit.harvestTier() > 0 && Settings.FavoredMacguffin >= 0)
+                ReadTooltipLog(false);
+                var macguffinFruit = Fruits[10];
+                if (tierOver1)
                 {
-                    InventoryManager.ManageFavoredMacguffin(false, true);
-                    _fc.consumeFruit(10);
+                    if (macguffinFruit.harvestTier() > 0 && Settings.FavoredMacguffin >= 0)
+                    {
+                        InventoryManager.ManageFavoredMacguffin(false, true);
+                        _fc.consumeFruit(10);
+                    }
+                    InventoryManager.RestoreMacguffins();
+                    _yc.consumeAll(true);
                 }
-                InventoryManager.RestoreMacguffins();
-                _yc.consumeAll(true);
+                else
+                {
+                    if (macguffinFruit.harvestTier() > 0 && macguffinFruit.harvestTier() >= macguffinFruit.maxTier && Settings.FavoredMacguffin >= 0)
+                    {
+                        InventoryManager.ManageFavoredMacguffin(false, true);
+                        _fc.consumeFruit(10);
+                    }
+                    InventoryManager.RestoreMacguffins();
+                    _yc.consumeAll();
+                    if (MacguffinFruit2Ready())
+                        _fc.consumeFruit(13);
+                    if (QPFruitReady())
+                        _fc.consumeFruit(14);
+                }
+                LockManager.RestoreYggdrasilSwap();
+                ReadTooltipLog(true);
             }
-            else
+            catch
             {
-                if (macguffinFruit.harvestTier() > 0 && macguffinFruit.harvestTier() >= macguffinFruit.maxTier && Settings.FavoredMacguffin >= 0)
-                {
-                    InventoryManager.ManageFavoredMacguffin(false, true);
-                    _fc.consumeFruit(10);
-                }
-                InventoryManager.RestoreMacguffins();
-                _yc.consumeAll();
-                if (MacguffinFruit2Ready())
-                    _fc.consumeFruit(13);
-                if (QPFruitReady())
-                    _fc.consumeFruit(14);
+                CleanupFailedYggdrasilHarvest();
+                throw;
             }
-            LockManager.TryYggdrasilSwap();
-            ReadTooltipLog(true);
+        }
+
+        // The cleanup faults are reported and dropped, never rethrown. RestoreConfiguration transitions
+        // the lock inside its own finally (R4), so by the time anything left in it can throw the lock
+        // is already safe, and the harvest fault is the one worth keeping — it is why the harvest
+        // failed at all. A throw at or after the normal restoration finds no Yggdrasil lock and the
+        // guarded call simply no-ops, so there is no second release to get wrong.
+        //
+        // MacGuffins go back FIRST, matching the successful path (RestoreMacguffins before the eventual
+        // Yggdrasil restore) and running while the harvest inventory context is still up, before gear
+        // restoration shuffles daycare/inventory slots the MacGuffin restore may need. RestoreMacguffins
+        // is self-guarding on _savedMacguffins: it no-ops unless a favored-fruit swap is actually
+        // outstanding, so a harvest that never touched MacGuffins passes through it untouched. The two
+        // cleanups are independently guarded — one failing must not skip the other, and neither may
+        // replace the primary harvest exception that HarvestAll's catch rethrows.
+        private static void CleanupFailedYggdrasilHarvest()
+        {
+            try
+            {
+                InventoryManager.RestoreMacguffins();
+            }
+            catch (Exception cleanupEx)
+            {
+                try
+                {
+                    LogDebug($"MacGuffin cleanup after failed harvest:\n{cleanupEx}");
+                }
+                catch
+                {
+                    // Best-effort diagnostic. Do not block Yggdrasil cleanup.
+                }
+            }
+
+            try
+            {
+                LockManager.RestoreYggdrasilSwap();
+            }
+            catch (Exception cleanupEx)
+            {
+                try
+                {
+                    LogDebug($"Yggdrasil cleanup after failed harvest:\n{cleanupEx}");
+                }
+                catch
+                {
+                    // Best-effort diagnostic. The original harvest exception remains authoritative.
+                }
+            }
         }
 
         public static void ReadTooltipLog(bool doLog)
