@@ -7,28 +7,57 @@ using static NGUAdvisor.Main;
 
 namespace NGUAdvisor
 {
-    // Route C3 Phase 2: the live status strip docked to the bottom of the advisor Settings window. Built
-    // from standard Label controls (NOT custom OnPaint) because labels repaint reliably in this normal
-    // window under the injected Mono - the earlier custom-paint/floating-window attempts did not. Shows what
-    // the automation is doing and what the player is working toward. Updated from Main.Update (main thread).
+    // Route C3 Phase 2 (slimmed in UI3): the live status strip docked to the bottom of the advisor Settings
+    // window. Built from standard Label controls (NOT custom OnPaint) because labels repaint reliably in this
+    // normal window under the injected Mono - the earlier custom-paint/floating-window attempts did not. Shows
+    // what the automation is doing and what the player is working toward. Updated from Main.Update (main thread).
+    //
+    // UI3: ONE row of eight cells (was two rows of four). The M1 window is fixed at ~1240px wide, so the extra
+    // width lets the strip go from 94px to ~52px — reclaimed on every view, since the strip is Dock.Bottom on
+    // the whole form. Cells are WEIGHTED, not equal: goal/resource cells that carry long strings get more room
+    // than AUTO/REBIRTH. Every dynamic value is measured-fit (UiLayout.FitText — a fixed Mono label with
+    // overflowing text paints NOTHING) and its full text is exposed through a tooltip.
     public class StatusPanel : Panel
     {
-        // Two rows of four cells (AUTO + 7 chips), so values have room in the ~690px-wide settings window.
-        public const int PanelHeight = 94;
-        private const int Pad = 12;
-        private const int Cols = 4;
-        private const int Row1CapY = 6, Row1ValY = 24, Row2CapY = 50, Row2ValY = 68;
+        private const int Pad = 12;         // outer left/right padding
+        private const int AccentH = 3;      // top accent stripe
+        private const int CapY = 6;         // caption baseline (below the stripe)
+        private const int ValY = 24;        // value baseline (the proven 18px caption->value pitch)
+        private const int ValPad = 10;      // value width = cell width - this
+        private const int MinCell = 40;     // defensive per-cell floor
+        private const int BottomMargin = 6;
+        // Value height >= TextH so 9pt descenders (g/p/y) are not clipped (the old 20px box was under it).
+        private const int ValH = UiTheme.TextH;
+        // Derived from the geometry above, not a magic number: value row bottom + a bottom margin.
+        public const int PanelHeight = ValY + ValH + BottomMargin;   // 24 + 22 + 6 = 52
 
-        private class Chip { public Label Cap; public Label Val; }
-
+        // Cells in display order. AUTO is cell 0 (the control); the seven below are the dynamic chips.
         private readonly List<string> _order = new List<string>
             { "STAGE", "PROFILE", "CURRENT GOAL", "GEAR", "REBIRTH", "RESOURCES", "NEXT GOAL" };
+        // Relative column weights, AUTO first then _order. Goal/RESOURCES cells carry long strings and get
+        // the width; the low-pressure AUTO/STAGE/REBIRTH cells lend it. RESOURCES is weighted heaviest
+        // because the in-game Mono renderer paints "E .. M .. R3 .." wider than a headless measure reports,
+        // so it needs real margin. The denominator is the array's OWN sum (computed in DoLayout), so the
+        // weights are the single source of truth and no stored total can drift from them.
+        private static readonly double[] _weights = { 0.75, 0.85, 1.30, 1.50, 1.20, 0.85, 1.70, 1.50 };
+
+        private class Chip { public Label Cap; public Label Val; public string Full = "-"; }
         private readonly Dictionary<string, Chip> _chips = new Dictionary<string, Chip>();
-        private readonly Panel _light;
+
+        // AUTO cell: a bounded panel so the WHOLE cell is a click target (not only the light/caption).
+        private readonly Panel _autoCell;
         private readonly Label _autoCap;
+        private readonly Panel _autoLight;
+        private readonly Label _autoState;   // explicit ON/OFF text (state readable without relying on color)
+
+        private readonly ToolTip _tips;      // ONE instance; content set only when a full value changes
+
         // Wrap-safe throttle. (Environment.TickCount goes NEGATIVE after ~24.9 days uptime, which made the
         // old `TickCount - last < 250` check true forever => the strip never updated. Root cause of the saga.)
         private DateTime _lastContent = DateTime.MinValue;
+        // Last width at which UiLayout.Audit ACTUALLY ran. Recorded only after a successful audit, so a
+        // pre-handle DoLayout at the (fixed) form width can never suppress the real, handle-backed audit.
+        private int _auditedW = -1;
 
         public StatusPanel()
         {
@@ -36,25 +65,45 @@ namespace NGUAdvisor
             Height = PanelHeight;
             BackColor = UiTheme.Surface;
 
-            Controls.Add(new Panel { Dock = DockStyle.Top, Height = 3, BackColor = UiTheme.Accent });
+            _tips = new ToolTip();
 
+            Controls.Add(new Panel { Dock = DockStyle.Top, Height = AccentH, BackColor = UiTheme.Accent });
+
+            // ---- AUTO cell (cell 0): caption + light + ON/OFF, all inside one clickable panel ----
+            _autoCell = new Panel { BackColor = UiTheme.Surface, Cursor = Cursors.Hand };
             _autoCap = MakeCaption("AUTO");
-            Controls.Add(_autoCap);
-            _light = new Panel { Size = new Size(14, 14), BackColor = UiTheme.Danger };
-            Controls.Add(_light);
-
-            // Click the AUTO light (or caption) to toggle automation on/off.
-            _light.Cursor = Cursors.Hand;
             _autoCap.Cursor = Cursors.Hand;
-            _light.Click += ToggleAuto;
-            _autoCap.Click += ToggleAuto;
+            _autoLight = new Panel { Size = new Size(14, 14), BackColor = UiTheme.Danger, Cursor = Cursors.Hand };
+            _autoState = new Label
+            {
+                Text = "OFF", AutoSize = true, Font = UiTheme.Bold, ForeColor = UiTheme.Danger,
+                BackColor = UiTheme.Surface, Cursor = Cursors.Hand
+            };
+            _autoCell.Controls.Add(_autoCap);
+            _autoCell.Controls.Add(_autoLight);
+            _autoCell.Controls.Add(_autoState);
+            Controls.Add(_autoCell);
 
+            // Click ANY part of the cell => exactly one toggle. WinForms Click does not bubble, so a click
+            // lands on exactly one of these controls and fires its handler once — no parent/child double-fire.
+            _autoCell.Click += ToggleAuto;
+            _autoCap.Click += ToggleAuto;
+            _autoLight.Click += ToggleAuto;
+            _autoState.Click += ToggleAuto;
+
+            const string autoTip = "Turns automation execution on or off. Advisor decision ownership is configured separately.";
+            _tips.SetToolTip(_autoCell, autoTip);
+            _tips.SetToolTip(_autoCap, autoTip);
+            _tips.SetToolTip(_autoLight, autoTip);
+            _tips.SetToolTip(_autoState, autoTip);
+
+            // ---- the seven dynamic chips ----
             foreach (var name in _order)
             {
                 var cap = MakeCaption(name);
                 // AutoEllipsis=false: Mono paints NOTHING when AutoEllipsis text overflows (cause of the
-                // missing dashboard AT row). Plain overflow clips instead, which always paints.
-                var val = new Label { AutoSize = false, Height = 20, ForeColor = UiTheme.Ink, Font = UiTheme.Bold, BackColor = UiTheme.Surface, AutoEllipsis = false, Text = "-" };
+                // missing dashboard AT row). We fit the text ourselves via UiLayout.FitText instead.
+                var val = new Label { AutoSize = false, Height = ValH, ForeColor = UiTheme.Ink, Font = UiTheme.Bold, BackColor = UiTheme.Surface, AutoEllipsis = false, Text = "-" };
                 Controls.Add(cap);
                 Controls.Add(val);
                 _chips[name] = new Chip { Cap = cap, Val = val };
@@ -70,9 +119,19 @@ namespace NGUAdvisor
             {
                 if (Settings == null) return;
                 Settings.GlobalEnabled = !Settings.GlobalEnabled;
-                _light.BackColor = Settings.GlobalEnabled ? UiTheme.Cap : UiTheme.Danger;
+                PaintAuto(Settings.GlobalEnabled);
             }
             catch (Exception ex) { LogDebug($"AUTO toggle failed: {ex.Message}"); }
+        }
+
+        // Light + ON/OFF text agree, and both carry the state (never color alone).
+        private void PaintAuto(bool on)
+        {
+            var col = on ? UiTheme.Cap : UiTheme.Danger;
+            if (_autoLight.BackColor != col) _autoLight.BackColor = col;
+            string t = on ? "ON" : "OFF";
+            if (_autoState.Text != t) _autoState.Text = t;
+            if (_autoState.ForeColor != col) _autoState.ForeColor = col;
         }
 
         private static Label MakeCaption(string text) => new Label
@@ -84,32 +143,75 @@ namespace NGUAdvisor
             BackColor = UiTheme.Surface
         };
 
-        // 8 cells (AUTO + 7 chips) laid out as 2 rows x 4 columns. Cell 0 = AUTO; cells 1..7 = the chips.
+        // One row of eight WEIGHTED cells. Column edges are cumulative rounded positions, so the widths sum
+        // EXACTLY to the usable width and the rounding remainder lands deterministically on the last edges.
         private void DoLayout()
         {
-            int colW = Math.Max(60, (Width - Pad * 2) / Cols);
+            int usable = Math.Max(8 * MinCell, Width - Pad * 2);
 
-            CellPos(0, colW, out int ax, out int acy, out int avy);
-            _autoCap.Location = new Point(ax, acy);
-            _light.Location = new Point(ax + 1, avy + 2);
+            // x[0..8] = cell edges. x[i] = Pad + round(usable * cumulativeWeight / totalWeight). Cumulative
+            // rounding => the widths sum EXACTLY to usable and the remainder lands deterministically on the
+            // last edges. totalWeight is the array's own sum, so it can never disagree with the weights.
+            double total = 0;
+            for (int i = 0; i < _weights.Length; i++) total += _weights[i];
 
+            var x = new int[_weights.Length + 1];
+            x[0] = Pad;
+            double cum = 0;
+            for (int i = 0; i < _weights.Length; i++)
+            {
+                cum += _weights[i];
+                x[i + 1] = Pad + (int)Math.Round(usable * cum / total);
+            }
+
+            // Cell 0 = AUTO. Sits below the accent stripe; children are placed relative to the cell.
+            _autoCell.Bounds = new Rectangle(x[0], AccentH, Math.Max(MinCell, x[1] - x[0]), PanelHeight - AccentH);
+            _autoCap.Location = new Point(2, CapY - AccentH);
+            _autoLight.Location = new Point(2, ValY - AccentH + 2);
+            _autoState.Location = new Point(2 + _autoLight.Width + 4, ValY - AccentH);
+
+            // Cells 1..7 = the dynamic chips.
             for (int i = 0; i < _order.Count; i++)
             {
                 var ch = _chips[_order[i]];
-                CellPos(i + 1, colW, out int x, out int capY, out int valY);
-                ch.Cap.Location = new Point(x, capY);
-                ch.Val.Location = new Point(x, valY);
-                ch.Val.Width = Math.Max(30, colW - 10);
+                int cellX = x[i + 1];
+                int cellW = Math.Max(MinCell, x[i + 2] - x[i + 1]);
+                ch.Cap.Location = new Point(cellX, CapY);
+                ch.Val.Location = new Point(cellX, ValY);
+                ch.Val.Width = Math.Max(10, cellW - ValPad);
+                ch.Val.Height = ValH;
+                ApplyFit(ch);
             }
+
+            // Register with the canonical auditor after a REAL layout, never in the 250ms update loop.
+            TryAuditLayout();
         }
 
-        private static void CellPos(int cell, int colW, out int x, out int capY, out int valY)
+        // Audit ONLY when the handle exists and ONLY once per width — and record the width ONLY after the
+        // audit actually runs. So if DoLayout ran before the handle at the fixed form width, that width is
+        // NOT recorded, and this still audits once the handle is created at that same width. The 250ms
+        // UpdateStatus path never calls this, so normal updates never re-audit.
+        private void TryAuditLayout()
         {
-            int col = cell % Cols;
-            int row = cell / Cols;
-            x = Pad + col * colW;
-            capY = row == 0 ? Row1CapY : Row2CapY;
-            valY = row == 0 ? Row1ValY : Row2ValY;
+            if (!IsHandleCreated || Width <= 0 || Width == _auditedW) return;
+            UiLayout.Audit(this, "Status");
+            _auditedW = Width;
+        }
+
+        // The handle can be created after the first DoLayout, at the same fixed width — re-run layout so the
+        // now-handle-backed audit runs (DoLayout -> TryAuditLayout). Without this, a fixed-width form whose
+        // only DoLayout preceded HandleCreated would never get its initial Status audit.
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            DoLayout();
+        }
+
+        // Displayed value = measured-fit; full value lives in the tooltip. Never blanks a nonempty value.
+        private void ApplyFit(Chip ch)
+        {
+            string fit = UiLayout.FitText(ch.Full, UiTheme.Bold, Math.Max(10, ch.Val.Width));
+            if (ch.Val.Text != fit) ch.Val.Text = fit;
         }
 
         // Called each frame from Main.Update (main thread). Throttled; reads live state and updates labels.
@@ -121,7 +223,7 @@ namespace NGUAdvisor
                 _lastContent = DateTime.UtcNow;
 
                 var c = Main.Character;
-                _light.BackColor = Settings != null && Settings.GlobalEnabled ? UiTheme.Cap : UiTheme.Danger;
+                PaintAuto(Settings != null && Settings.GlobalEnabled);
 
                 var prog = ProgressionAnalyzer.Detect();
                 var challenge = ChallengeDetector.Current();
@@ -148,10 +250,17 @@ namespace NGUAdvisor
             catch (Exception e) { LogDebug($"StatusPanel update failed: {e.Message}"); }
         }
 
+        // Store the full value, show a measured-fit form, and expose the full value via tooltip (only when
+        // the source string actually changes — not every 250ms tick).
         private void Set(string name, string value, Color color)
         {
             if (!_chips.TryGetValue(name, out var ch)) return;
-            if (ch.Val.Text != value) ch.Val.Text = value;
+            if (ch.Full != value)
+            {
+                ch.Full = value;
+                _tips.SetToolTip(ch.Val, value);
+                ApplyFit(ch);
+            }
             if (ch.Val.ForeColor != color) ch.Val.ForeColor = color;
         }
 

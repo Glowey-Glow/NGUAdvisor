@@ -45,6 +45,7 @@ namespace NGUAdvisor
         private const int FirstVersioned = 5;   // T6..T12 = indexes 5..11 have versions
         private const int LastVersioned = 11;
 
+        private SystemControlBar _controlBar;
         private Button _srcToggle;
         private Panel _heroCard;
         private Label _targetName;
@@ -79,7 +80,30 @@ namespace NGUAdvisor
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
 
-            _heroCard = new Panel { Location = new Point(10, 10), Size = new Size(W - 54, 150), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle, Tag = "exclusive" };
+            // The two layers, in one place, in the canonical vocabulary (slice 1). AUTOMATION is the
+            // permission the MANAGERS read (Settings.ManageTitans — Main.Update); DECISIONS is the
+            // strategy the ADVISOR reads (Settings.AdvisorTitans — AdvisorApply.Tick). Separate fields,
+            // ANDed in code: ADVISOR with AUTOMATION off computes a target nothing ever acts on, which
+            // is exactly the silent state the bar now names.
+            _controlBar = new SystemControlBar(
+                W - 54,
+                () => Settings.ManageTitans, v => Settings.ManageTitans = v,
+                () => Settings.AdvisorTitans, v => Settings.AdvisorTitans = v,
+                // Kept short on purpose: the bar is 461px wide here, so the line has ~437px. Anything
+                // longer would ellipsize (FitText) — measured, not guessed.
+                "The advisor picks the target and the tool kills it.",
+                "Your manual kill targets drive it; the tool executes them.",
+                "Automation is off — the tool will not touch titans.")
+            {
+                Location = new Point(10, 10)
+            };
+            _controlBar.Changed += SyncFromSettings;
+            Controls.Add(_controlBar);
+
+            // Everything below the bar shifts by its height + an 8px gap.
+            int top = 10 + SystemControlBar.BarHeight + 8;
+
+            _heroCard = new Panel { Location = new Point(10, top), Size = new Size(W - 54, 150), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle, Tag = "exclusive" };
             Controls.Add(_heroCard);
 
             _heroCard.Controls.Add(new Label { Text = "CURRENT TARGET", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.AccentDark, BackColor = UiTheme.Surface, Location = new Point(10, 8) });
@@ -106,14 +130,15 @@ namespace NGUAdvisor
             _akBox = MkReqBox(10, reqW);
             _verBox = MkReqBox(10 + reqW + 12, reqW);
 
-            _chipArea = new Panel { Location = new Point(10, 168), Size = new Size(W - 54, 66), BackColor = UiTheme.Ground, Tag = "exclusive" };
+            _chipArea = new Panel { Location = new Point(10, top + 158), Size = new Size(W - 54, 66), BackColor = UiTheme.Ground, Tag = "exclusive" };
             Controls.Add(_chipArea);
 
             // Manual M-A: uniform 4-column grid, centered abbreviations, only unlocked titans.
-            _manualView = new Panel { Location = new Point(10, 10), Size = new Size(W - 54, 224), BackColor = UiTheme.Ground, Visible = false, Tag = "exclusive" };
+            _manualView = new Panel { Location = new Point(10, top), Size = new Size(W - 54, 224), BackColor = UiTheme.Ground, Visible = false, Tag = "exclusive" };
             Controls.Add(_manualView);
             _manualView.Controls.Add(new Label { Text = "MANUAL KILL TARGETS", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(0, 4) });
-            var mToggle = new Button { Text = "ENABLE ADVISOR MODE", Size = new Size(UiLayout.BtnWidth("ENABLE ADVISOR MODE"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
+            // Canonical vocabulary: this is the DECISIONS layer, so it says ADVISOR — not "advisor mode".
+            var mToggle = new Button { Text = "SWITCH TO ADVISOR", Size = new Size(UiLayout.BtnWidth("SWITCH TO ADVISOR"), 24), Font = UiTheme.Ui, FlatStyle = FlatStyle.Flat };
             mToggle.FlatAppearance.BorderColor = UiTheme.Border;
             mToggle.Location = new Point(_manualView.Width - mToggle.Width, 0);
             UiTheme.ApplyState(mToggle, UiTheme.Cap, Color.White);
@@ -161,12 +186,12 @@ namespace NGUAdvisor
             };
             // Advisor mode picks combat posture itself (AK-ratio heuristic) — the controls give way to
             // a read-only summary of its choice.
-            _combatSummary = new Label { Text = "", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Visible = false, Location = new Point(10, 251) };
+            _combatSummary = new Label { Text = "", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Visible = false, Location = new Point(10, top + 241) };
             Controls.Add(_modeLbl);
             Controls.Add(_combatMode);
             Controls.Add(_beast);
             Controls.Add(_combatSummary);
-            UiLayout.Row(10, 246, 8, _modeLbl, _combatMode, _beast);
+            UiLayout.Row(10, top + 236, 8, _modeLbl, _combatMode, _beast);
 
             SyncFromSettings();
         }
@@ -240,6 +265,10 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
+                // Reflects both layers, including a flip made from the legacy twin toggles below or
+                // from a settings reload. Sync() never raises Changed, so this cannot recurse.
+                _controlBar?.Sync();
+
                 bool advisor = Settings.AdvisorTitans;
                 _srcToggle.Text = advisor ? "ADVISOR" : "MANUAL";
                 UiTheme.ApplyState(_srcToggle, advisor ? UiTheme.Cap : UiTheme.Danger, Color.White);

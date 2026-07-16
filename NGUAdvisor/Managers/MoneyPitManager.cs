@@ -100,13 +100,24 @@ namespace NGUAdvisor.Managers
             return NeedsLowerTier();
         }
 
-        public static void CheckMoneyPit()
+        // ONE ENGINE, TWO SETS OF TERMS. The minimum gold to throw at and whether to read the pit RNG first
+        // are EXECUTION INPUTS now, not settings reads — the standard caller supplies the user's saved pair,
+        // the advisor supplies its own. They used to be the same global, which is why AdvisorThrow had to
+        // overwrite the user's configuration to get a different execution; see AdvisorThrow for what that cost.
+        //
+        // Everything else the throw consults — MoneyPitRunMode, Shockwave, YggdrasilLoadout, ManageMagic —
+        // is genuinely configuration and is still read from Settings, by both callers alike.
+        public static void CheckMoneyPit() => CheckMoneyPit(Settings.MoneyPitThreshold, Settings.PredictMoneyPit);
+
+        // threshold: the minimum gold THIS execution will throw at. 1e5 is the game's own floor, not "off".
+        // predict:   read the pit RNG and equip the predicted outcome's prep loadout before throwing.
+        private static void CheckMoneyPit(double threshold, bool predict)
         {
             if (!MoneyPitReady())
                 return;
 
-            var predictionEnabled = Settings.PredictMoneyPit || Settings.MoneyPitRunMode;
-            if (!predictionEnabled && _character.realGold < Settings.MoneyPitThreshold)
+            var predictionEnabled = predict || Settings.MoneyPitRunMode;
+            if (!predictionEnabled && _character.realGold < threshold)
                 return;
 
             double gold = _character.realGold;
@@ -121,15 +132,89 @@ namespace NGUAdvisor.Managers
                     return;
             }
 
-            if (predictionEnabled)
+            // THE LOCK LEAVES THIS METHOD OR IT DOES NOT LEAVE AT ALL (stage R3).
+            //
+            // Every acquisition of the MoneyPit lock happens below, and this method is the only scope that
+            // ever learns one succeeded — TryMoneyPitSwap acquires and forgets, DoMoneyPit never sees it,
+            // ApplyPit never hears about it. So cleanup is owned here, and it is owned by a finally.
+            //
+            // The try opens BEFORE the acquisition calls, not after, and that is the whole point.
+            // TryMoneyPitSwap sets the lock and THEN swaps gear, beards and diggers, so a throw inside the
+            // prep leaves the lock held before the call has even returned true. Wrapping only the region
+            // after a successful `true` would leave the most dangerous window unprotected.
+            //
+            // What a stuck MoneyPit lock costs, because it is not "the pit stops working": CanSwap() goes
+            // false, and with it go titan/yggdrasil/gold/quest/cooking swaps, the profile's digger, beard
+            // and gear timelines, the advisor's diggers/beards/Wandoos/gear refresh — and RebirthAvailable()
+            // (BaseRebirth:157), so the RUN CANNOT END. Worst case is a throw at or after DoMoneyPit: the pit
+            // is spent, MoneyPitReady() is false for the whole cooldown, every later CheckMoneyPit returns at
+            // the first line, and nothing ever reaches a release. Hours, silent, only a reload clears it.
+            try
             {
-                switch (PredictMoneyPit())
+                if (predictionEnabled)
                 {
-                    case Outcomes.IronPill:
-                        if (gold < Settings.MoneyPitThreshold)
-                            return;
+                    switch (PredictMoneyPit())
+                    {
+                        case Outcomes.IronPill:
+                            if (gold < threshold)
+                                return;
 
-                        if (!LockManager.TryMoneyPitSwap(null, new int[] { 10 }))
+                            if (!LockManager.TryMoneyPitSwap(null, new int[] { 10 }))
+                                return;
+
+                            if (Settings.ManageMagic)
+                            {
+                                _character.removeMostMagic();
+                                _character.bloodMagicController.capAllRituals();
+                            }
+
+                            break;
+                        case Outcomes.Worn:
+                            LoadoutManager.SaveDaycare();
+                            if (!LockManager.TryMoneyPitSwap(Settings.Shockwave, null, true))
+                                return;
+
+                            break;
+                        case Outcomes.Exp:
+                            if (gold < threshold)
+                                return;
+
+                            if (!LockManager.TryMoneyPitSwap(null, new int[] { 11 }))
+                                return;
+
+                            break;
+                        case Outcomes.Pomegranate:
+                            if (gold < threshold)
+                                return;
+
+                            if (!LockManager.TryMoneyPitSwap(Settings.YggdrasilLoadout))
+                                return;
+
+                            break;
+                        case Outcomes.Daycare:
+                            LoadoutManager.SaveDaycare();
+
+                            if (!LockManager.TryMoneyPitSwap())
+                                return;
+
+                            LoadoutManager.FillDaycare();
+
+                            break;
+                        default:
+                            if (gold >= threshold)
+                                DoMoneyPit();
+
+                            return;
+                    }
+                }
+                else
+                {
+                    if (gold < threshold)
+                        return;
+
+                    if (gold >= 1e50 && _character.wishes.wishes[4].level > 0)
+                    {
+                        if (!LockManager.TryMoneyPitSwap(Settings.Shockwave, new[] { 11, 10 }))
                             return;
 
                         if (Settings.ManageMagic)
@@ -137,69 +222,32 @@ namespace NGUAdvisor.Managers
                             _character.removeMostMagic();
                             _character.bloodMagicController.capAllRituals();
                         }
-
-                        break;
-                    case Outcomes.Worn:
-                        LoadoutManager.SaveDaycare();
-                        if (!LockManager.TryMoneyPitSwap(Settings.Shockwave, null, true))
-                            return;
-
-                        break;
-                    case Outcomes.Exp:
-                        if (gold < Settings.MoneyPitThreshold)
-                            return;
-
-                        if (!LockManager.TryMoneyPitSwap(null, new int[] { 11 }))
-                            return;
-
-                        break;
-                    case Outcomes.Pomegranate:
-                        if (gold < Settings.MoneyPitThreshold)
-                            return;
-
-                        if (!LockManager.TryMoneyPitSwap(Settings.YggdrasilLoadout))
-                            return;
-
-                        break;
-                    case Outcomes.Daycare:
-                        LoadoutManager.SaveDaycare();
-
-                        if (!LockManager.TryMoneyPitSwap())
-                            return;
-
-                        LoadoutManager.FillDaycare();
-
-                        break;
-                    default:
-                        if (gold >= Settings.MoneyPitThreshold)
-                            DoMoneyPit();
-
-                        return;
-                }
-            }
-            else
-            {
-                if (gold < Settings.MoneyPitThreshold)
-                    return;
-
-                if (gold >= 1e50 && _character.wishes.wishes[4].level > 0)
-                {
-                    if (!LockManager.TryMoneyPitSwap(Settings.Shockwave, new[] { 11, 10 }))
-                        return;
-
-                    if (Settings.ManageMagic)
-                    {
-                        _character.removeMostMagic();
-                        _character.bloodMagicController.capAllRituals();
                     }
                 }
+
+                DoMoneyPit();
+
+                // Stays INSIDE the try, and ahead of the release: it can throw, and if it does the lock must
+                // still come back. The old code ran it and then released on the same straight line, so a
+                // daycare fault took the release down with it.
+                LoadoutManager.RestoreDaycare();
             }
-
-            DoMoneyPit();
-
-            LoadoutManager.RestoreDaycare();
-            if (LockManager.HasMoneyPitLock())
-                LockManager.TryMoneyPitSwap();
+            finally
+            {
+                // The ONLY release site now — the normal path no longer releases on its own, so there is one
+                // place to be right and one place to look. The guard makes it idempotent and self-selecting:
+                // it fires only if a lock is actually held, so the paths that return before acquiring (no
+                // outcome worth prepping, gold under the tier, a swap that could not be taken) pass through
+                // it untouched, exactly as they always did.
+                //
+                // Says only what it does: this method ATTEMPTS restoration and release on every exit after
+                // acquisition. It cannot promise the lock is never held — LockManager.RestoreConfiguration
+                // does its gear restore BEFORE calling ReleaseLock and can itself throw, which would strand
+                // the lock in spite of this. That hazard is common to all six lock types and is not the pit's
+                // to fix here.
+                if (LockManager.HasMoneyPitLock())
+                    LockManager.TryMoneyPitSwap();
+            }
         }
 
         // Panel chip + advisor policy read the upcoming outcome.
@@ -282,24 +330,20 @@ namespace NGUAdvisor.Managers
             return $"1e{exp}";
         }
 
-        // Advisor throw: policy already decided (AdvisorApply.ApplyPit) — run the predict/prep/throw
-        // path ignoring the manual threshold. Game minimum (1e5) still applies inside.
-        public static void AdvisorThrow()
-        {
-            var savedThreshold = Settings.MoneyPitThreshold;
-            var savedPredict = Settings.PredictMoneyPit;
-            try
-            {
-                Settings.MoneyPitThreshold = 1e5;
-                Settings.PredictMoneyPit = true;
-                CheckMoneyPit();
-            }
-            finally
-            {
-                Settings.MoneyPitThreshold = savedThreshold;
-                Settings.PredictMoneyPit = savedPredict;
-            }
-        }
+        // Advisor throw (and the panel's Throw Now): the policy already decided WHEN — AdvisorApply.ApplyPit
+        // consulted AdvisorPlan, or the user clicked. So this execution runs on the advisor's terms: the
+        // game's own 1e5 floor rather than the user's manual tier (a "don't throw below 1e30" gate must not
+        // veto a decision the advisor already made), and prediction forced on so the outcome's prep loadout
+        // is equipped before the throw.
+        //
+        // These are TRANSIENT EXECUTION INPUTS and are now passed as such. They used to be applied by
+        // ASSIGNING Settings.MoneyPitThreshold = 1e5 and Settings.PredictMoneyPit = true and restoring both
+        // in a finally — but those are persisted properties whose setters write settings.json (SavedSettings:
+        // 203-218: log, IgnoreNextChange, disk write, UpdateForm). So one throw cost FOUR disk writes, four
+        // "Saving Settings" lines and four form refreshes, IgnoreNextChange is a single bool and could only
+        // swallow one of the four watcher events, and a crash inside the window left 1e5 permanently written
+        // over the user's real threshold. Configuration is not a scratch variable. Nothing to restore now.
+        public static void AdvisorThrow() => CheckMoneyPit(1e5, true);
 
         private static Outcomes PredictMoneyPit(double gold = -1.0)
         {

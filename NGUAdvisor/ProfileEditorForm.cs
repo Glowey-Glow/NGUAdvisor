@@ -111,6 +111,9 @@ namespace NGUAdvisor
             Controls.Add(bottom);
             Controls.Add(_status);
             Controls.Add(_header);
+
+            // Audit at Shown, like SettingsForm: before that the controls have no real rendered sizes.
+            Shown += (s, e) => AuditGear();
         }
 
         public void LoadProfile(string profilesDir, string profileName)
@@ -154,6 +157,7 @@ namespace NGUAdvisor
                 _dirty = false;
                 UpdateSaveText();
                 UpdateHeader();
+                if (Visible) AuditGear();   // a Reload rebuilds the cards; re-audit the fresh tree
                 SetStatus($"Loaded E:{_model.Energy.Count} M:{_model.Magic.Count} R3:{_model.R3.Count} Gear:{_model.Gear.Count} Diggers:{_model.Diggers.Count} Beards:{_model.Beards.Count} breakpoints. Other systems preserved.", false);
             }
             catch (Exception e)
@@ -206,6 +210,17 @@ namespace NGUAdvisor
             panel.Changed += (s, e) => MarkDirty();
             page.Controls.Add(panel);
             _tabs.TabPages.Add(page);
+            _gearPanel = panel;
+        }
+
+        // This window never ran the layout auditor — only SettingsForm did — so "UI AUDIT [Gear]" did not
+        // exist to be checked. One diagnostic call, no behaviour: Audit() only measures and logs.
+        private GearEditorPanel _gearPanel;
+
+        private void AuditGear()
+        {
+            try { if (_gearPanel != null) UiLayout.Audit(_gearPanel, "Gear"); }
+            catch (Exception e) { Main.LogDebug($"Gear audit: {e.Message}"); }
         }
 
         private void AddListTab(string title, System.Collections.Generic.List<ProfileModel.ListBreakpoint> data,

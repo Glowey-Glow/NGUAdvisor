@@ -29,6 +29,7 @@ namespace NGUAdvisor
         private readonly Chip[] _chips = new Chip[3];
 
         private Panel _manualStrip;
+        private Button _autoThrow;
         private ComboBox _minTier;
         private Button _predict;
         private Button _pitRun;
@@ -63,8 +64,32 @@ namespace NGUAdvisor
                 if (Settings == null) return;
                 if (!MoneyPitManager.MoneyPitReady()) { Log("Money pit is on cooldown."); return; }
                 Log("Money pit: manual throw");
-                MoneyPitManager.AdvisorThrow();
-                RefreshChips();
+
+                // The throw engages the pit (irreversible) and R3 owns the lock cleanup — but the exception
+                // still escapes into the WinForms/Unity pump with no advisor diagnostic. Bound it here: this
+                // handler is the only place the primary manual fault can be reported.
+                try
+                {
+                    MoneyPitManager.AdvisorThrow();
+                }
+                catch (Exception ex)
+                {
+                    try { Activity.Failed("Money Pit throw failed. See Logs.", null, true); } catch { }
+                    try { LogDebug($"Manual Money Pit throw failed:\n{ex}"); } catch { }
+                    return;
+                }
+
+                // Success reporting and the cosmetic refresh are bounded separately: a report or refresh
+                // fault must not reclassify a throw that already happened as a failure.
+                try { Activity.Completed("Money Pit throw completed."); }
+                catch (Exception reportEx) { try { LogDebug($"Manual Money Pit throw completion report failed:\n{reportEx}"); } catch { } }
+
+                try { RefreshChips(); }
+                catch (Exception refreshEx)
+                {
+                    try { Activity.Warning("Money Pit throw completed, but the panel could not refresh."); } catch { }
+                    try { LogDebug($"Manual Money Pit throw UI refresh failed:\n{refreshEx}"); } catch { }
+                }
             };
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
@@ -104,15 +129,28 @@ namespace NGUAdvisor
                 if (_syncing || Settings == null || _minTier.SelectedIndex < 0) return;
                 Settings.MoneyPitThreshold = MoneyPitManager.moneyPitThresholds[_minTier.SelectedIndex];
             };
+            // AUTO THROW is Settings.AutoMoneyPit, and this panel is now its ONLY home (slice 7.6C2B — the
+            // Application Settings twin is gone). It leads the strip because it is the ON/OFF for the loop the
+            // rest of the strip CONFIGURES: min tier, Predict + Prep and Pit Run Mode are all inputs to
+            // MoneyPitManager.CheckMoneyPit(), and until now the switch that starts it lived in another tab.
+            //
+            // The name is deliberately narrow. It is NOT "pit automation" — AdvisorPit is a separate,
+            // independent throw path, and calling this a master gate would be the exact lie the Pit system row
+            // refuses to tell. It gates the STANDARD threshold-driven throw, and that is all it says.
+            //
+            // Living inside the advisor-exclusive strip is honest as of 7.6C2A-1 and would NOT have been
+            // before it: the standard path really is suppressed while AdvisorPit owns timing (Main.cs:821), so
+            // hiding its controls in advisor mode hides things that genuinely are not running. The saved value
+            // is untouched by the mode switch — flip back to MANUAL PIT and your configuration is still there.
+            _autoThrow = MkTrig("AUTO THROW", () => Settings.AutoMoneyPit = !Settings.AutoMoneyPit);
             _predict = MkTrig("Predict + Prep", () => Settings.PredictMoneyPit = !Settings.PredictMoneyPit);
             _pitRun = MkTrig("Pit Run Mode", () => Settings.MoneyPitRunMode = !Settings.MoneyPitRunMode);
-            _dailySpin = MkTrig("Daily Spin", () => Settings.AutoSpin = !Settings.AutoSpin);
+            _manualStrip.Controls.Add(_autoThrow);
             _manualStrip.Controls.Add(tierLbl);
             _manualStrip.Controls.Add(_minTier);
             _manualStrip.Controls.Add(_predict);
             _manualStrip.Controls.Add(_pitRun);
-            _manualStrip.Controls.Add(_dailySpin);
-            UiLayout.Row(10, 4, 8, tierLbl, _minTier, _predict, _pitRun, _dailySpin);
+            UiLayout.Row(10, 4, 8, _autoThrow, tierLbl, _minTier, _predict, _pitRun);
 
             _advisorNote = new Label
             {
@@ -143,17 +181,29 @@ namespace NGUAdvisor
             _shockNote.Text = "";
             Controls.Add(_shockNote);
 
-            // Re-homed from the retired Old Pit page (Phase B): digger swap + daycare feed.
+            // The ALWAYS-VISIBLE row: switches that keep running no matter which throw path owns the pit.
+            // Re-homed from the retired Old Pit page (Phase B): digger swap + daycare feed — and now Daily
+            // Spin, which was living in the advisor-exclusive strip above and had no business there.
+            //
+            // AutoSpin is gated by GlobalEnabled and NOTHING else (Main.cs:824 -> DoDailySpin). It is a
+            // different game system — dailyController, its own cooldown, no advisor policy anywhere — so the
+            // strip was hiding a switch that carried on spinning the whole time it was out of sight. Same
+            // trap the strip's other tenants avoid by being genuinely suppressed. Pure UI correction: same
+            // field, same binding, same behavior, one control, just somewhere it isn't lying.
             _swapDiggers = MkTrig("Pit Diggers", () => Settings.SwapPitDiggers = !Settings.SwapPitDiggers);
             _daycare = MkTrig("Daycare Feed", () => Settings.MoneyPitDaycare = !Settings.MoneyPitDaycare);
             var dcLbl = new Label { Text = "daycare ≥", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
             _daycareTh = new NumericUpDown { Width = 60, Minimum = 0, Maximum = 100, Font = UiTheme.Ui };
             _daycareTh.ValueChanged += (s, e) => { if (!_syncing && Settings != null) Settings.DaycareThreshold = (int)_daycareTh.Value; };
+            _dailySpin = MkTrig("Daily Spin", () => Settings.AutoSpin = !Settings.AutoSpin);
+            Controls.Add(_dailySpin);
             Controls.Add(_swapDiggers);
             Controls.Add(_daycare);
             Controls.Add(dcLbl);
             Controls.Add(_daycareTh);
-            UiLayout.Row(10, Math.Max(204, belowShock), 8, _swapDiggers, _daycare, dcLbl, _daycareTh);
+            // Daily Spin leads: it is the one here that has nothing to do with the throw, and "Daycare Feed"
+            // keeps its threshold spinner adjacent, which is the pairing that actually needs to stay together.
+            UiLayout.Row(10, Math.Max(204, belowShock), 8, _dailySpin, _swapDiggers, _daycare, dcLbl, _daycareTh);
 
             VisibleChanged += (s, e) => { if (Visible) RefreshChips(); };
             SyncFromSettings();
@@ -192,6 +242,9 @@ namespace NGUAdvisor
 
                 int idx = MoneyPitManager.moneyPitThresholds.FindIndex(t => Math.Abs(t - Settings.MoneyPitThreshold) < t * 0.01);
                 if (idx >= 0) _minTier.SelectedIndex = idx;
+                // Reads Settings, holds no state of its own — so a settings reload, a profile load or any
+                // other writer of AutoMoneyPit lands here like every other control on this panel.
+                UiTheme.ApplyState(_autoThrow, Settings.AutoMoneyPit ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_predict, Settings.PredictMoneyPit ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_pitRun, Settings.MoneyPitRunMode ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_dailySpin, Settings.AutoSpin ? UiTheme.Cap : UiTheme.Danger, Color.White);
@@ -273,7 +326,12 @@ namespace NGUAdvisor
                 }
                 else
                 {
-                    SetChip(2, false, $"MANUAL — min {MoneyPitManager.TierName(Settings.MoneyPitThreshold)}", Settings.AutoMoneyPit ? "AUTO THROW AT THRESHOLD" : "AUTO MONEY PIT IS OFF");
+                    // This chip used to be the ONLY place AutoMoneyPit's state was visible anywhere on the
+                    // panel — it narrated a switch the user could not reach. Now AUTO THROW is right below it,
+                    // so the sub-caption's job shrinks to stating the CONSEQUENCE, and it adopts the control's
+                    // word: "AUTO MONEY PIT IS OFF" named a field, "AUTO THROW IS OFF" names the button the
+                    // user is looking at. Same truth, one vocabulary.
+                    SetChip(2, false, $"MANUAL — min {MoneyPitManager.TierName(Settings.MoneyPitThreshold)}", Settings.AutoMoneyPit ? "AUTO THROW AT THRESHOLD" : "AUTO THROW IS OFF");
                 }
 
                 // Shockwave advice.

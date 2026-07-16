@@ -16,8 +16,14 @@ namespace NGUAdvisor
         private static readonly Color Blood = ColorTranslator.FromHtml("#9E2B36");
 
         private readonly int _w;
-        private Button _managed;                 // AdvisorBlood
-        private Button _cast, _swap;             // CastBloodSpells (manual auto-cast) + AutoSpellSwap
+        // The two layers, verified: AUTOMATION = Settings.CastBloodSpells — a REAL execution gate, not a
+        // manual-mode knob: AdvisorApply.ApplyBlood() opens `if (!CastBloodSpells) return;` (:150), and
+        // BloodMagicManager:35, CustomAllocation:264 and BaseRebirth:223 all gate on it too. DECISIONS =
+        // Settings.AdvisorBlood (AdvisorApply:59, CustomAllocation:285). The old panel showed both as
+        // unrelated buttons — "MANAGED" up top, "Cast Blood Spells" down in the inputs — and never said
+        // that the first does nothing without the second.
+        private SystemControlBar _controlBar;
+        private Button _swap;                    // AutoSpellSwap (manual %-cap path; NOT one of the layers)
         private Button _pillRb, _guffARb, _guffBRb;
         private Button _refresh;
         private Label _bloodTotal, _pillStatus, _advice;
@@ -72,18 +78,35 @@ namespace NGUAdvisor
 
         private void Build()
         {
-            // Toolbar: MANAGED (advisor) · blood total · refresh.
-            _managed = MkToggle("MANAGED", () => Settings.AdvisorBlood = !Settings.AdvisorBlood);
+            // Top row (the established convention): the control bar owns the system state; the compact
+            // panel-level readout and action ride beside it. Width leaves room for both plus a margin —
+            // an AutoScroll host that lays out to its full width summons a horizontal scrollbar.
+            _controlBar = new SystemControlBar(
+                Math.Max(300, _w - 312),
+                () => Settings.CastBloodSpells, v => Settings.CastBloodSpells = v,
+                () => Settings.AdvisorBlood, v => Settings.AdvisorBlood = v,
+                "The advisor routes blood: pill timing, and which spell gets the pool.",
+                "Your thresholds below drive it; the tool casts on your rules.",
+                "Automation is off — the tool will not cast blood spells.");
+            _controlBar.Changed += SyncFromSettings;
+            Controls.Add(_controlBar);
+
             _bloodTotal = new Label { Text = "BLOOD …", AutoSize = false, Size = new Size(220, UiTheme.TextH), Font = UiTheme.Bold, ForeColor = UiTheme.Ink, BackColor = UiTheme.Ground };
             Controls.Add(_bloodTotal);
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
             _refresh.Click += (s, e) => RefreshStatus();
             Controls.Add(_refresh);
-            UiLayout.Row(10, 10, 8, _managed, _bloodTotal, _refresh);
+            UiLayout.Row(10, 10, 8, _controlBar, _bloodTotal, _refresh);
+            // Centre the companions on the bar's 64px row rather than letting them ride its top edge.
+            _bloodTotal.Top = 10 + (SystemControlBar.BarHeight - _bloodTotal.Height) / 2;
+            _refresh.Top = 10 + (SystemControlBar.BarHeight - _refresh.Height) / 2;
+
+            // Everything below the bar shifts by its height + an 8px gap.
+            int top = 10 + SystemControlBar.BarHeight + 8;
 
             // Hero card: IRON PILL status + a pooling bar + routing chips (crimson identity strip).
-            _card = new Panel { Location = new Point(10, 44), Size = new Size(_w - 40, 96), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+            _card = new Panel { Location = new Point(10, top), Size = new Size(_w - 40, 96), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
             var strip = new Panel { Location = new Point(0, 0), Size = new Size(4, 94), BackColor = Blood };
             _pillStatus = new Label { Text = "IRON PILL …", AutoSize = false, Size = new Size(_w - 60, UiTheme.TextH), Font = UiTheme.Bold, ForeColor = Blood, BackColor = UiTheme.Surface, Location = new Point(12, 8) };
             _barOuter = new Panel { Location = new Point(12, 34), Size = new Size(_w - 68, 28), BackColor = UiTheme.Zebra, BorderStyle = BorderStyle.FixedSingle };
@@ -101,29 +124,30 @@ namespace NGUAdvisor
             _card.Controls.Add(_routeChips);
             Controls.Add(_card);
 
-            // INPUTS: manual auto-cast toggles + thresholds (moved from the Settings tab).
-            MkHead("INPUTS", 10, 150);
-            _cast = MkToggle("Cast Blood Spells", () => Settings.CastBloodSpells = !Settings.CastBloodSpells);
+            // INPUTS: manual auto-cast toggles + thresholds (moved from the Settings tab). "Cast Blood
+            // Spells" is GONE from this row — it was never an input, it was the AUTOMATION layer wearing
+            // an input's clothes, and it now lives in the bar where its dependency can be stated.
+            MkHead("INPUTS", 10, top + 106);
             _swap = MkToggle("Auto Spell Swap", () => Settings.AutoSpellSwap = !Settings.AutoSpellSwap);
             _pillRb = MkToggle("Pill on Rebirth", () => Settings.IronPillOnRebirth = !Settings.IronPillOnRebirth);
             _guffARb = MkToggle("Guff A on Rebirth", () => Settings.BloodMacGuffinAOnRebirth = !Settings.BloodMacGuffinAOnRebirth);
             _guffBRb = MkToggle("Guff B on Rebirth", () => Settings.BloodMacGuffinBOnRebirth = !Settings.BloodMacGuffinBOnRebirth);
-            UiLayout.Row(10, 174, 8, _cast, _swap, _pillRb, _guffARb, _guffBRb);
+            UiLayout.Row(10, top + 130, 8, _swap, _pillRb, _guffARb, _guffBRb);
 
             // No "Pill ≥" input: IronPillThreshold is dead — the advisor casts the pill on
             // BloodPlanner timing (CastIronNow), nothing reads a manual blood threshold anymore.
             int cx = 10;
-            _guffAThr = MkNum("Guff A ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinAThreshold = (int)v);
-            _guffBThr = MkNum("Guff B ≥", ref cx, 210, 0, 100000, v => Settings.BloodMacGuffinBThreshold = (int)v);
+            _guffAThr = MkNum("Guff A ≥", ref cx, top + 166, 0, 100000, v => Settings.BloodMacGuffinAThreshold = (int)v);
+            _guffBThr = MkNum("Guff B ≥", ref cx, top + 166, 0, 100000, v => Settings.BloodMacGuffinBThreshold = (int)v);
 
             cx = 10;
-            _spag = MkNum("Spaghetti %", ref cx, 244, 0, 100, v => Settings.SpaghettiThreshold = (int)v, 60);
+            _spag = MkNum("Spaghetti %", ref cx, top + 200, 0, 100, v => Settings.SpaghettiThreshold = (int)v, 60);
             // Counterfeit has NO game-side cap (goldBonus = 1 + floor((log2(blood/min)+1)^2)/100,
             // decomp AllBloodMagicController:105) — the old max of 100 falsely capped the target.
-            _counter = MkNum("Counterfeit %", ref cx, 244, 0, 100000, v => Settings.CounterfeitThreshold = (int)v, 60);
-            Controls.Add(new Label { Text = "Number ≥", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(cx, 248) });
+            _counter = MkNum("Counterfeit %", ref cx, top + 200, 0, 100000, v => Settings.CounterfeitThreshold = (int)v, 60);
+            Controls.Add(new Label { Text = "Number ≥", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(cx, top + 204) });
             cx += UiLayout.MeasureText("Number ≥", UiTheme.Ui) + 6;
-            _numberThr = new TextBox { Location = new Point(cx, 244), Width = 110, Font = UiTheme.Ui };
+            _numberThr = new TextBox { Location = new Point(cx, top + 200), Width = 110, Font = UiTheme.Ui };
             _numberThr.TextChanged += (s, e) =>
             {
                 if (_syncing || Settings == null) return;
@@ -131,7 +155,7 @@ namespace NGUAdvisor
             };
             Controls.Add(_numberThr);
 
-            _advice = new Label { Text = "", AutoSize = false, Size = new Size(_w - 54, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, 286) };
+            _advice = new Label { Text = "", AutoSize = false, Size = new Size(_w - 54, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, top + 242) };
             Controls.Add(_advice);
         }
 
@@ -170,9 +194,12 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
-                UiTheme.ApplyState(_managed, Settings.AdvisorBlood ? UiTheme.Cap : UiTheme.Danger, Color.White);
-                _managed.Text = Settings.AdvisorBlood ? "MANAGED" : "UNMANAGED";
-                UiTheme.ApplyState(_cast, Settings.CastBloodSpells ? UiTheme.Cap : UiTheme.Danger, Color.White);
+                // Reflects both layers, incl. a flip made from the ADVICE panel's blood chip (the other
+                // reachable writer of AdvisorBlood) or a settings reload — SettingsForm.UpdateFromSettings
+                // calls this method. Sync() never raises Changed, so this cannot recurse. It is NOT in
+                // RefreshStatus: the bar stays out of the per-tick path entirely.
+                _controlBar?.Sync();
+
                 UiTheme.ApplyState(_swap, Settings.AutoSpellSwap ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_pillRb, Settings.IronPillOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_guffARb, Settings.BloodMacGuffinAOnRebirth ? UiTheme.Cap : UiTheme.Danger, Color.White);

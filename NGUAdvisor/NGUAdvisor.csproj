@@ -30,6 +30,19 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);Assembly-CSharp.dll;dist_3.6.1.zip</DefaultItemExcludes>
   </PropertyGroup>
 
+  <!--
+    Public-release hardening: strip debug metadata from the Release DLL. The SDK default
+    (DebugType=portable) writes a PE CodeView record that embeds the local obj\Release PDB
+    path into the shipped assembly. DebugType=None removes that debug directory and emits no
+    PDB, so no local build path is embedded. Release only; Debug keeps its normal symbols.
+    Method names stay in metadata (stack traces still name methods) and no PDB was ever
+    shipped, so runtime line-number diagnostics are unchanged.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- net48 reference assemblies from NuGet so no Visual Studio / targeting pack is needed -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

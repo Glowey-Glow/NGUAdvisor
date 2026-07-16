@@ -103,93 +103,91 @@ namespace NGUAdvisor.Managers
             catch { }
         }
 
+        // R11: the outer whole-Tick catch was removed so AdvisorApply's RunStep("Challenge overlay", ...)
+        // owns the bounded fault report. The narrow boss-read / detector probes keep their own catches.
         public static void Tick()
         {
-            try
+            var c = Main.Character;
+            if (c == null) return;
+
+            var s = Main.Settings;
+            bool overlays = s != null && s.AdvisorChallenges;
+            bool auto = s != null && s.AutoProfile;
+            if (!overlays && !auto)
             {
-                var c = Main.Character;
-                if (c == null) return;
-
-                var s = Main.Settings;
-                bool overlays = s != null && s.AdvisorChallenges;
-                bool auto = s != null && s.AutoProfile;
-                if (!overlays && !auto)
-                {
-                    GearObjectiveOverride = null;
-                    Phase = "";
-                    _lastGenKey.Clear();   // narrate afresh when the auto profile comes back
-                    return;
-                }
-
-                // Phase (user rule, post-challenge recovery): PUSH while the number is still cheap
-                // power — i.e. projected number growth over 30 minutes covers MULTIPLE bosses (each
-                // boss costs x2 attack on Normal, x1.5 Evil) — or while bosses are actively falling.
-                // GROWTH once 30 minutes of number wouldn't move the wall much: pivot to the
-                // long-horizon systems (wandoos/NGU).
-                int boss = 0;
-                try { boss = c.bossID; } catch { }
-                if (boss != _lastBoss)
-                {
-                    _lastBoss = boss;
-                    _lastBossKill = DateTime.UtcNow;
-                }
-                bool recentKill = (DateTime.UtcNow - _lastBossKill).TotalMinutes < 5;
-                UpdateNumberProjection(c);
-                bool numberCheap = !double.IsNaN(Bosses30) && Bosses30 >= 2.0;
-                Phase = (recentKill || numberCheap) ? "push" : "growth";
-
-                // D1: run segment (the guide's 24h rebirth shape), auto-profile only.
-                if (auto) UpdateSegment(c);
-                else Segment = "";
-
-                if (!overlays)
-                {
-                    // Auto profile only: no challenge transforms; gear follows the segment
-                    // outside challenges (a challenge with overlays off = profile rules).
-                    GearObjectiveOverride = ChallengeDetector.Current() == null ? SegmentGear() : null;
-                    return;
-                }
-
-                string cur = ChallengeDetector.Current();
-                if (cur != _activeChallenge)
-                {
-                    if (cur != null) Record("SEGMENT", $"challenge start: {cur}", "overlay active");
-                    else if (_activeChallenge != null) Record("SEGMENT", $"challenge complete: {_activeChallenge}", "back to profile rules");
-                    _activeChallenge = cur;
-                    GearObjectiveOverride = null;
-                    // Fresh narration state per challenge (else a lingering template flag would
-                    // suppress the new challenge's "template applied" feed entry). Generation key
-                    // too: the auto profile re-announces when it resumes after the challenge.
-                    _lastActive.Clear();
-                    _templateOn.Clear();
-                    _lastGenKey.Clear();
-                }
-                if (cur == null)
-                {
-                    GearObjectiveOverride = auto ? SegmentGear() : null;
-                    return;
-                }
-
-                // NOEC: no equipment exists — gear rotation stands down entirely.
-                if (cur == "NOEC")
-                {
-                    if (GearObjectiveOverride != null)
-                    {
-                        GearObjectiveOverride = null;
-                        Record("GEAR", "gear rotation off", "NOEC: no equipment in this challenge");
-                    }
-                    return;
-                }
-
-                bool pushing = Phase == "push";
-                string want = pushing ? "Adventure" : "NGUs";
-                if (want != GearObjectiveOverride)
-                {
-                    GearObjectiveOverride = want;
-                    Record("GEAR", $"gear → {want}", pushing ? $"push phase: boss {boss} within reach" : "growth phase: at the boss wall");
-                }
+                GearObjectiveOverride = null;
+                Phase = "";
+                _lastGenKey.Clear();   // narrate afresh when the auto profile comes back
+                return;
             }
-            catch (Exception e) { Main.LogDebug($"ChallengeOverlay: {e.Message}"); }
+
+            // Phase (user rule, post-challenge recovery): PUSH while the number is still cheap
+            // power — i.e. projected number growth over 30 minutes covers MULTIPLE bosses (each
+            // boss costs x2 attack on Normal, x1.5 Evil) — or while bosses are actively falling.
+            // GROWTH once 30 minutes of number wouldn't move the wall much: pivot to the
+            // long-horizon systems (wandoos/NGU).
+            int boss = 0;
+            try { boss = c.bossID; } catch { }
+            if (boss != _lastBoss)
+            {
+                _lastBoss = boss;
+                _lastBossKill = DateTime.UtcNow;
+            }
+            bool recentKill = (DateTime.UtcNow - _lastBossKill).TotalMinutes < 5;
+            UpdateNumberProjection(c);
+            bool numberCheap = !double.IsNaN(Bosses30) && Bosses30 >= 2.0;
+            Phase = (recentKill || numberCheap) ? "push" : "growth";
+
+            // D1: run segment (the guide's 24h rebirth shape), auto-profile only.
+            if (auto) UpdateSegment(c);
+            else Segment = "";
+
+            if (!overlays)
+            {
+                // Auto profile only: no challenge transforms; gear follows the segment
+                // outside challenges (a challenge with overlays off = profile rules).
+                GearObjectiveOverride = ChallengeDetector.Current() == null ? SegmentGear() : null;
+                return;
+            }
+
+            string cur = ChallengeDetector.Current();
+            if (cur != _activeChallenge)
+            {
+                if (cur != null) Record("SEGMENT", $"challenge start: {cur}", "overlay active");
+                else if (_activeChallenge != null) Record("SEGMENT", $"challenge complete: {_activeChallenge}", "back to profile rules");
+                _activeChallenge = cur;
+                GearObjectiveOverride = null;
+                // Fresh narration state per challenge (else a lingering template flag would
+                // suppress the new challenge's "template applied" feed entry). Generation key
+                // too: the auto profile re-announces when it resumes after the challenge.
+                _lastActive.Clear();
+                _templateOn.Clear();
+                _lastGenKey.Clear();
+            }
+            if (cur == null)
+            {
+                GearObjectiveOverride = auto ? SegmentGear() : null;
+                return;
+            }
+
+            // NOEC: no equipment exists — gear rotation stands down entirely.
+            if (cur == "NOEC")
+            {
+                if (GearObjectiveOverride != null)
+                {
+                    GearObjectiveOverride = null;
+                    Record("GEAR", "gear rotation off", "NOEC: no equipment in this challenge");
+                }
+                return;
+            }
+
+            bool pushing = Phase == "push";
+            string want = pushing ? "Adventure" : "NGUs";
+            if (want != GearObjectiveOverride)
+            {
+                GearObjectiveOverride = want;
+                Record("GEAR", $"gear → {want}", pushing ? $"push phase: boss {boss} within reach" : "growth phase: at the boss wall");
+            }
         }
 
         // ---- Slice 2: allocation strips. The per-system challenge guards already exist (AugmentBP/

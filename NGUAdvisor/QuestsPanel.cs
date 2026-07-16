@@ -14,7 +14,12 @@ namespace NGUAdvisor
     // strategy (AdvisorApply.ApplyQuests) + the capstone hold; MANUAL exposes the full rulebook.
     public class QuestsPanel : Panel
     {
-        private Button _srcToggle;
+        // The two layers, verified: AUTOMATION = Settings.AutoQuest (the execution gate the quest block
+        // in Main.Update reads, Main.cs:1015); DECISIONS = Settings.AdvisorQuests (the strategy the
+        // advisor reads — QuestManager.cs:72, AdvisorApply.cs:58). Independent fields, ANDed in practice,
+        // which is why "AutoQuest off + advisor on" was the state this panel already had to apologise for
+        // in prose. The bar owns that explanation now.
+        private SystemControlBar _controlBar;
         private Button _refresh;
 
         private Panel _ticket;
@@ -57,19 +62,26 @@ namespace NGUAdvisor
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
 
-            _srcToggle = MkBtn("ADVISOR RUNS QUESTS");
-            _srcToggle.Click += (s, e) =>
-            {
-                if (Settings == null) return;
-                Settings.AdvisorQuests = !Settings.AdvisorQuests;
-                SyncFromSettings();
-            };
+            // Replaces the old "ADVISOR RUNS QUESTS / MANUAL RULES" button, which showed only the
+            // DECISIONS layer and left AUTOMATION invisible on another screen.
+            _controlBar = new SystemControlBar(
+                W - 98,   // leaves room for the refresh button on the same row
+                () => Settings.AutoQuest, v => Settings.AutoQuest = v,
+                () => Settings.AdvisorQuests, v => Settings.AdvisorQuests = v,
+                "The advisor runs quests: picks them, butters, banks and abandons.",
+                "Your quest rules below drive it; the tool executes them.",
+                "Automation is off — the tool will not start or manage quests.");
+            _controlBar.Changed += SyncFromSettings;
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
             _refresh.Click += (s, e) => RefreshView();
-            Controls.Add(_srcToggle);
+            Controls.Add(_controlBar);
             Controls.Add(_refresh);
-            UiLayout.Row(10, 10, 8, _srcToggle, _refresh);
+            UiLayout.Row(10, 10, 8, _controlBar, _refresh);
+            _refresh.Top = 10 + (SystemControlBar.BarHeight - _refresh.Height) / 2;   // centred on the bar
+
+            // Everything below the bar shifts by its height + an 8px gap.
+            int top = 10 + SystemControlBar.BarHeight + 8;
 
             // Ticket stub (left) — gold left edge like a torn ticket. Ticket + bank split the canvas
             // 3:2 (the legacy 372/228 in the 664 canvas); in a narrow M1 column they STACK instead
@@ -78,7 +90,7 @@ namespace NGUAdvisor
             int contentW = W - 44;
             int ticketW = narrow ? contentW : contentW * 3 / 5;   // 372 legacy
             int bankW = narrow ? contentW : contentW - ticketW - 20;
-            _ticket = new Panel { Location = new Point(10, 44), Size = new Size(ticketW, 100), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+            _ticket = new Panel { Location = new Point(10, top), Size = new Size(ticketW, 100), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
             Controls.Add(_ticket);
             _ticket.Controls.Add(new Panel { Location = new Point(0, 0), Size = new Size(4, 98), BackColor = UiTheme.Energy });
             _badge = new Label { Text = "", AutoSize = false, Size = new Size(64, 18), Font = UiTheme.Chip, ForeColor = Color.White, BackColor = UiTheme.Faint, TextAlign = ContentAlignment.MiddleCenter, Location = new Point(12, 7) };
@@ -95,7 +107,7 @@ namespace NGUAdvisor
             _ticket.Controls.Add(_capstone);
 
             // Bank meter (right; below the ticket when narrow).
-            _bank = new Panel { Location = narrow ? new Point(10, 150) : new Point(10 + ticketW + 10, 44), Size = new Size(bankW, 100), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+            _bank = new Panel { Location = narrow ? new Point(10, top + 106) : new Point(10 + ticketW + 10, top), Size = new Size(bankW, 100), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
             Controls.Add(_bank);
             _bank.Controls.Add(new Label { Text = "QUEST BANK", AutoSize = true, Font = UiTheme.ColHeader, ForeColor = UiTheme.Muted, BackColor = UiTheme.Surface, Location = new Point(10, 6) });
             _bankCount = new Label { Text = "…", AutoSize = false, Size = new Size(90, UiTheme.TextH), Font = UiTheme.Bold, ForeColor = UiTheme.Accent, BackColor = UiTheme.Surface, Location = new Point(10, 28) };
@@ -109,7 +121,7 @@ namespace NGUAdvisor
             _bank.Controls.Add(_bankOuter);
             _bank.Controls.Add(_bankVerdict);
 
-            int rulesY = narrow ? 258 : 152;
+            int rulesY = narrow ? top + 214 : top + 108;
             _plan = new Label { Text = "", AutoSize = false, Size = new Size(W - 54, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground, Location = new Point(10, rulesY + 4), Tag = "exclusive" };
             Controls.Add(_plan);
 
@@ -161,7 +173,7 @@ namespace NGUAdvisor
             Controls.Add(_beast);
             Controls.Add(_poolMajors);
             Controls.Add(_holdGear);
-            UiLayout.WrapRow(10, Math.Max(226, _rules.Bottom + 8), 8, W - 20, 30,
+            UiLayout.WrapRow(10, Math.Max(top + 182, _rules.Bottom + 8), 8, W - 20, 30,
                 new Control[] { cmLbl, _combatMode, _beast, _poolMajors, _holdGear });
 
             VisibleChanged += (s, e) => { if (Visible) RefreshView(); };
@@ -202,10 +214,14 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
+                // Reflects both layers, incl. a flip made from the Settings grid or a settings reload.
+                // Sync() never raises Changed, so this cannot recurse.
+                _controlBar?.Sync();
+
                 bool advisor = Settings.AdvisorQuests;
-                _srcToggle.Text = advisor ? "ADVISOR RUNS QUESTS" : "MANUAL RULES";
-                UiTheme.ApplyState(_srcToggle, advisor ? UiTheme.Cap : UiTheme.Danger, Color.White);
-                _plan.Visible = advisor;
+                // The plan sentence is hidden when the advisor is idle: the bar states WHY (once), and a
+                // plan for work that cannot run would be a lie. The rulebook is the manual-mode view.
+                _plan.Visible = advisor && Settings.AutoQuest;
                 _rules.Visible = !advisor;
 
                 UiTheme.ApplyState(_majors, Settings.AllowMajorQuests ? UiTheme.Cap : UiTheme.Danger, Color.White);
@@ -263,7 +279,9 @@ namespace NGUAdvisor
                     _badge.BackColor = UiTheme.Faint;
                     _questName.Text = "No quest running";
                     _dropInner.Width = 0;
-                    _dropText.Text = Settings.AutoQuest ? "next quest starts automatically" : "Auto Quest is OFF";
+                    // Ticket status, not a second dependency warning — but it must not carry the retired
+                    // "Auto Quest" name for the automation layer.
+                    _dropText.Text = Settings.AutoQuest ? "next quest starts automatically" : "no quest — automation is off";
                     _capstone.Text = "";
                 }
 
@@ -291,14 +309,15 @@ namespace NGUAdvisor
                     : overfill ? "overfill: FORCING QUESTS" : "overfill guard: safe";
                 _bankVerdict.ForeColor = bursting ? UiTheme.Energy : overfill && !pooling ? UiTheme.Danger : UiTheme.Muted;
 
-                // Plan sentence (advisor mode).
-                if (Settings.AdvisorQuests)
+                // Plan sentence (advisor mode, and only when it can actually run — the old
+                // "Auto Quest is OFF (Settings tab) — advisor is idle." line lived here and is now the
+                // control bar's job. One idle explanation, not two competing ones.)
+                if (Settings.AdvisorQuests && Settings.AutoQuest)
                 {
                     string plan;
                     bool hunting = false;
                     try { hunting = GearHunter.Active; } catch { }
-                    if (!Settings.AutoQuest) plan = "Auto Quest is OFF (Settings tab) — advisor is idle.";
-                    else if (QuestManager.CapstoneItem != null) plan = $"Plan: max {QuestManager.CapstoneItem}, turn in, then {(banked > 0 ? "next banked major" : "idle minors")}.";
+                    if (QuestManager.CapstoneItem != null) plan = $"Plan: max {QuestManager.CapstoneItem}, turn in, then {(banked > 0 ? "next banked major" : "idle minors")}.";
                     else if (bursting) plan = $"Plan: BURST — chain {(q.inQuest && !q.reducedRewards ? "this major and " : "")}{banked} banked major{(banked == 1 ? "" : "s")}{(hunting ? " (paused: gear hunt)" : "")}.";
                     else if (q.inQuest && !q.reducedRewards) plan = $"Plan: finish this major → {(banked > 0 ? $"{banked} more banked" : "idle minors while sniping resumes")}.";
                     else if (pooling) plan = $"Plan: pooling majors — {banked}/{maxBank} banked; burst when full{(hunting ? " and the gear hunt ends" : "")}.";

@@ -35,11 +35,23 @@ namespace NGUAdvisor
 
         public static readonly string[] Names =
             { "TM", "GOLD", "SEGMENT", "NGUs", "PILL", "GEAR", "TITAN", "DIGGERS", "BEARDS", "QUEST", "PIT", "BOSS" };
+        // Click-through targets, one per light in Names order. Semantic destinations, not rail paths:
+        // slice 8 retargets them in Managers/Destinations.cs and this array does not move.
         // Empty target = the detail IS the Advisors canvas; no navigation.
         private static readonly string[] NavTargets =
         {
-            "Economy", "Economy", "", "", "",
-            "Loadouts", "Combat", "", "", "Systems/Quests", "Economy", ""
+            Destinations.Gold,      // TM — the time machine is a stage of the gold pipeline
+            Destinations.Gold,      // GOLD
+            "",                     // SEGMENT
+            "",                     // NGUs
+            "",                     // PILL
+            Destinations.Loadouts,  // GEAR
+            Destinations.Titans,    // TITAN
+            "",                     // DIGGERS
+            "",                     // BEARDS
+            Destinations.Quests,    // QUEST
+            Destinations.Pit,       // PIT
+            ""                      // BOSS
         };
 
         public LightsPanel(SettingsForm form, int canvasW, int cols)

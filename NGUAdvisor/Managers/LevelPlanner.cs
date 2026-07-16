@@ -30,54 +30,52 @@ namespace NGUAdvisor.Managers
         public static bool AtFrozen => _frozenAt;
         public static bool TmFrozen => _frozenTm;
 
+        // R11: the outer whole-Tick catch was removed so AdvisorApply's RunStep("Level planner", ...) owns
+        // the bounded fault report. The narrow NextObjective / gold probes keep their own catches.
         public static void Tick()
         {
+            var c = Main.Character;
+            var s = Main.Settings;
+            if (c == null || s == null) return;
+
+            if (!s.AutoProfile)
+            {
+                ThawAll(c);
+                Status = "";
+                return;
+            }
+
+            TickPurposeTargets(c);
+
+            bool marathon = ChallengeOverlay.Segment == "NGU MARATHON";
+
+            // Power/Toughness sufficiency vs the REALISTIC objective: the next un-AK'd
+            // titan+version at THIS difficulty (never Evil content while on Normal — the
+            // T7 overreach bug).
+            bool atSufficient = false;
             try
             {
-                var c = Main.Character;
-                var s = Main.Settings;
-                if (c == null || s == null) return;
-
-                if (!s.AutoProfile)
-                {
-                    ThawAll(c);
-                    Status = "";
-                    return;
-                }
-
-                TickPurposeTargets(c);
-
-                bool marathon = ChallengeOverlay.Segment == "NGU MARATHON";
-
-                // Power/Toughness sufficiency vs the REALISTIC objective: the next un-AK'd
-                // titan+version at THIS difficulty (never Evil content while on Normal — the
-                // T7 overreach bug).
-                bool atSufficient = false;
-                try
-                {
-                    var obj = OptimizationAdvisor.NextObjective();
-                    atSufficient = !obj.Known
-                        || (c.totalAdvAttack() >= obj.ReqAttack * 1.1 && c.totalAdvDefense() >= obj.ReqDefense * 1.1);
-                }
-                catch { }
-
-                bool wantAt = marathon && atSufficient;
-                if (wantAt && !_frozenAt) FreezeAt(c);
-                else if (!wantAt && _frozenAt) ThawAt(c);
-
-                // TM sufficiency: funded and not starving the augment budget.
-                bool goldOk = false;
-                try { goldOk = c.machine.realBaseGold > 0 && !OptimizationAdvisor.GoldStarvedForAugs(c, 1.0); } catch { }
-
-                bool wantTm = marathon && goldOk;
-                if (wantTm && !_frozenTm) FreezeTm(c);
-                else if (!wantTm && _frozenTm) ThawTm(c);
-
-                Status = _frozenAt || _frozenTm
-                    ? $"caps: {(_frozenAt ? "AT" : "")}{(_frozenAt && _frozenTm ? "+" : "")}{(_frozenTm ? "TM" : "")} frozen"
-                    : "caps: none";
+                var obj = OptimizationAdvisor.NextObjective();
+                atSufficient = !obj.Known
+                    || (c.totalAdvAttack() >= obj.ReqAttack * 1.1 && c.totalAdvDefense() >= obj.ReqDefense * 1.1);
             }
-            catch (Exception e) { Main.LogDebug($"LevelPlanner: {e.Message}"); }
+            catch { }
+
+            bool wantAt = marathon && atSufficient;
+            if (wantAt && !_frozenAt) FreezeAt(c);
+            else if (!wantAt && _frozenAt) ThawAt(c);
+
+            // TM sufficiency: funded and not starving the augment budget.
+            bool goldOk = false;
+            try { goldOk = c.machine.realBaseGold > 0 && !OptimizationAdvisor.GoldStarvedForAugs(c, 1.0); } catch { }
+
+            bool wantTm = marathon && goldOk;
+            if (wantTm && !_frozenTm) FreezeTm(c);
+            else if (!wantTm && _frozenTm) ThawTm(c);
+
+            Status = _frozenAt || _frozenTm
+                ? $"caps: {(_frozenAt ? "AT" : "")}{(_frozenAt && _frozenTm ? "+" : "")}{(_frozenTm ? "TM" : "")} frozen"
+                : "caps: none";
         }
 
         // ---- Purpose-driven AT caps (slots 2..4), live every tick while the auto profile runs. ----

@@ -30,6 +30,11 @@ namespace NGUAdvisor.Managers
 
             protected abstract void CastSpell();
 
+            // Per-spell fail-safe evaluated right before casting, on top of the shared unlock/cooldown/
+            // blood/threshold checks. Default: never holds. Returns true to HOLD (skip) the cast and sets
+            // reason for logging. IronPill overrides this.
+            protected virtual bool FailSafeHold(double effect, out string reason) { reason = null; return false; }
+
             public void Cast(bool rebirth = false)
             {
                 if (!Settings.CastBloodSpells)
@@ -68,6 +73,14 @@ namespace NGUAdvisor.Managers
                     return;
                 }
 
+                // Per-spell fail-safe (advisor-only; skipped on a forced rebirth cast, which is use-it-or-lose-it).
+                if (!forced && FailSafeHold(effect, out var holdReason))
+                {
+                    if (Time < cooldown + 10f)
+                        Log($"Casting Failed: Blood Spell {name} - {holdReason}");
+                    return;
+                }
+
                 CastSpell();
                 Log($"Casting Blood Spell {name} @ {effect:F0} power");
             }
@@ -82,6 +95,11 @@ namespace NGUAdvisor.Managers
                 if (bloodPoints < minBlood)
                     return false;
                 double effect = Effect(bloodPoints);
+                if (FailSafeHold(effect, out var holdReason))
+                {
+                    Main.LogDebug($"Blood Spell {name} held (planner): {holdReason}");
+                    return false;
+                }
                 CastSpell();
                 Log($"Casting Blood Spell {name} @ {effect:F0} power (planner)");
                 return true;
@@ -109,6 +127,29 @@ namespace NGUAdvisor.Managers
             }
 
             protected override void CastSpell() => _bloodSpells.castAdventurePowerupSpell();
+
+            // Advisor-only fail-safes (the on-rebirth forced cast bypasses these):
+            //  1. Do not fire within the first 30 minutes the pill is available (past its cooldown), so
+            //     blood keeps pooling into a stronger pill instead of firing the moment it comes ready.
+            //  2. Do not fire for a gain under 10% of the current BASE adventure power (adventure.attack --
+            //     the same base-stat yardstick BloodPlanner measures pill worth against).
+            protected override bool FailSafeHold(double effect, out string reason)
+            {
+                double availableFor = Time - cooldown;
+                if (availableFor < 1800.0)
+                {
+                    reason = $"available {Math.Max(0, availableFor) / 60.0:F0}m (< 30m fail-safe)";
+                    return true;
+                }
+                double baseAdvPower = Math.Max(1.0, _character.adventure.attack);
+                if (effect < baseAdvPower * 0.10)
+                {
+                    reason = $"gain {effect:F0} < 10% of base adv power {baseAdvPower:F0}";
+                    return true;
+                }
+                reason = null;
+                return false;
+            }
         }
 
         public class GuffA : Spell

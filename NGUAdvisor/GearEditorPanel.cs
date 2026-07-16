@@ -117,6 +117,8 @@ namespace NGUAdvisor
         private void OnChanged() => Changed?.Invoke(this, EventArgs.Empty);
 
         // Parse any pasted text into a list of positive item ids (handles commas, brackets, spaces, newlines).
+        // UNCHANGED and deliberately so: it is the authority on what a paste yields. Order, duplicates and
+        // acceptance rules must stay exactly as they were — slice 4 changes WHEN it is called, not what it does.
         internal static List<int> ParseIds(string text)
         {
             var ids = new List<int>();
@@ -124,6 +126,23 @@ namespace NGUAdvisor
             foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, "\\d+"))
                 if (int.TryParse(m.Value, out var v) && v > 0) ids.Add(v);
             return ids;
+        }
+
+        // What the paste WOULD do, computed before anything is touched. `ids` is whatever ParseIds says —
+        // never a second opinion. `rejected` is additive reporting only: the clipboard is split into entries
+        // and each is fed back through ParseIds itself, so the two can never drift apart. An entry is
+        // "unrecognized" exactly when ParseIds finds nothing usable in it: letters, a bare 0 (the v > 0 rule),
+        // or a digit run too long for an int.
+        internal static void AnalyzePaste(string text, out List<int> ids, out List<string> rejected)
+        {
+            ids = ParseIds(text);
+            rejected = new List<string>();
+            if (string.IsNullOrEmpty(text)) return;
+            foreach (var token in System.Text.RegularExpressions.Regex.Split(text, "[\\s,;\\[\\]{}()\"']+"))
+            {
+                if (token.Length == 0) continue;
+                if (ParseIds(token).Count == 0) rejected.Add(token);
+            }
         }
 
         // ---------------------------------------------------------------- card
@@ -137,9 +156,26 @@ namespace NGUAdvisor
             private readonly ComboBox _source;
             private readonly CheckBox _respawn;
             private readonly Button _addItem;
+            private readonly Button _paste, _copy, _undoBtn;
             private Button _del;
             private ComboBox _chTag;
             private bool _loading;
+            private int _rowW = 460;
+
+            // SINGLE-LEVEL UNDO for a confirmed paste. The snapshot is PLAIN DATA — the row ids in order,
+            // including any 0s — never Control instances (those get disposed, and a disposed control is not
+            // a snapshot).
+            //
+            // ★ NO TIMER. A System.Windows.Forms.Timer was tried here and PROVABLY NEVER TICKS in the
+            // injected host: this window has no WinForms message pump (the game's Unity loop pumps it, so
+            // clicks arrive but WM_TIMER never does). The button sat at "(20s)" forever. Time-based UI in
+            // these windows must therefore be LAZY — the DEADLINE is the only authority, evaluated when the
+            // user actually reaches for the control (MouseEnter) and again on click. Nothing schedules.
+            private const int UndoSeconds = 20;
+            private const int RejectPreview = 8;     // bounded dialog: show this many, then say how many more
+            private const int MaxRowId = 9999;       // Row's NumericUpDown maximum
+            private List<int> _undoRows;
+            private DateTime _undoDeadline;
 
             private bool ObjectiveMode => !string.IsNullOrEmpty(_bp.Objective);
 
@@ -189,18 +225,35 @@ namespace NGUAdvisor
                 _objPanel.Controls.Add(_respawn);
                 _objPanel.Controls.Add(_objInfo);
 
-                // paste/copy bar
+                // paste/copy/undo bar
                 _bar = new Panel { Dock = DockStyle.Top, Height = BarH, BackColor = UiTheme.Surface };
-                var paste = new Button { Text = "Paste IDs", Location = new Point(0, 2), Width = 90, Height = 24, Font = UiTheme.Ui };
-                var copy = new Button { Text = "Copy IDs", Location = new Point(96, 2), Width = 90, Height = 24, Font = UiTheme.Ui };
-                UiTheme.StyleFlat(paste); UiTheme.StyleFlat(copy);
-                paste.Click += (s, e) => PasteIds();
-                copy.Click += (s, e) => CopyIds();
-                _bar.Controls.Add(paste); _bar.Controls.Add(copy);
-                _countLbl = new Label { Location = new Point(196, 6), AutoSize = true, ForeColor = UiTheme.Muted, Font = UiTheme.Ui };
+                _paste = new Button { Text = "Paste IDs", Width = 90, Height = 24, Font = UiTheme.Ui };
+                _copy = new Button { Text = "Copy IDs", Width = 90, Height = 24, Font = UiTheme.Ui };
+                UiTheme.StyleFlat(_paste); UiTheme.StyleFlat(_copy);
+                _paste.Click += (s, e) => PasteIds();
+                _copy.Click += (s, e) => CopyIds();
+                // Static caption: without a working timer a live countdown would either lie or need the game
+                // loop, and a stale "(14s)" is worse than no number. The WINDOW is stated in the message
+                // line instead; the button just says what it does.
+                _undoBtn = new Button
+                {
+                    Text = "Undo paste",
+                    Width = UiLayout.BtnWidth("Undo paste") + 6,
+                    Height = 24,
+                    Font = UiTheme.Ui,
+                    Visible = false
+                };
+                UiTheme.StyleGhost(_undoBtn);
+                // Reaching for the button is the moment to find out the window has closed — so the dead
+                // affordance clears itself before it can be clicked, and the click re-checks anyway.
+                _undoBtn.MouseEnter += (s, e) => ExpireUndoIfStale();
+                _undoBtn.Click += (s, e) => UndoPaste();
+                _bar.Controls.Add(_paste); _bar.Controls.Add(_copy); _bar.Controls.Add(_undoBtn);
+                _countLbl = new Label { AutoSize = true, ForeColor = UiTheme.Muted, Font = UiTheme.Ui };
                 _bar.Controls.Add(_countLbl);
                 _backupLbl = new Label { Location = new Point(300, 6), AutoSize = true, ForeColor = UiTheme.Faint, Font = UiTheme.Ui };
                 _bar.Controls.Add(_backupLbl);
+                LayoutBar();
 
                 _colHead = new Panel { Dock = DockStyle.Top, Height = ColHeadH, BackColor = UiTheme.Surface };
                 _colHead.Controls.Add(new Label { Text = "ITEM ID", Location = new Point(6, 5), AutoSize = true, ForeColor = UiTheme.Muted, Font = UiTheme.ColHeader });
@@ -211,7 +264,7 @@ namespace NGUAdvisor
 
                 _addItem = new Button { Text = "+ Add item", Height = AddH, Dock = DockStyle.Bottom, Font = UiTheme.Ui };
                 UiTheme.StyleGhost(_addItem);
-                _addItem.Click += (s, e) => { AddRow(new Row(0)); Restripe(); Sync(); RecalcHeight(); };
+                _addItem.Click += (s, e) => { ClearUndo(); AddRow(new Row(0)); Restripe(); Sync(); UpdateInfo(); RecalcHeight(); };
 
                 _rows = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface };
 
@@ -260,12 +313,14 @@ namespace NGUAdvisor
             {
                 Width = w;
                 int rowW = w - StripW - 24 - 4;
+                _rowW = rowW;
                 foreach (Control c in _rows.Controls) if (c is Row r) r.SetWidth(rowW);
                 int bodyW = w - StripW - 2;
                 if (_del != null) _del.Left = bodyW - _del.Width - 24;
                 // Anchor the challenge picker left of Delete so they can never collide.
                 if (_chTag != null && _del != null) _chTag.Left = _del.Left - _chTag.Width - 10;
                 _orderHdr.Left = rowW - 84;
+                PlaceBackup();
                 RecalcHeight();
             }
 
@@ -297,6 +352,9 @@ namespace NGUAdvisor
             private void SourceChanged(object sender, EventArgs e)
             {
                 if (_loading) return;
+                // Switching to Optimize takes the item list out of play entirely — the snapshot describes a
+                // list that is no longer what this breakpoint means.
+                ClearUndo();
                 if (_source.SelectedIndex <= 0) _bp.Objective = "";
                 else
                 {
@@ -315,17 +373,22 @@ namespace NGUAdvisor
                 OnChanged();
             }
 
+            // Every one of these handlers is a MANUAL edit to the list the undo snapshot describes, so each
+            // invalidates the token — a stale undo must never restore an old loadout over newer work. (They
+            // fire only on user interaction: the ctor sets Row's value before subscribing, and a paste or an
+            // undo rebuilds rows with _loading set, so neither trips these.)
             private void AddRow(Row row)
             {
                 row.Height = RowH;
-                row.Changed += (s, e) => { Sync(); UpdateInfo(); };
-                row.RemoveRequested += (s, e) => { _rows.Controls.Remove(row); row.Dispose(); Restripe(); Sync(); UpdateInfo(); RecalcHeight(); };
+                row.Changed += (s, e) => { ClearUndo(); Sync(); UpdateInfo(); };
+                row.RemoveRequested += (s, e) => { ClearUndo(); _rows.Controls.Remove(row); row.Dispose(); Restripe(); Sync(); UpdateInfo(); RecalcHeight(); };
                 row.MoveRequested += (s, e) =>
                 {
                     var list = _rows.Controls.Cast<Control>().ToList();
                     int i = list.IndexOf(row);
                     int j = i + e.Direction;
                     if (j < 0 || j >= list.Count) return;
+                    ClearUndo();
                     _rows.Controls.SetChildIndex(row, j);
                     Restripe(); Sync();
                 };
@@ -343,20 +406,182 @@ namespace NGUAdvisor
                 }
             }
 
+            // PARSE -> VALIDATE -> PREVIEW -> CONFIRM -> SNAPSHOT -> REPLACE -> UNDO.
+            //
+            // The old order cleared the rows and parsed afterwards, so a mis-copied clipboard destroyed a
+            // finished loadout for nothing. Nothing is touched now until the replacement is known to be
+            // usable AND the user has said yes to the actual consequence.
             private void PasteIds()
             {
+                string raw;
+                try { raw = Clipboard.GetText(); }
+                catch (Exception ex)
+                {
+                    Main.LogDebug($"Gear paste (clipboard read): {ex.Message}");
+                    UpdateInfo("Could not read the clipboard. Nothing changed.");
+                    return;
+                }
+
+                List<int> ids;
+                List<string> rejected;
+                AnalyzePaste(raw, out ids, out rejected);
+
+                // Nothing usable: the list stays exactly as it is, and a live undo token stays live —
+                // a failed paste is not an edit, so it must not consume the previous paste's undo.
+                if (ids.Count == 0)
+                {
+                    UpdateInfo(rejected.Count > 0
+                        ? $"No item IDs found ({rejected.Count} unrecognized). Nothing changed."
+                        : "Clipboard had no item IDs. Nothing changed.");
+                    return;
+                }
+
+                var before = CaptureRowIds();
+                if (!ConfirmReplace(before.Count, ids, rejected)) return;   // Cancel: a true no-op, no rebuild
+
                 try
                 {
-                    var ids = ParseIds(Clipboard.GetText());
-                    if (ids.Count == 0) { UpdateInfo("Clipboard had no item IDs."); return; }
-                    UiLayout.DisposeChildren(_rows);
-                    _loading = true;
-                    foreach (var id in ids) AddRow(new Row(id));
-                    _loading = false;
-                    Restripe(); Sync(); UpdateInfo($"Pasted {ids.Count} IDs."); RecalcHeight();
+                    ReplaceRows(ids);
                 }
-                catch (Exception ex) { Main.LogDebug($"Gear paste failed: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    // Partial rebuild is the one outcome we must never present as success.
+                    Main.LogDebug($"Gear paste failed mid-rebuild: {ex.Message}");
+                    try { ReplaceRows(before); } catch (Exception re) { Main.LogDebug($"Gear rollback failed: {re.Message}"); }
+                    ClearUndo();   // a failed replacement never earns an undo token
+                    UpdateInfo("Paste failed — the list was left as it was.");
+                    return;
+                }
+
+                SetUndo(before);
+                UpdateInfo($"Pasted {ids.Count} ID(s) — undo for {UndoSeconds}s.");
             }
+
+            // The row ids in order, INCLUDING zeros: _bp.Items drops them (Sync only stores id > 0), so it is
+            // not a faithful snapshot of what the user is looking at.
+            private List<int> CaptureRowIds()
+                => _rows.Controls.Cast<Control>().OfType<Row>().Select(r => r.Id).ToList();
+
+            // The single mutation path — used by paste, rollback and undo alike, so they cannot diverge.
+            private void ReplaceRows(List<int> ids)
+            {
+                UiLayout.DisposeChildren(_rows);   // remove-then-dispose: Controls.Clear() leaks handles here
+                _loading = true;
+                try
+                {
+                    foreach (var id in ids) AddRow(new Row(id));
+                }
+                finally { _loading = false; }
+                Restripe();
+                Sync();
+                RecalcHeight();
+            }
+
+            private bool ConfirmReplace(int current, List<int> ids, List<string> rejected)
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine($"Replace {current} current item(s) with {ids.Count} parsed item(s)?");
+                sb.AppendLine();
+                sb.AppendLine($"Current items: {current}");
+                sb.AppendLine($"New valid items: {ids.Count}");
+                sb.AppendLine($"Unrecognized entries: {rejected.Count}");
+
+                if (rejected.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("Unrecognized (will not be pasted):");
+                    int show = Math.Min(RejectPreview, rejected.Count);
+                    for (int i = 0; i < show; i++) sb.AppendLine("    " + Clip(rejected[i]));
+                    if (rejected.Count > show)
+                        sb.AppendLine($"    … {rejected.Count - show} more not shown");
+                }
+
+                // Pre-existing behaviour, disclosed rather than changed: a Row's NumericUpDown caps at 9999,
+                // so a larger id silently becomes 9999 once pasted. Slice 4 does not alter that (it would
+                // change post-confirm semantics) — it just stops it being a surprise.
+                var clamped = ids.Where(i => i > MaxRowId).ToList();
+                if (clamped.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"{clamped.Count} ID(s) above {MaxRowId} will be stored as {MaxRowId}:");
+                    sb.AppendLine("    " + string.Join(", ", clamped.Take(RejectPreview).Select(i => i.ToString()).ToArray())
+                        + (clamped.Count > RejectPreview ? " …" : ""));
+                }
+
+                return MessageBox.Show(sb.ToString(), "Paste IDs", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+                    == DialogResult.Yes;
+            }
+
+            // A garbage clipboard must not be able to inflate the dialog.
+            private static string Clip(string s)
+                => s.Length <= 24 ? s : s.Substring(0, 24) + "…";
+
+            // ---- undo ----
+
+            private void SetUndo(List<int> before)
+            {
+                _undoRows = before;
+                _undoDeadline = DateTime.UtcNow.AddSeconds(UndoSeconds);
+                _undoBtn.Visible = true;
+                LayoutBar();
+            }
+
+            // Invalidation. Called from every mutation that makes the snapshot stale (see AddRow, _addItem,
+            // SourceChanged) and after the token is consumed or expires.
+            private void ClearUndo()
+            {
+                _undoRows = null;
+                if (_undoBtn.Visible) { _undoBtn.Visible = false; LayoutBar(); }
+            }
+
+            // Lazy expiry: nothing schedules, so the deadline is evaluated whenever the user comes near the
+            // control. Returns true if the token was expired and cleared.
+            private bool ExpireUndoIfStale()
+            {
+                if (_undoRows == null || DateTime.UtcNow <= _undoDeadline) return false;
+                ClearUndo();
+                UpdateInfo("Undo window closed — the paste stands.");
+                return true;
+            }
+
+            private void UndoPaste()
+            {
+                if (_undoRows == null) return;
+                // The deadline decides. Belt and braces with MouseEnter: even a click that somehow lands on
+                // a stale button cannot resurrect an expired undo.
+                if (ExpireUndoIfStale()) return;
+                var snapshot = _undoRows;
+                ClearUndo();               // consume first: single level, never reusable
+                try
+                {
+                    ReplaceRows(snapshot);
+                    UpdateInfo($"Undone — {snapshot.Count} item(s) restored.");
+                }
+                catch (Exception ex)
+                {
+                    Main.LogDebug($"Gear undo failed: {ex.Message}");
+                    UpdateInfo("Undo failed — see debug.log.");
+                }
+            }
+
+            // Measured left-to-right placement (overlap impossible by construction), rerun whenever the undo
+            // button appears or disappears so the row closes up instead of leaving a hole.
+            private void LayoutBar()
+            {
+                var items = new List<Control> { _paste, _copy };
+                if (_undoBtn.Visible) items.Add(_undoBtn);
+                items.Add(_countLbl);
+                UiLayout.Row(0, 2, 8, items.ToArray());
+                PlaceBackup();
+            }
+
+            // Right-aligned, but never allowed to collide with the count label at a narrow card width.
+            private void PlaceBackup()
+            {
+                int w = string.IsNullOrEmpty(_backupLbl.Text) ? 0 : UiLayout.MeasureText(_backupLbl.Text, UiTheme.Ui);
+                _backupLbl.Location = new Point(Math.Max(_countLbl.Right + 12, _rowW - w - 4), 6);
+            }
+
 
             private void CopyIds()
             {
@@ -374,6 +599,7 @@ namespace NGUAdvisor
                 int count = _rows.Controls.Count;
                 _countLbl.Text = msg ?? $"{count} item(s)";
                 _backupLbl.Text = _bp.Extras.Count > 0 ? $"+ {_bp.Extras.Count} saved backup loadout(s) preserved" : "";
+                LayoutBar();   // the count label's width changes with the message; the row re-measures
             }
 
             private void TimeChanged(object sender, EventArgs e)

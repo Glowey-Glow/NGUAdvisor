@@ -77,7 +77,15 @@ namespace NGUAdvisor
         // Orchard columns: bigger tiles (~165px pitch) so fruit names + the tier/ETA bar text read
         // clearly — ~6 across the full canvas, min 4 in a narrow cell.
         private int Cols => Math.Max(4, (_w - 14) / 165);
-        private Button _managed;
+        // Yggdrasil is the ONE true duplicate the ownership audit found: this panel's old
+        // MANAGED/UNMANAGED button and Settings' "MANAGE › Yggdrasil" checkbox wrote the SAME field
+        // (Settings.ManageYggdrasil). It has no advisor strategy layer at all — nothing reads an
+        // "AdvisorYggdrasil" because none exists (AdvisorYggBuys is a different thing: EXP purchases).
+        // So the bar shows AUTOMATION only, and says so rather than implying a decision to make.
+        private SystemControlBar _controlBar;
+        // Grid origin + action-row Y, both derived from the bar's height so nothing overlaps it.
+        private readonly int _rowY;
+        private readonly int _gridTop;
         private Label _info;
         private Button _harvestNow;
         private Button _safety;
@@ -92,7 +100,6 @@ namespace NGUAdvisor
         private Label _advice;
         private bool _syncing;
         private bool _safetyOn;
-        private static bool _dumpedFruits;   // one-time diagnostic: log every fruit's real in-game name + tier
 
         // canvasW: explicit canvas width when hosted in an M1 section column (0 = UiLayout.PanelW).
         public YggPanel(int canvasW = 0)
@@ -104,37 +111,88 @@ namespace NGUAdvisor
             // rather than clip (the section canvas keeps its own scroll for the whole quad).
             AutoScroll = true;
 
-            _managed = MkBtn("MANAGED");
-            _managed.Click += (s, e) =>
+            _rowY = 10 + SystemControlBar.BarHeight + 8;
+            _gridTop = _rowY + 24 + 8;
+
+            _controlBar = new SystemControlBar(
+                _w - 54,
+                () => Settings.ManageYggdrasil, v => Settings.ManageYggdrasil = v,
+                null, null,   // no decisions layer exists for Yggdrasil harvesting
+                null, null,
+                "Automation is off — the tool will not harvest Yggdrasil.",
+                "The tool harvests on your rules below. Yggdrasil has no advisor strategy to choose.")
             {
-                if (Settings == null) return;
-                Settings.ManageYggdrasil = !Settings.ManageYggdrasil;
-                SyncFromSettings();
+                Location = new Point(10, 10)
             };
+            _controlBar.Changed += SyncFromSettings;
+            Controls.Add(_controlBar);
+
             _info = new Label { Text = "…", AutoSize = false, Size = new Size(240, UiTheme.TextH), Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
             _harvestNow = MkBtn("Harvest Now");
             UiTheme.StyleFlat(_harvestNow);
             _harvestNow.Click += (s, e) =>
             {
-                if (!_safetyOn) { Log("Harvest Safety is off — flip it green first."); return; }
-                if (!YggdrasilManager.AnyHarvestable()) { Log("Nothing harvestable yet."); return; }
-                if (LockManager.TryYggdrasilSwap(true))
-                    YggdrasilManager.HarvestAll(true);
-                else
+                // Each outcome is REPORTED, not inferred: the handler returning is not success. No log
+                // link — these lines say all there is to say, and inject.log carries nothing more.
+                if (!_safetyOn)
+                {
+                    Log("Harvest Safety is off — flip it green first.");
+                    Activity.Failed("Harvest Safety is off — flip it green first.");
+                    return;
+                }
+                if (!YggdrasilManager.AnyHarvestable())
+                {
+                    Log("Nothing harvestable yet.");
+                    Activity.Failed("Nothing harvestable yet.");
+                    return;
+                }
+                // R6/R8 already restore the lock, loadout and MacGuffins and rethrow the primary — but that
+                // primary escapes into the WinForms/Unity pump with no advisor diagnostic and (worse) would
+                // otherwise fall through to Activity.Completed. Bound the acquire+harvest here.
+                bool beganHarvest;
+                try
+                {
+                    beganHarvest = LockManager.TryYggdrasilSwap(true);
+                    if (beganHarvest)
+                        YggdrasilManager.HarvestAll(true);
+                }
+                catch (Exception ex)
+                {
+                    try { Activity.Failed("Harvest failed. See Logs.", null, true); } catch { }
+                    try { LogDebug($"Manual Yggdrasil harvest failed:\n{ex}"); } catch { }
+                    return;
+                }
+
+                if (!beganHarvest)
+                {
                     Log("Unable to harvest now");
-                RefreshTiles();
+                    Activity.Failed("Could not harvest — the swap was blocked.");
+                    try { RefreshTiles(); } catch (Exception rex) { try { LogDebug($"Yggdrasil panel refresh failed:\n{rex}"); } catch { } }
+                    return;
+                }
+
+                // The harvest completed (irreversible). Completion report and the cosmetic refresh are bounded
+                // separately so neither can reclassify it as a failure.
+                try { Activity.Completed("Yggdrasil harvested."); }
+                catch (Exception reportEx) { try { LogDebug($"Manual Yggdrasil harvest completion report failed:\n{reportEx}"); } catch { } }
+
+                try { RefreshTiles(); }
+                catch (Exception refreshEx)
+                {
+                    try { Activity.Warning("Harvest completed, but the panel could not refresh."); } catch { }
+                    try { LogDebug($"Manual Yggdrasil harvest UI refresh failed:\n{refreshEx}"); } catch { }
+                }
             };
             _safety = MkBtn("Harvest Safety");
             _safety.Click += (s, e) => { _safetyOn = !_safetyOn; SyncFromSettings(); };
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
             _refresh.Click += (s, e) => RefreshTiles();
-            Controls.Add(_managed);
             Controls.Add(_info);
             Controls.Add(_harvestNow);
             Controls.Add(_safety);
             Controls.Add(_refresh);
-            UiLayout.Row(10, 10, 8, _managed, _info, _harvestNow, _safety, _refresh);
+            UiLayout.Row(10, _rowY, 8, _info, _harvestNow, _safety, _refresh);
 
             // Elastic tiles: width computed from the cell (scrollbar allowance included) so the
             // orchard fills whatever column hosts it — no fixed 117px pitch, no horizontal scroll.
@@ -222,8 +280,8 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
-                UiTheme.ApplyState(_managed, Settings.ManageYggdrasil ? UiTheme.Cap : UiTheme.Danger, Color.White);
-                _managed.Text = Settings.ManageYggdrasil ? "MANAGED" : "UNMANAGED";
+                // Reflects a flip made here, from the Settings checkbox, or from a settings reload.
+                _controlBar?.Sync();
                 UiTheme.ApplyState(_safety, _safetyOn ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_activate, Settings.ActivateFruits ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 UiTheme.ApplyState(_swap, Settings.SwapYggdrasilLoadouts ? UiTheme.Cap : UiTheme.Danger, Color.White);
@@ -284,12 +342,6 @@ namespace NGUAdvisor
                 var yc = c.yggdrasilController;
                 var fruits = c.yggdrasil.fruits;
                 if (yc == null || fruits == null) return;
-                if (!_dumpedFruits)
-                {
-                    _dumpedFruits = true;
-                    try { for (int i = 0; i < fruits.Count; i++) LogDebug($"FRUIT[{i}] '{yc.fruitName[i]}' maxTier={fruits[i].maxTier} active={fruits[i].activated} poop={fruits[i].usePoop}"); }
-                    catch (Exception de) { LogDebug($"fruit dump: {de.Message}"); }
-                }
                 var fc = yc.fruits[0];
                 float thr = fc.tierThreshold();
 
@@ -345,7 +397,7 @@ namespace NGUAdvisor
                     var f = fruits[fi.Idx];
                     var t = _tiles[shown];
                     int col = shown % Cols, row = shown / Cols;
-                    t.Box.Location = new Point(10 + col * (_tileW + 6), 44 + row * 68);
+                    t.Box.Location = new Point(10 + col * (_tileW + 6), _gridTop + row * 68);
                     t.Box.Visible = true;
                     shown++;
 
@@ -393,7 +445,7 @@ namespace NGUAdvisor
                 // (user-caught overlap: the Phase B swap row wasn't part of this reflow, so the
                 // advice line rendered underneath the new buttons).
                 int rows = (shown + Cols - 1) / Cols;
-                int stripY = 44 + rows * 68 + 8;
+                int stripY = _gridTop + rows * 68 + 8;
                 _activate.Top = _swap.Top = _swapTier.Top = stripY;
                 _tierLbl.Top = stripY + 5;
                 _swapDig.Top = _swapBeard.Top = stripY + 32;

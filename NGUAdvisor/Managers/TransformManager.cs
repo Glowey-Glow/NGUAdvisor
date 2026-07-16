@@ -220,44 +220,42 @@ namespace NGUAdvisor.Managers
         // on chains with FILTER enabled. itemFiltered is the same list the game's filter UI edits.
         private static string _lastFilterLog;
 
+        // R11: the outer whole-Tick catch was removed so AdvisorApply's RunStep("Transforms", ...) owns
+        // the bounded fault report. Nested probes keep their own narrow catches.
         public static void Tick()
         {
-            try
+            var st = Main.Settings;
+            var c = Main.Character;
+            if (st == null || c == null) return;
+
+            ActiveClimb(c, st);
+
+            var filtered = new List<int>();
+            for (int i = 0; i < Chains.Length; i++)
             {
-                var st = Main.Settings;
-                var c = Main.Character;
-                if (st == null || c == null) return;
-
-                ActiveClimb(c, st);
-
-                var filtered = new List<int>();
-                for (int i = 0; i < Chains.Length; i++)
+                if (!Flag(st.TransformFilter, i)) continue;
+                var s = Read(i);
+                if (s.OwnedTier <= 0) continue;
+                for (int t = 0; t < s.OwnedTier; t++)
                 {
-                    if (!Flag(st.TransformFilter, i)) continue;
-                    var s = Read(i);
-                    if (s.OwnedTier <= 0) continue;
-                    for (int t = 0; t < s.OwnedTier; t++)
+                    int id = Chains[i].Tiers[t];
+                    var fl = c.inventory.itemList.itemFiltered;
+                    if (id < fl.Count && !fl[id])
                     {
-                        int id = Chains[i].Tiers[t];
-                        var fl = c.inventory.itemList.itemFiltered;
-                        if (id < fl.Count && !fl[id])
-                        {
-                            fl[id] = true;
-                            filtered.Add(id);
-                        }
-                    }
-                }
-                if (filtered.Count > 0)
-                {
-                    var key = string.Join(",", filtered.Select(x => x.ToString()).ToArray());
-                    if (key != _lastFilterLog)
-                    {
-                        _lastFilterLog = key;
-                        Main.Log($"Transform chains: filtered lower tiers {key} from loot");
+                        fl[id] = true;
+                        filtered.Add(id);
                     }
                 }
             }
-            catch (Exception e) { Main.LogDebug($"TransformManager: {e.Message}"); }
+            if (filtered.Count > 0)
+            {
+                var key = string.Join(",", filtered.Select(x => x.ToString()).ToArray());
+                if (key != _lastFilterLog)
+                {
+                    _lastFilterLog = key;
+                    Main.Log($"Transform chains: filtered lower tiers {key} from loot");
+                }
+            }
         }
 
         // Active climb (user-reported: 3x unlocked Sir Looty at level 100 sat forever). The game only

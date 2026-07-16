@@ -21,6 +21,137 @@ namespace NGUAdvisor.Managers
         private static DateTime _lastTick = DateTime.MinValue;
         private static DateTime _lastOsSwitch = DateTime.MinValue;
 
+        // ---- fault containment (stage R2) ----
+        //
+        // ONE APPLIER'S EXCEPTION USED TO KILL EVERY LATER ONE. All of these ran under a single outer catch,
+        // so a throw in ApplyPerks — position five of nineteen — silently skipped EXP buys, titan gold, gold,
+        // PIT, quests, blood, boost priority, zones, titans and transforms for that tick. And five of them
+        // (Diggers, Beards, Perks, Quirks, Ygg buys) have NO throttle: they run every 30s tick, so a
+        // persistent fault in any of them starved the entire tail permanently. The throttled ones were worse
+        // to diagnose, not better — their throttle short-circuits on the alternate ticks, so the starvation
+        // was INTERMITTENT, and automation that half-works reads like a game bug rather than an exception.
+        //
+        // The fix is containment, not a framework: catch per step, name the step, keep going. Twelve of the
+        // nineteen operations get this. The other seven already catch their own complete bodies and are left
+        // strictly alone — wrapping them again would just double-log.
+        private sealed class Fault
+        {
+            public int Consecutive;      // failures in this episode, total
+            public int SinceReport;      // failures since we last said anything
+            public DateTime FirstAt;
+            public DateTime LastAt;      // last EXCEPTION — the quiet window is measured from here
+            public DateTime LastReportAt;
+            public string Type;
+            public string Message;
+        }
+
+        private static readonly Dictionary<string, Fault> _faults = new Dictionary<string, Fault>();
+
+        // The step is the rate-limiting boundary, NOT the exception message: messages carry ids, values and
+        // object descriptions that change every throw, so keying on them would let a "new" signature flood
+        // both logs at 30-second intervals — which is the noise this exists to prevent.
+        private static readonly TimeSpan ReportEvery = TimeSpan.FromMinutes(10);
+
+        // The quiet-window message states the ACTUAL interval, derived from the constant above rather than
+        // typed into the string. A probe build that shortens ReportEvery to two minutes must SAY two minutes;
+        // a message that hardcodes "10" would be a lie in exactly the build you are using to check that the
+        // messages tell the truth.
+        private static string ReportWindowText
+        {
+            get
+            {
+                double m = ReportEvery.TotalMinutes;
+                return m == 1 ? "1 minute" : $"{m:0} minutes";
+            }
+        }
+
+        private const string TickStep = "Advisor tick";
+
+        // Runs one applier. The GATE stays outside: a disabled or throttled step never reaches here as a
+        // failure, and a step that returns early because it has nothing to do is a SKIP, not a success worth
+        // announcing. Silence is the normal case and the only correct one.
+        //
+        // A NONTHROWING RETURN IS NOT NECESSARILY COMPLETED WORK. This helper sees "the call came back"; it
+        // cannot see whether the applier did anything, because every applier's throttle, disabled-feature and
+        // nothing-to-do exits are plain `return`s indistinguishable from a full successful run. Everything
+        // downstream of here is named for what is actually observable, not for what we would like it to mean.
+        private static void RunStep(string name, Action action)
+        {
+            try { action(); }
+            catch (Exception e) { OnStepFailed(name, e); return; }
+            ObserveStepReturn(name);
+        }
+
+        private static void OnStepFailed(string name, Exception e)
+        {
+            var now = DateTime.UtcNow;
+            Fault f;
+
+            if (!_faults.TryGetValue(name, out f))
+            {
+                // First failure of a healthy step: say so at once, with the one full stack for this episode.
+                f = new Fault
+                {
+                    Consecutive = 1,
+                    SinceReport = 0,
+                    FirstAt = now,
+                    LastAt = now,
+                    LastReportAt = now,
+                    Type = e.GetType().Name,
+                    Message = e.Message
+                };
+                _faults[name] = f;
+                Main.Log($"Advisor: {name} failed — {f.Type}: {f.Message}");
+                Main.LogDebug($"Advisor step {name} failed:\n{e}");
+                return;
+            }
+
+            f.Consecutive++;
+            f.SinceReport++;
+            f.LastAt = now;
+            f.Type = e.GetType().Name;      // latest signature, for the next periodic report
+            f.Message = e.Message;
+
+            if (now - f.LastReportAt < ReportEvery) return;   // suppressed: no session line, no stack
+
+            Main.Log($"Advisor: {name} still failing — {f.SinceReport} failure(s) since the last report; latest {f.Type}: {f.Message}");
+            Main.LogDebug($"Advisor step {name} still failing ({f.Consecutive} consecutive since {f.FirstAt:HH:mm:ss}):\n{e}");
+            f.LastReportAt = now;
+            f.SinceReport = 0;
+        }
+
+        // WE DO NOT KNOW THAT IT RECOVERED. We know it stopped throwing. Those are different claims, and this
+        // method is careful to make only the second one.
+        //
+        // Clearing the fault on the first nonthrowing return cannot work, because a THROTTLED SKIP is a
+        // nonthrowing return: ApplyExpBuys comes back clean on every tick inside its 60s window without
+        // touching the failing path at all. Clear-on-return would therefore read that skip as a recovery,
+        // close the episode, and let the NEXT real attempt open a fresh one and report as a first failure —
+        // fail, "recovered", fail, "recovered", twice a minute forever, each with a failure count of one. A
+        // worse flood than the one this exists to fix, and a lying one.
+        //
+        // So the episode is measured from the last EXCEPTION, not the first return: it clears once the step
+        // has gone a full reporting interval without throwing again. One rule, both problems — a throttled
+        // skip cannot forge a clearance (the next failure is at most one throttle away, well inside the
+        // window), and a step that has genuinely stopped failing says so once and goes quiet.
+        //
+        // What the message may claim: no exception for ten minutes. What it must NOT claim: that the applier
+        // did any work, that the failing path was exercised at all, or that the defect is fixed. It may have
+        // been throttled, disabled mid-episode, or had nothing to do for the whole window. The wording is
+        // observational on purpose. The cost — the line can lag a real fix by up to the interval — is the
+        // price of never asserting something we cannot see.
+        private static void ObserveStepReturn(string name)
+        {
+            Fault f;
+            if (!_faults.TryGetValue(name, out f)) return;          // healthy: silent, as it is ~always
+            if (DateTime.UtcNow - f.LastAt < ReportEvery) return;   // episode still open
+
+            _faults.Remove(name);
+            Main.Log($"Advisor: {name} fault quiet for {ReportWindowText} after {f.Consecutive} failure(s).");
+            Main.LogDebug($"Advisor step {name} fault state cleared after {ReportWindowText} without another exception; "
+                        + $"{f.Consecutive} failure(s) observed; latest was {f.Type}: {f.Message}");
+        }
+
         public static void Tick()
         {
             try
@@ -33,37 +164,51 @@ namespace NGUAdvisor.Managers
 
                 // Challenge overlay first: it sets the gear-objective override the gear refresh
                 // below consults (and clears itself outside challenges / when toggled off).
-                ChallengeOverlay.Tick();
+                // Routed through RunStep now (R11): its own outer whole-Tick catch was removed so the
+                // bounded reporter owns the fault — nested sub-catches inside it stay.
+                RunStep("Challenge overlay", ChallengeOverlay.Tick);
                 // Level caps ride the segment the overlay just computed (self-gates on AutoProfile).
-                LevelPlanner.Tick();
+                RunStep("Level planner", LevelPlanner.Tick);
 
                 // Set/gear appliers must not fight a mode lock's temporary swaps; the purchase and
                 // routing appliers below touch nothing a lock owns, so they keep running during locks
                 // (audit fix: previously a titan wait stalled perk/EXP/blood automation for no reason).
+                //
+                // CanSwap() is evaluated ONCE, exactly where it always was — the containment goes around each
+                // applier, never around the policy that decides whether it runs, and never re-checks the lock
+                // between them.
                 if (LockManager.CanSwap())
                 {
-                    if (Main.Settings.AdvisorDiggers) ApplyDiggers(c);
-                    if (Main.Settings.AdvisorBeards) ApplyBeards(c);
-                    if (Main.Settings.AdvisorWandoosOS) ApplyWandoosOs(c);
-                    if (Main.Settings.AdvisorGearRefresh) ApplyGearRefresh();
+                    if (Main.Settings.AdvisorDiggers) RunStep("Diggers", () => ApplyDiggers(c));
+                    if (Main.Settings.AdvisorBeards) RunStep("Beards", () => ApplyBeards(c));
+                    if (Main.Settings.AdvisorWandoosOS) RunStep("Wandoos OS", () => ApplyWandoosOs(c));
+                    if (Main.Settings.AdvisorGearRefresh) RunStep("Gear refresh", ApplyGearRefresh);
                 }
 
-                if (Main.Settings.AdvisorPerks) ApplyPerks();
-                if (Main.Settings.AdvisorQuirks) ApplyQuirks();
-                if (Main.Settings.AdvisorYggBuys) ApplyYggBuys();
-                if (Main.Settings.AdvisorExpBuys) ApplyExpBuys();
-                if (Main.Settings.AutoTitanGold || Main.Settings.AdvisorGold) ApplyTitanGold();
-                if (Main.Settings.AdvisorGold || Main.Settings.SnipeOnGoldStarved) ApplyGold();
-                if (Main.Settings.AdvisorPit) ApplyPit();
-                if (Main.Settings.AdvisorQuests) ApplyQuests();
-                if (Main.Settings.AdvisorBlood) ApplyBlood();
-                if (Main.Settings.AutoBoostPriority) ApplyBoostPriority();
+                if (Main.Settings.AdvisorPerks) RunStep("Perks", ApplyPerks);
+                if (Main.Settings.AdvisorQuirks) RunStep("Quirks", ApplyQuirks);
+                if (Main.Settings.AdvisorYggBuys) RunStep("Ygg buys", ApplyYggBuys);
+                if (Main.Settings.AdvisorExpBuys) RunStep("EXP buys", ApplyExpBuys);
+                // ApplyTitanGold's inner try guards only the version lookup — the body, including two
+                // persisted writes, was exposed. The whole call is contained now.
+                if (Main.Settings.AutoTitanGold || Main.Settings.AdvisorGold) RunStep("Titan gold", ApplyTitanGold);
+                if (Main.Settings.AdvisorGold || Main.Settings.SnipeOnGoldStarved) ApplyGold();      // gated: reports via OnStepFailed
+                if (Main.Settings.AdvisorPit) ApplyPit();                                            // gated: reports via OnStepFailed
+                if (Main.Settings.AdvisorQuests) ApplyQuests();                                      // gated: reports via OnStepFailed
+                if (Main.Settings.AdvisorBlood) RunStep("Blood", ApplyBlood);
+                if (Main.Settings.AutoBoostPriority) RunStep("Boost priority", ApplyBoostPriority);
                 // Gear Hunt routes the zone even in MANUAL ZONE mode — the toggle is the intent.
-                if (Main.Settings.AdvisorZones || GearHunter.Active) ApplyZones();
-                if (Main.Settings.AdvisorTitans) ApplyTitans();
-                TransformManager.Tick();
+                if (Main.Settings.AdvisorZones || GearHunter.Active) RunStep("Zones", ApplyZones);
+                if (Main.Settings.AdvisorTitans) ApplyTitans();                                      // gated: reports via OnStepFailed
+                RunStep("Transforms", TransformManager.Tick);
+
+                ObserveStepReturn(TickStep);
             }
-            catch (Exception e) { Main.LogDebug($"AdvisorApply: {e.Message}"); }
+            // FINAL SAFETY BOUNDARY, and now a bounded one. Nothing a RunStep caught can reach here, so this
+            // only fires for orchestration itself — a gate getter, CanSwap(), the helper. That is a more
+            // serious fault than any single applier (the whole tick died), so it is session-visible, and it
+            // goes through the same per-step interval rather than writing a stack to debug.log every 30s.
+            catch (Exception e) { OnStepFailed(TickStep, e); }
         }
 
         // Advisor-driven boost priority (Boosts tab, ADVISOR ACTIVE): recompute the ranked list every
@@ -94,10 +239,23 @@ namespace NGUAdvisor.Managers
             var active = c.diggers.activeDiggers;
             if (active.Count == set.Length && set.All(active.Contains)) return;
 
-            if (DiggerManager.EquipDiggers(set))
+            // Converge in place: obsolete diggers off, missing diggers on, everything already correct
+            // left alone. An unaffordable member stays missing and is retried whole next pass — no
+            // clear, no level reset. RecapDiggers (levels + upgrades) runs only once the set is whole,
+            // and the equip line reports only a real membership change (the old path logged on every
+            // rebuild, which only ever happened alongside a membership change).
+            if (DiggerManager.ReconcileAdvisorDiggers(set, out bool membershipChanged))
             {
-                DiggerManager.RecapDiggers();
-                Main.Log($"Advisor: equipped diggers {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
+                // A nonempty recommendation that normalizes away reconciles to an empty active set:
+                // nothing to recap, no blank success line. Only a nonempty completion recaps, and the
+                // line is emitted only for a real membership change (the old rebuild path always changed
+                // membership, so this preserves its logging without the churn).
+                if (c.diggers.activeDiggers.Count > 0)
+                {
+                    DiggerManager.RecapDiggers();
+                    if (membershipChanged)
+                        Main.Log($"Advisor: equipped diggers {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
+                }
             }
         }
 
@@ -271,7 +429,11 @@ namespace NGUAdvisor.Managers
                     Main.Log("Re-snipe: gold starvation (augments unaffordable)");
                 }
             }
-            catch (Exception e) { Main.LogDebug($"ApplyGold: {e.Message}"); }
+            catch (Exception ex) { OnStepFailed("Gold", ex); return; }
+
+            // Reached only after the throttle gate passed and the body ran without throwing — the
+            // 2-minute gate above is the eligibility check, so getting here is a real exercise.
+            ObserveStepReturn("Gold");
         }
 
         // Advisor quest strategy: majors whenever banked, bank-overfill guard on, abandon minors
@@ -302,7 +464,12 @@ namespace NGUAdvisor.Managers
                 if (changed.Count > 0)
                     Main.Log($"Advisor: quest strategy -> {string.Join(", ", changed.ToArray())}");
             }
-            catch (Exception e) { Main.LogDebug($"ApplyQuests: {e.Message}"); }
+            catch (Exception ex) { OnStepFailed("Quests", ex); return; }
+
+            // Reached only when AutoQuest was on and the strategy pass completed without throwing. The
+            // !AutoQuest return inside the try exits the method before here, so a disabled invocation
+            // never counts as a successful exercise.
+            ObserveStepReturn("Quests");
         }
 
         // Advisor Money Pit: act on the shared plan (tier-ETA + safety gates in MoneyPitManager).
@@ -322,7 +489,12 @@ namespace NGUAdvisor.Managers
                     MoneyPitManager.AdvisorThrow();
                 }
             }
-            catch (Exception e) { Main.LogDebug($"ApplyPit: {e.Message}"); }
+            catch (Exception ex) { OnStepFailed("Pit", ex); return; }
+
+            // Reached after the 60s gate passed and AdvisorPlan (plus any throw) ran without throwing.
+            // The "Pit" key is automatic-only — the manual Throw Now path (R10) reports via Activity and
+            // never touches this fault state.
+            ObserveStepReturn("Pit");
         }
 
         // Advisor titan targeting (Titans hero card): target every reachable titan below auto-kill —
@@ -500,7 +672,12 @@ namespace NGUAdvisor.Managers
                     }
                 }
             }
-            catch (Exception e) { Main.LogDebug($"ApplyTitans: {e.Message}"); }
+            catch (Exception ex) { OnStepFailed("Titans", ex); return; }
+
+            // Reached after the full targeting pass ran without throwing. The challenge-active stand-down
+            // returns from inside the try (titan targeting is paused, not exercised), so it does not clear
+            // the fault — health is observed only when the real targeting logic completed.
+            ObserveStepReturn("Titans");
         }
 
         // Advisor zone routing (Adventure > ZONES, ADVISOR ACTIVE): point the farm zone at the best

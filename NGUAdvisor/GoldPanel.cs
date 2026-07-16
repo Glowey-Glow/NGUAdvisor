@@ -22,7 +22,11 @@ namespace NGUAdvisor
             public Label Sub;
         }
 
-        private Button _srcToggle;
+        // The two layers, verified: AUTOMATION = Settings.ManageGoldLoadouts (the gate on the snipe and
+        // loadout swap, Main.cs:1165); DECISIONS = Settings.AdvisorGold (who arms the triggers —
+        // AdvisorApply:252/265, Main.cs:1417). The trigger chips below are MODIFIERS of the manual
+        // strategy, not a third layer: in advisor mode the advisor arms starvation regardless of its chip.
+        private SystemControlBar _controlBar;
         private Button _snipeNow;
         private Button _resetBanks;
         private Button _refresh;
@@ -56,13 +60,6 @@ namespace NGUAdvisor
             Dock = DockStyle.Fill;
             BackColor = UiTheme.Ground;
 
-            _srcToggle = MkBtn("ADVISOR MANAGES GOLD");
-            _srcToggle.Click += (s, e) =>
-            {
-                if (Settings == null) return;
-                Settings.AdvisorGold = !Settings.AdvisorGold;
-                SyncFromSettings();
-            };
             _snipeNow = MkBtn("Snipe Now");
             UiTheme.StyleFlat(_snipeNow);
             _snipeNow.Click += (s, e) =>
@@ -71,6 +68,18 @@ namespace NGUAdvisor
                 Settings.GoldSnipeComplete = false;
                 LastSnipeTrigger = "manual";
                 Log("Re-snipe: manual");
+
+                // The arming ALWAYS takes effect: GoldSnipeComplete is persisted, and the only thing that
+                // ever clears it is LockManager:219 — which itself sits inside `if (ManageGoldLoadouts)`.
+                // So with automation off the trigger stays armed indefinitely and fires the moment
+                // automation is switched on. That makes this a WARNING, never a FAILURE: the action DID
+                // happen, it just cannot execute yet. Promising a "next pass" swap while the gate is shut
+                // was the lie; saying nothing at all would be the next one.
+                if (Settings.ManageGoldLoadouts)
+                    Activity.Queued("Re-snipe armed — the gold loadout swaps on the next pass.");
+                else
+                    Activity.Warning("Re-snipe armed, but automation is off — nothing swaps until you turn it on.");
+
                 RefreshPipeline();
             };
             _resetBanks = MkBtn("Reset Banks");
@@ -80,16 +89,36 @@ namespace NGUAdvisor
                 if (Settings == null) return;
                 Settings.TitanMoneyDone = new bool[ZoneHelpers.TitanZones.Length];
                 Log("Titan gold banks reset — all AK'd titans will re-bank");
+                Activity.Completed("Titan gold banks reset — all AK'd titans will re-bank.");
                 RefreshPipeline();
             };
             _refresh = new Button { Text = "↻", Size = new Size(36, 24), Font = UiTheme.Ui };
             UiTheme.StyleFlat(_refresh);
             _refresh.Click += (s, e) => RefreshPipeline();
-            Controls.Add(_srcToggle);
+            // The bar gets its own row here: this panel is only 520px wide and carries a genuine action
+            // GROUP (Snipe Now · Reset Banks · ↻), which is exactly the Yggdrasil case the convention
+            // carves out. Squeezing all four beside the bar would starve it below its ~310px minimum.
+            _controlBar = new SystemControlBar(
+                W - 54,
+                () => Settings.ManageGoldLoadouts, v => Settings.ManageGoldLoadouts = v,
+                () => Settings.AdvisorGold, v => Settings.AdvisorGold = v,
+                "The advisor arms the snipe triggers and funds the TM.",
+                "Your trigger chips below decide when to re-snipe.",
+                "Automation is off — no gold loadout swap and no snipe.")
+            {
+                Location = new Point(10, 10)
+            };
+            _controlBar.Changed += SyncFromSettings;
+            Controls.Add(_controlBar);
+
             Controls.Add(_snipeNow);
             Controls.Add(_resetBanks);
             Controls.Add(_refresh);
-            UiLayout.Row(10, 10, 8, _srcToggle, _snipeNow, _resetBanks, _refresh);
+            int actionsY = 10 + SystemControlBar.BarHeight + 8;
+            UiLayout.Row(10, actionsY, 8, _snipeNow, _resetBanks, _refresh);
+
+            // Everything below the action row.
+            int content = actionsY + 24 + 8;
 
             // Three stage chips + two 16px arrows, stretched across the PanelW canvas.
             string[] titles = { "ZONE SNIPE", "TIME MACHINE", "TITAN BANK" };
@@ -99,7 +128,7 @@ namespace NGUAdvisor
             {
                 var st = new Stage();
                 // Two-line sub-caption budget (round-3: "WAITING: 3 TRIGGE…" never again).
-                st.Box = new Panel { Location = new Point(x, 48), Size = new Size(stageW, 88), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
+                st.Box = new Panel { Location = new Point(x, content), Size = new Size(stageW, 88), BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle };
                 st.Title = new Label { Text = titles[i], AutoSize = true, Font = UiTheme.Chip, ForeColor = UiTheme.Muted, BackColor = UiTheme.Surface, Location = new Point(6, 4) };
                 st.Value = new Label { Text = "…", AutoSize = false, Size = new Size(stageW - 12, 22), Font = UiTheme.Bold, ForeColor = UiTheme.Accent, BackColor = UiTheme.Surface, Location = new Point(6, 22) };
                 st.Sub = new Label { Text = "", AutoSize = false, Size = new Size(stageW - 12, 36), Font = UiTheme.Chip, ForeColor = UiTheme.Muted, BackColor = UiTheme.Surface, Location = new Point(6, 48) };
@@ -111,14 +140,14 @@ namespace NGUAdvisor
                 x += stageW;
                 if (i < 2)
                 {
-                    var arrow = new Label { Text = "→", AutoSize = false, Size = new Size(16, 22), Font = UiTheme.Bold, ForeColor = UiTheme.Faint, BackColor = UiTheme.Ground, Location = new Point(x, 80), TextAlign = ContentAlignment.MiddleCenter };
+                    var arrow = new Label { Text = "→", AutoSize = false, Size = new Size(16, 22), Font = UiTheme.Bold, ForeColor = UiTheme.Faint, BackColor = UiTheme.Ground, Location = new Point(x, content + 32), TextAlign = ContentAlignment.MiddleCenter };
                     Controls.Add(arrow);
                     x += 16;
                 }
             }
 
             // Trigger strip (manual) / note (advisor) — below the taller chips.
-            _manualStrip = new Panel { Location = new Point(0, 148), Size = new Size(W - 4, 34), BackColor = UiTheme.Ground, Tag = "exclusive" };
+            _manualStrip = new Panel { Location = new Point(0, content + 100), Size = new Size(W - 4, 34), BackColor = UiTheme.Ground, Tag = "exclusive" };
             Controls.Add(_manualStrip);
             var trigLbl = new Label { Text = "re-snipe on:", AutoSize = true, Font = UiTheme.Ui, ForeColor = UiTheme.Muted, BackColor = UiTheme.Ground };
             _trigNewZone = MkTrig("New Zone", () => Settings.SnipeOnNewZone = !Settings.SnipeOnNewZone);
@@ -148,14 +177,17 @@ namespace NGUAdvisor
                 Font = UiTheme.Ui,
                 ForeColor = UiTheme.Muted,
                 BackColor = UiTheme.Ground,
-                Location = new Point(10, 154),
+                Location = new Point(10, content + 106),
                 Tag = "exclusive"
             };
+            // Unchanged disclosure of the trigger truth table: in advisor mode the advisor arms these
+            // itself (starvation regardless of its chip), which is why the manual strip gives way to this
+            // note rather than pretending every chip is still authoritative.
             UiLayout.FitOrGrow(_advisorNote,
                 "Re-snipes on: new zone fightable · rebirth · gold starvation — challenge snipe mode auto-detected.");
             Controls.Add(_advisorNote);
 
-            BuildDrainLedger(W, Math.Max(148 + _manualStrip.Height, _advisorNote.Bottom) + 10);
+            BuildDrainLedger(W, Math.Max(content + 100 + _manualStrip.Height, _advisorNote.Bottom) + 10);
 
             VisibleChanged += (s, e) => { if (Visible) RefreshPipeline(); };
             SyncFromSettings();
@@ -230,9 +262,12 @@ namespace NGUAdvisor
             _syncing = true;
             try
             {
+                // Reflects both layers, incl. a flip made from the Settings grid (which owns the only other
+                // reachable writer of ManageGoldLoadouts) or a settings reload. Sync() never raises
+                // Changed, so this cannot recurse.
+                _controlBar?.Sync();
+
                 bool advisor = Settings.AdvisorGold;
-                _srcToggle.Text = advisor ? "ADVISOR MANAGES GOLD" : "MANUAL SNIPE";
-                UiTheme.ApplyState(_srcToggle, advisor ? UiTheme.Cap : UiTheme.Danger, Color.White);
                 _manualStrip.Visible = !advisor;
                 _advisorNote.Visible = advisor;
 
