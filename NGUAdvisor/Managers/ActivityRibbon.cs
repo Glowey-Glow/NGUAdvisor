@@ -71,7 +71,12 @@ namespace NGUAdvisor
             };
             Controls.Add(_msg);
 
-            Resize += (s, e) => { Place(); Repaint(Activity.Current); };
+            Resize += (s, e) =>
+            {
+                Place();
+                var a = Activity.Current;
+                if (a != null && !Activity.Expired(a, DateTime.UtcNow)) Repaint(a);
+            };
             Place();
         }
 

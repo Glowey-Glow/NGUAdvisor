@@ -514,8 +514,8 @@ namespace NGUAdvisor
             {
                 var c = Main.Character;
                 if (c == null) return;
-                double atk = c.totalAdvAttack() * c.idleAttackPower() / 771.375;
-                int optimal = atk > 1 ? (int)Math.Floor(Math.Log(atk, 1.05)) : 0;
+                double atk = c.totalAdvAttack() * c.idleAttackPower() / ItopodConstants.FloorHpNormalizer;
+                int optimal = atk > 1 ? (int)Math.Floor(Math.Log(atk, ItopodConstants.FloorGrowthBase)) : 0;
                 _floorInfo.Text = $"Optimal idle floor right now: {optimal}  (highest reached: {c.adventure.highestItopodLevel})";
             }
             catch (Exception ex) { LogDebug($"Floor info: {ex.Message}"); }

@@ -5,6 +5,9 @@ namespace NGUAdvisor.Managers
 {
     public static class BloodMagicManager
     {
+        public const double PillWorthFraction = 0.10;      // min pill effect as a fraction of base adventure power
+        public const double PillMinAvailableSec = 1800.0;  // 30-min availability hold before a cast is allowed
+
         public abstract class Spell
         {
             protected string name;
@@ -136,13 +139,13 @@ namespace NGUAdvisor.Managers
             protected override bool FailSafeHold(double effect, out string reason)
             {
                 double availableFor = Time - cooldown;
-                if (availableFor < 1800.0)
+                if (availableFor < PillMinAvailableSec)
                 {
                     reason = $"available {Math.Max(0, availableFor) / 60.0:F0}m (< 30m fail-safe)";
                     return true;
                 }
                 double baseAdvPower = Math.Max(1.0, _character.adventure.attack);
-                if (effect < baseAdvPower * 0.10)
+                if (effect < baseAdvPower * PillWorthFraction)
                 {
                     reason = $"gain {effect:F0} < 10% of base adv power {baseAdvPower:F0}";
                     return true;

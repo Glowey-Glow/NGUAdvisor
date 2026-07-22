@@ -268,8 +268,12 @@ namespace NGUAdvisor.Managers
             return f;
         }
 
-        // Buy toward the current perk step; a bounded number of levels per call. Replicates the
-        // game's tryLevelUp checks, then applies points/level/doEffect directly (no UI churn).
+        // Buys toward the current perk step, up to maxBuys levels per call. Mirrors the game's own
+        // per-click buy path ItopodPerkController.doLevelUp(id): deduct perkPoints, increment
+        // perkLevel[id], then doEffect(id) (the derived-stat recompute). The ONLY things doLevelUp does
+        // that we deliberately skip are its three UI-refresh calls -- showTooltip(id), updateText(),
+        // changePage(page) -- none of which touch game state; skipping them avoids UI churn/redraw on the
+        // advisor loop. There are no achievement or unlock hooks in that path. (Verified vs Assembly-CSharp.)
         public static int BuyPerks(int maxBuys)
         {
             int bought = 0;
@@ -374,6 +378,9 @@ namespace NGUAdvisor.Managers
             return f;
         }
 
+        // Same contract as BuyPerks: mirrors BeastQuestPerkController.doLevelUp(id) -- deduct quirkPoints,
+        // increment quirkLevel[id], doEffect(id) -- and skips only its UI calls (showTooltip, updateText),
+        // which carry no game state.
         public static int BuyQuirks(int maxBuys)
         {
             int bought = 0;
@@ -448,7 +455,10 @@ namespace NGUAdvisor.Managers
             catch { return false; }
         }
 
-        // One tier per call (tiers are chunky purchases). Replicates the game's buy: deduct + increment.
+        // One tier per call (tiers are chunky purchases). Mirrors FruitController.upgrade()'s state
+        // mutation exactly: deduct seeds, increment fruits[id].maxTier. That game method has NO per-tier
+        // doEffect; everything else it runs (unlockInfo(), updateFruitDisplay(), tooltips) is UI-only and
+        // is deliberately skipped here.
         public static bool BuyFruitTier()
         {
             try

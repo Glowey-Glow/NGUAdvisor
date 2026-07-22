@@ -59,10 +59,18 @@ namespace NGUAdvisor.Managers
             {45, "THE TRAITOR"}
         };
 
+        // Boss (effectiveBossID) required to unlock each adventure zone, indexed by zone number, sourced 1:1
+        // from AdventureController.constructDropdown. Previously omitted zone 38 (ROCK LOBSTER, also 826, the
+        // second of two consecutive 826 zones with The Halloweenies) which shifted every later Sadistic
+        // threshold one slot too high and left the array one short, so TitanZones[13]==45 (THE TRAITOR) indexed
+        // off the end and titan 14 was never reachable/snapshotted. The zone-38 826 entry is restored below.
+        // LIMITATION: zone 45 (THE TRAITOR) additionally requires the live flag character.adventure.ratTitanDefeated
+        // in-game; this static table only encodes the 902 boss threshold, so GetMaxReachableZone may count zone 45
+        // as reachable slightly before the rat titan is actually beaten (Sadistic-endgame only).
         public static int[] ZoneUnlocks = new int[] {
             0, 7, 17, 37, 48, 58, 58, 66, 66, 74, 82, 82, 90, 100, 100, 108, 116, 116, 124, 132, 137, // Normal
             359, 401, 426, 459, 467, 467, 475, 483, 491, 491, 501,                                    // Evil
-            727, 752, 777, 810, 818, 826, 834, 842, 850, 850, 871, 897, 902};                         // Sadistic
+            727, 752, 777, 810, 818, 826, 826, 834, 842, 850, 850, 871, 897, 902};                    // Sadistic (idx38 ROCK LOBSTER=826)
 
         private static readonly Character _character = Main.Character;
 
@@ -87,7 +95,11 @@ namespace NGUAdvisor.Managers
                 if (c.settings.rebirthDifficulty >= difficulty.evil) return c.highestHardBoss;
                 return c.highestBoss;
             }
-            catch { return c.highestBoss; }
+            catch (Exception ex)
+            {
+                Main.LogDebug($"CurrentHighestBoss read failed (difficulty={c?.settings?.rebirthDifficulty}): {ex.Message}");
+                return 0;
+            }
         }
 
         public static bool IsVersionedTitan(int titanIndex) => titanIndex >= 5 && titanIndex <= 11;
@@ -232,7 +244,7 @@ namespace NGUAdvisor.Managers
                     if ((currentSnapshot.SpawnSoonTimestamp.Value - oldSnapshot.SpawnSoonTimestamp.Value).TotalMinutes < 10.0)
                         continue;
 
-                    Log($"Titan {titanIndex} still available after 300 seconds");
+                    Log($"Titan {titanIndex} still available after 10 minutes");
 
                     var version = TitanVersion(titanIndex);
                     var reducedVersion = false;

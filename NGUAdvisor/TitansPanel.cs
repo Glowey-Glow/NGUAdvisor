@@ -538,13 +538,6 @@ namespace NGUAdvisor
 
         // Full suffix ladder (matches OptimizationAdvisor.Fmt) — capping at B rendered T6v4's
         // 2.5e12 as "2500B" and would only get worse from T7 (5e14) up.
-        private static string Fmt(double v)
-        {
-            if (v <= 0) return "0";
-            string[] suf = { "", "K", "M", "B", "T", "Q", "Qi", "Sx", "Sp", "Oc", "No", "De" };
-            int i = 0;
-            while (v >= 1000 && i < suf.Length - 1) { v /= 1000; i++; }
-            return $"{v:0.##}{suf[i]}";
-        }
+        private static string Fmt(double v) => NumberFormatter.Abbrev(v);   // consolidated (finding #31)
     }
 }

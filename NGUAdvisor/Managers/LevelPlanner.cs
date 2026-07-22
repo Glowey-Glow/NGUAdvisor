@@ -96,7 +96,8 @@ namespace NGUAdvisor.Managers
 
                 int t7 = 0;
                 try { t7 = Math.Max(0, ZoneHelpers.TitanVersion(6) - 1); } catch { }
-                double evilHours = Math.Max(1, t7);
+                if (t7 < 1) return; // no T7 version defeated → no Evil NGU hours (guide ch5 rule: N = versions defeated)
+                double evilHours = t7;
                 double switchAt = target - evilHours * 3600.0;
                 var want = c.rebirthTime.totalseconds >= switchAt ? difficulty.evil : difficulty.normal;
 

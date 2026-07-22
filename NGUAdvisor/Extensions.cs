@@ -22,6 +22,7 @@ namespace NGUAdvisor
         public static IEnumerable<TSource> AllMaxBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> selector) where TKey : IComparable
         {
             var array = source.ToArray();
+            if (array.Length == 0) return array;
             var max = selector(array[0]);
             var count = 1;
             for (var i = 1; i < array.Length; i++)
@@ -47,6 +48,7 @@ namespace NGUAdvisor
         public static IEnumerable<TSource> AllMinBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> selector) where TKey : IComparable
         {
             var array = source.ToArray();
+            if (array.Length == 0) return array;
             var min = selector(array[0]);
             var count = 1;
             for (var i = 1; i < array.Length; i++)

@@ -678,24 +678,24 @@ namespace NGUAdvisor.Managers
 
             // Using idle attack
             if (Settings.ITOPODCombatMode == 0 || !RegularAttackUnlocked())
-                return attack * _character.idleAttackPower() / 771.375f;
+                return attack * _character.idleAttackPower() / ItopodConstants.FloorHpNormalizerF;
 
             // Using regular attack
             if (Settings.ITOPODOptimizeMode == 1)
-                return attack * _character.regAttackPower() / 771.375f;
+                return attack * _character.regAttackPower() / ItopodConstants.FloorHpNormalizerF;
 
             if (time == -1f)
                 time = Mathf.Max(RemainingRespawnTime(), RemainingGlobalCooldown());
 
             // Using strongest attacks
             if (UltimateAttackAvailable() && UltimateAttackCooldown() <= time)
-                return attack * _character.ultimateAttackPower() / 771.375f;
+                return attack * _character.ultimateAttackPower() / ItopodConstants.FloorHpNormalizerF;
             else if (PiercingAttackAvailable() && PiercingAttackCooldown() <= time)
-                return attack * _character.strongAttackPower() / 769.25f;
+                return attack * _character.strongAttackPower() / ItopodConstants.PiercingHpNormalizerF;
             else if (StrongAttackAvailable() && StrongAttackCooldown() <= time)
-                return attack * _character.strongAttackPower() / 771.375f;
+                return attack * _character.strongAttackPower() / ItopodConstants.FloorHpNormalizerF;
             else
-                return attack * _character.regAttackPower() / 771.375f;
+                return attack * _character.regAttackPower() / ItopodConstants.FloorHpNormalizerF;
         }
 
         private static float CalculateMaxAttack(bool regularAttack = false)
@@ -704,33 +704,33 @@ namespace NGUAdvisor.Managers
 
             // Using idle attack
             if (Settings.ITOPODCombatMode == 0 || !RegularAttackUnlocked())
-                return attack * _character.idleAttackPower() / 771.375f;
+                return attack * _character.idleAttackPower() / ItopodConstants.FloorHpNormalizerF;
 
             // Using regular attack
             if (Settings.ITOPODOptimizeMode == 1 || regularAttack)
-                return attack * _character.regAttackPower() / 771.375f;
+                return attack * _character.regAttackPower() / ItopodConstants.FloorHpNormalizerF;
 
             // Using strongest attacks
             if (UltimateAttackUnlocked())
-                return attack * _character.ultimateAttackPower() / 771.375f;
+                return attack * _character.ultimateAttackPower() / ItopodConstants.FloorHpNormalizerF;
             else if (PiercingAttackUnlocked())
-                return attack * _character.strongAttackPower() / 769.25f;
+                return attack * _character.strongAttackPower() / ItopodConstants.PiercingHpNormalizerF;
             else if (StrongAttackUnlocked())
-                return attack * _character.strongAttackPower() / 771.375f;
+                return attack * _character.strongAttackPower() / ItopodConstants.FloorHpNormalizerF;
             else
-                return attack * _character.regAttackPower() / 771.375f;
+                return attack * _character.regAttackPower() / ItopodConstants.FloorHpNormalizerF;
         }
 
         private static int CalculateBestFloor(float attack)
         {
-            int floor = (int)Math.Floor(Math.Log(attack, 1.05));
+            int floor = (int)Math.Floor(Math.Log(attack, ItopodConstants.FloorGrowthBase));
 
             if (floor < 0)
                 return 0;
 
             int maxLevel = _ac.maxItopodLevel();
             if (floor > maxLevel)
-                floor = maxLevel - 1;
+                floor = maxLevel;
 
             return floor;
         }

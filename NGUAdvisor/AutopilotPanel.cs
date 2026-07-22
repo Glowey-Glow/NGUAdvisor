@@ -138,27 +138,54 @@ namespace NGUAdvisor
         private static readonly string[] ENguNames = { "Augs", "Wandoos", "Respawn", "Gold", "Adv-α", "Power-α", "DC", "Magic", "PP" };
         private static readonly string[] MNguNames = { "Ygg", "EXP", "Power-β", "Number", "TM", "Energy", "Adv-β" };
 
+        // Parse the token grammar — [CAP]BASE[-index][:percent] — instead of tabulating literals. The
+        // old switch enumerated every percent variant by hand (CAPTM:5, CAPTM:30, CAPWAN:40, CAPWAN:60),
+        // so retuning any of them fell through and the panel printed the raw token at the user. That
+        // already showed for CAPBESTAUG and CAPALLBT, which were never in the table at all.
         private static string Friendly(ResourceType type, string tok)
         {
-            switch (tok)
+            if (string.IsNullOrEmpty(tok)) return tok;
+
+            string body = tok, pct = null;
+            int colon = tok.IndexOf(':');
+            if (colon >= 0) { body = tok.Substring(0, colon); pct = tok.Substring(colon + 1); }
+
+            bool cap = body.StartsWith("CAP");
+            string rest = cap ? body.Substring(3) : body;
+
+            string bare = rest;
+            int index = -1;
+            int dash = rest.IndexOf('-');
+            if (dash >= 0 && int.TryParse(rest.Substring(dash + 1), out var parsed))
             {
-                case "CAPTM:5": return "TM 5%";
-                case "CAPTM:30": return "TM 30%";
-                case "CAPWAN:40": return "WAN 40%";
-                case "CAPWAN:60": return "WAN 60%";
-                case "BESTAUG": return "best aug";
-                case "CAPALLAT": return "AT caps";
-                case "ALLNGU": return "all NGU";
-                case "ALLBT": return "all BT";
-                case "BR-30": return "rituals";
-                case "ALLHACK": return "all hacks";
+                bare = rest.Substring(0, dash);
+                index = parsed;
             }
-            if (tok.StartsWith("NGU-") && int.TryParse(tok.Substring(4), out var idx))
+
+            string name;
+            switch (bare)
             {
-                var names = type == ResourceType.Magic ? MNguNames : ENguNames;
-                if (idx >= 0 && idx < names.Length) return $"NGU:{names[idx]}";
+                case "TM": name = "TM"; break;
+                case "WAN": name = "WAN"; break;
+                case "BESTAUG": name = "best aug"; break;
+                case "ALLAT": name = "AT caps"; break;
+                case "ALLNGU": name = "all NGU"; break;
+                case "ALLBT": name = "all BT"; break;
+                case "ALLHACK": name = "all hacks"; break;
+                case "BR": name = "rituals"; break;
+                case "NGU":
+                    var names = type == ResourceType.Magic ? MNguNames : ENguNames;
+                    if (index < 0 || index >= names.Length) return tok;
+                    name = $"NGU:{names[index]}";
+                    break;
+                default: return tok;
             }
-            return tok;
+
+            if (pct != null) name += $" {pct}%";
+            // Keep the hot/warm distinction visible: a CAP NGU lane is a surplus absorber, not a hot
+            // lane, and the two used to be told apart only by the raw token leaking through.
+            if (cap && bare == "NGU") name += " (surplus)";
+            return name;
         }
 
         private static string PlanLine(string prefix, ResourceType type)
@@ -265,6 +292,12 @@ namespace NGUAdvisor
                 Height = _card.Bottom + 8;
             }
             catch (Exception ex) { LogDebug($"Autopilot reflow: {ex.Message}"); }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tips?.Dispose();   // the one owned ToolTip has no container to dispose it
+            base.Dispose(disposing);
         }
     }
 }

@@ -643,7 +643,7 @@ namespace NGUAdvisor.Managers
                     // Don't wait for Offensive Buff if it is disabled or not unlocked
                     bool waitForOffensiveBuff = OffensiveBuffAvailable();
                     // Don't wait for Offensive Buff because we still can utilize it
-                    waitForUltimateBuff &= OffensiveBuffDuration() <= (_globalMoveCooldown + 0.05f) * 2f;
+                    waitForOffensiveBuff &= OffensiveBuffDuration() <= (_globalMoveCooldown + 0.05f) * 2f;
                     // Don't wait for Offensive Buff if we will be able to use Charge again when it will be active next time
                     waitForOffensiveBuff &= _character.chargeCooldown() > OffensiveBuffCooldown() + _character.offenseBuffDuration() - (_globalMoveCooldown + 0.05f) * 5f;
                     if (waitForUltimateBuff || waitForOffensiveBuff)

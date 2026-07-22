@@ -292,5 +292,11 @@ namespace NGUAdvisor
 
         private static string Capitalize(string s)
             => string.IsNullOrEmpty(s) ? "-" : char.ToUpper(s[0]) + s.Substring(1);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tips?.Dispose();   // the one owned ToolTip has no container to dispose it
+            base.Dispose(disposing);
+        }
     }
 }

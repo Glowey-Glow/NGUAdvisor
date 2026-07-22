@@ -333,7 +333,9 @@ namespace SimpleJSON
             }
             set
             {
-                Value = value.ToString();
+                // InvariantCulture so a comma-decimal OS locale can't write "1,5" (structurally invalid JSON).
+                // Matches the invariant parse in the getter above and every JSONNumber I/O site (findings #1/#2).
+                Value = value.ToString(CultureInfo.InvariantCulture);
             }
         }
 
@@ -536,8 +538,9 @@ namespace SimpleJSON
             else
             {
                 double val;
-                if (double.TryParse(token, out val))
-                    ctx.Add(tokenName, val);
+                if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out val)
+                    && !double.IsNaN(val) && !double.IsInfinity(val))
+                    ctx.Add(tokenName, new JSONNumber(token));
                 else
                     ctx.Add(tokenName, token);
             }
@@ -678,11 +681,21 @@ namespace SimpleJSON
                                     break;
                                 case 'u':
                                     {
-                                        string s = aJSON.Substring(i + 1, 4);
-                                        Token.Append((char)int.Parse(
-                                            s,
-                                            System.Globalization.NumberStyles.AllowHexSpecifier));
-                                        i += 4;
+                                        if (i + 5 <= aJSON.Length &&
+                                            int.TryParse(
+                                                aJSON.Substring(i + 1, 4),
+                                                System.Globalization.NumberStyles.AllowHexSpecifier,
+                                                System.Globalization.CultureInfo.InvariantCulture,
+                                                out int code))
+                                        {
+                                            Token.Append((char)code);
+                                            i += 4;
+                                        }
+                                        else
+                                        {
+                                            // Malformed \u escape (truncated or non-hex): treat as literal.
+                                            Token.Append(C);
+                                        }
                                         break;
                                     }
                                 default:
@@ -1011,6 +1024,7 @@ namespace SimpleJSON
     public partial class JSONNumber : JSONNode
     {
         private double m_Data;
+        private string m_RawString;
 
         public override JSONNodeType Tag { get { return JSONNodeType.Number; } }
         public override bool IsNumber { get { return true; } }
@@ -1018,11 +1032,11 @@ namespace SimpleJSON
 
         public override string Value
         {
-            get { return m_Data.ToString(); }
+            get { return m_Data.ToString(CultureInfo.InvariantCulture); }
             set
             {
                 double v;
-                if (double.TryParse(value, out v))
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out v))
                     m_Data = v;
             }
         }
@@ -1030,7 +1044,7 @@ namespace SimpleJSON
         public override double AsDouble
         {
             get { return m_Data; }
-            set { m_Data = value; }
+            set { m_Data = value; m_RawString = null; }
         }
 
         public JSONNumber(double aData)
@@ -1041,11 +1055,12 @@ namespace SimpleJSON
         public JSONNumber(string aData)
         {
             Value = aData;
+            m_RawString = aData;
         }
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append(m_Data);
+            aSB.Append(m_RawString ?? m_Data.ToString("G17", CultureInfo.InvariantCulture));
         }
         private static bool IsNumeric(object value)
         {

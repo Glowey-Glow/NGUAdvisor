@@ -24,7 +24,6 @@ namespace NGUAdvisor
     {
         private readonly SettingsForm _form;
         private readonly ToolTip _tips = new ToolTip();
-        private bool _syncing;   // guards programmatic ComboBox changes (selection alone never applies)
 
         private Button _srcAuto, _srcFile;   // ALLOCATION SOURCE segment
         private Label _srcExplain;
@@ -154,17 +153,12 @@ namespace NGUAdvisor
             {
                 var names = Directory.GetFiles(GetProfilesDir())
                     .Select(Path.GetFileNameWithoutExtension).OrderBy(n => n).ToArray();
-                _syncing = true;
-                try
-                {
-                    _combo.Items.Clear();
-                    _combo.Items.AddRange(names);
-                    if (Settings != null && names.Contains(Settings.AllocationFile))
-                        _combo.SelectedItem = Settings.AllocationFile;
-                }
-                finally { _syncing = false; }
+                _combo.Items.Clear();
+                _combo.Items.AddRange(names);
+                if (Settings != null && names.Contains(Settings.AllocationFile))
+                    _combo.SelectedItem = Settings.AllocationFile;
             }
-            catch (Exception e) { _syncing = false; LogDebug($"Profile LoadFiles: {e.Message}"); }
+            catch (Exception e) { LogDebug($"Profile LoadFiles: {e.Message}"); }
         }
 
         // Refresh every label/segment/combo from current state. Called on show, nav, and after each action —
@@ -192,9 +186,7 @@ namespace NGUAdvisor
                 }
                 else
                 {
-                    _syncing = true;
-                    try { if (_combo.Items.Contains(file) && _combo.SelectedItem?.ToString() != file) _combo.SelectedItem = file; }
-                    finally { _syncing = false; }
+                    if (_combo.Items.Contains(file) && _combo.SelectedItem?.ToString() != file) _combo.SelectedItem = file;
 
                     SetValue(_fileStatus, advisor ? $"Standby profile file: {file}" : $"Active profile file: {file}");
                     var (state, msg) = ValidateFile(file, advisor);
@@ -305,6 +297,12 @@ namespace NGUAdvisor
             string fit = UiLayout.FitText(text ?? "", l.Font, l.Width);
             if (l.Text != fit) l.Text = fit;
             if (l.ForeColor != color) l.ForeColor = color;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tips?.Dispose();   // the one owned ToolTip has no container to dispose it
+            base.Dispose(disposing);
         }
     }
 }

@@ -67,6 +67,11 @@ namespace NGUAdvisor
         [SerializeField] private bool _autoBuyEm;
         [SerializeField] private bool _autoBuyAdventure;
         [SerializeField] private double _bloodNumberThreshold;
+        // AT HOUR extension decision, persisted so an advisor reload cannot cancel an extension already
+        // in flight (AtHourPlanner's statics don't survive one). Internal — not user-facing, not in
+        // SettingsIndex. 0 = no decision this run; cleared when a rebirth re-arms the planner.
+        [SerializeField] private double _atHourPlannedEnd;
+        [SerializeField] private double _atHourDecidedRunSec;
         [SerializeField] private int[] _quickLoadout;
         [SerializeField] private int[] _quickDiggers;
         [SerializeField] private int[] _quickBeards;
@@ -252,16 +257,16 @@ namespace NGUAdvisor
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, int length, T defaultValue = default)
         {
-            if (newSetting?.Length != length)
+            var result = new T[length];
+            for (var i = 0; i < length; i++)
+                result[i] = defaultValue;
+            if (newSetting != null)
             {
-                setting = new T[length];
-                for (var i = 0; i < length; i++)
-                    setting[i] = defaultValue;
+                var count = Math.Min(newSetting.Length, length);
+                for (var i = 0; i < count; i++)
+                    result[i] = newSetting[i];
             }
-            else
-            {
-                setting = newSetting;
-            }
+            setting = result;
         }
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, Func<T, bool> predicate)
@@ -284,24 +289,16 @@ namespace NGUAdvisor
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, int length, Func<T, bool> predicate, T defaultValue = default)
         {
-            if (newSetting?.Length != length)
+            var result = new T[length];
+            for (var i = 0; i < length; i++)
+                result[i] = defaultValue;
+            if (newSetting != null)
             {
-                setting = new T[length];
-                for (var i = 0; i < length; i++)
-                    setting[i] = defaultValue;
+                var count = Math.Min(newSetting.Length, length);
+                for (var i = 0; i < count; i++)
+                    result[i] = predicate(newSetting[i]) ? newSetting[i] : defaultValue;
             }
-            else
-            {
-                var temp = new List<T>();
-                foreach (var item in newSetting)
-                {
-                    if (predicate(item))
-                        temp.Add(item);
-                    else
-                        temp.Add(defaultValue);
-                }
-                setting = temp.ToArray();
-            }
+            setting = result;
         }
 
         private void AssignBoostPriority(string[] newSetting)
@@ -363,6 +360,8 @@ namespace NGUAdvisor
 
             _autoSpellSwap = other?.AutoSpellSwap ?? false;
             AssignValue(ref _bloodNumberThreshold, other?.BloodNumberThreshold, (value) => value >= 0.0, 0.0);
+            AssignValue(ref _atHourPlannedEnd, other?.AtHourPlannedEnd, (value) => value >= 0.0, 0.0);
+            AssignValue(ref _atHourDecidedRunSec, other?.AtHourDecidedRunSec, (value) => value >= 0.0, 0.0);
             AssignValue(ref _counterfeitThreshold, other?.CounterfeitThreshold, (value) => value >= 0);
             AssignValue(ref _spaghettiThreshold, other?.SpaghettiThreshold, (value) => value >= 0);
             _castBloodSpells = other?.CastBloodSpells ?? false;
@@ -395,10 +394,10 @@ namespace NGUAdvisor
             _swapTitanBeards = other?.SwapTitanBeards ?? false;
             AssignValues(ref _titanLoadout, other?.TitanLoadout, (id) => IsEquipment(id));
             AssignValue(ref _titanCombatMode, other?.TitanCombatMode, (mode) => mode >= 0 && mode <= 4);
-            AssignValues(ref _titanSwapTargets, other?.TitanSwapTargets, 14);
+            AssignValues(ref _titanSwapTargets, other?.TitanSwapTargets, Consts.MAX_TITAN);
 
             _combatEnabled = other?.CombatEnabled ?? false;
-            AssignValue(ref _combatMode, other.CombatMode, (mode) => mode >= 0 && mode <= 4);
+            AssignValue(ref _combatMode, other?.CombatMode, (mode) => mode >= 0 && mode <= 4);
             _beastMode = other?.BeastMode ?? false;
             AssignValue(ref _snipeZone, other?.SnipeZone, (id) => ZoneHelpers.ZoneList.ContainsKey(id) && !ZoneHelpers.ZoneIsTitan(id));
             _snipeBossOnly = other?.SnipeBossOnly ?? false;
@@ -419,8 +418,8 @@ namespace NGUAdvisor
             _goldSnipeComplete = other?.GoldSnipeComplete ?? false;
             _goldCBlockMode = other?.GoldCBlockMode ?? false;
             AssignValues(ref _goldDropLoadout, other?.GoldDropLoadout, (id) => IsEquipment(id));
-            AssignValues(ref _titanGoldTargets, other?.TitanGoldTargets, 14);
-            AssignValues(ref _titanMoneyDone, other?.TitanMoneyDone, 14);
+            AssignValues(ref _titanGoldTargets, other?.TitanGoldTargets, Consts.MAX_TITAN);
+            AssignValues(ref _titanMoneyDone, other?.TitanMoneyDone, Consts.MAX_TITAN);
 
             _autoQuest = other?.AutoQuest ?? false;
             _allowMajorQuests = other?.AllowMajorQuests ?? false;
@@ -462,8 +461,8 @@ namespace NGUAdvisor
             _trashCards = other?.TrashCards ?? false;
             _trashProtectedCards = other?.TrashProtectedCards ?? false;
             AssignValues(ref _cardSortOrder, other?.CardSortOrder, (item) => Array.IndexOf(CardManager.sortList, item) >= 0);
-            AssignValues(ref _cardRarities, other?.CardRarities, 14, (id) => CardManager.rarityList.ContainsKey(id), -1);
-            AssignValues(ref _cardCosts, other?.CardCosts, 14, (cost) => Array.IndexOf(CardManager.costList, cost) >= 0);
+            AssignValues(ref _cardRarities, other?.CardRarities, Consts.MAX_CARD_FILTERS, (id) => CardManager.rarityList.ContainsKey(id), -1);
+            AssignValues(ref _cardCosts, other?.CardCosts, Consts.MAX_CARD_FILTERS, (cost) => Array.IndexOf(CardManager.costList, cost) >= 0);
 
             _manageCooking = other?.ManageCooking ?? false;
             _manageCookingLoadouts = other?.ManageCookingLoadouts ?? false;
@@ -498,7 +497,7 @@ namespace NGUAdvisor
             _advisorYggBuys = other?.AdvisorYggBuys ?? false;
             _advisorExpBuys = other?.AdvisorExpBuys ?? false;
             _autoTitanGold = other?.AutoTitanGold ?? false;
-            AssignValues(ref _titanGoldVersionBanked, other?.TitanGoldVersionBanked, 14);
+            AssignValues(ref _titanGoldVersionBanked, other?.TitanGoldVersionBanked, Consts.MAX_TITAN);
             _advisorBlood = other?.AdvisorBlood ?? false;
             _advisorShowOptimal = other?.AdvisorShowOptimal ?? false;
             _wideLayout = other?.WideLayout ?? false;
@@ -1144,6 +1143,28 @@ namespace NGUAdvisor
             {
                 if (value == _bloodNumberThreshold) return;
                 _bloodNumberThreshold = value;
+                SaveSettings();
+            }
+        }
+
+        public double AtHourPlannedEnd
+        {
+            get => _atHourPlannedEnd;
+            set
+            {
+                if (value == _atHourPlannedEnd) return;
+                _atHourPlannedEnd = value;
+                SaveSettings();
+            }
+        }
+
+        public double AtHourDecidedRunSec
+        {
+            get => _atHourDecidedRunSec;
+            set
+            {
+                if (value == _atHourDecidedRunSec) return;
+                _atHourDecidedRunSec = value;
                 SaveSettings();
             }
         }
@@ -2021,7 +2042,7 @@ namespace NGUAdvisor
         }
 
         // A/B layout test: widens the settings window (default ~608 client from DPI autoscale halving
-        // the designed 1216) to 940. Applied at form construction — flip + reinject to compare.
+        // the designed 1216) to 940. Applied at form construction — flip + Reload Advisor to compare.
         public bool WideLayout
         {
             get => _wideLayout;

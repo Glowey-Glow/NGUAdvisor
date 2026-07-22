@@ -434,11 +434,8 @@ namespace NGUAdvisor
                 if (!string.IsNullOrEmpty(s)) return s;
             }
             catch { }
-            // Fallback ladder through the standard idle-game suffixes, then scientific.
-            string[] suf = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No" };
-            int tier = 0;
-            while (v >= 1000 && tier < suf.Length - 1) { v /= 1000; tier++; }
-            return v >= 1000 ? $"{v:0.#e+0}" : $"{v:0.#}{suf[tier]}";
+            // Game formatter unavailable -> fall back to the shared canonical ladder (finding #31).
+            return NumberFormatter.Abbrev(v);
         }
     }
 }

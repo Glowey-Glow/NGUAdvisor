@@ -14,6 +14,15 @@ namespace NGUAdvisor
 {
     public class Main : MonoBehaviour
     {
+        // INVARIANT (why the pervasive `static readonly Character` caching here and across ~20 managers is safe):
+        // NGU Idle keeps ONE Character MonoBehaviour alive for the whole process. Its save/load path,
+        // Character.saveLoad.loadintoGame (see LoadQuicksave, ~line 707), deserializes INTO that existing
+        // instance rather than reconstructing it, so the reference resolved once here never goes stale on an
+        // in-game save reload. This cached root (and InventoryController below, plus every manager's cached
+        // sub-controller) therefore stays valid for the session. The only thing that WOULD invalidate it is a
+        // full scene teardown / new Character within the same process — which does not happen in NGU — and our
+        // own hot-reload, which discards these statics wholesale on a fresh assembly load anyway. Do not
+        // "fix" the caching into live lookups without first confirming that invariant no longer holds.
         public static readonly Character Character = FindObjectOfType<Character>();
         public static readonly InventoryController InventoryController = Character.inventoryController;
         public static StreamWriter OutputWriter;
@@ -31,9 +40,10 @@ namespace NGUAdvisor
         public static SettingsForm settingsForm;
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
-        public const string Version = "1.1.0";
-        // Build stamp, derived automatically from the per-build assembly name (NGUAdvisor.r<yyMMddHHmmss>,
-        // stamped by the .csproj). Every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
+        public const string Version = "1.2.0";
+        // Build stamp, derived automatically from the hot-reload assembly identity (NGUAdvisor.r<yyMMddHHmmss>,
+        // the unique per-compile name that already exists for Mono byte-load dedup). Replaces the old
+        // hand-bumped codename — every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
         private static string _buildTag;
         public static string BuildTag
         {
@@ -161,10 +171,10 @@ namespace NGUAdvisor
 
         public void Unload()
         {
-            // Every step individually guarded: a single throw here used to ABORT teardown half-done
-            // (form closed, resources never released — user-reported). Worse, the old catch called
-            // LogDebug AFTER DebugWriter.Close(), so the logging itself threw. Writers close LAST;
-            // nothing below may escape.
+            // Every step individually guarded: a single throw here used to ABORT the bootstrap's
+            // reload half-done (form closed, new payload never loaded — user-reported). Worse, the
+            // old catch called LogDebug AFTER DebugWriter.Close(), so the logging itself threw.
+            // Writers close LAST; nothing below may escape.
             void Try(Action a) { try { a(); } catch { } }
 
             Try(() => CancelInvoke("AutomationRoutine"));
@@ -351,7 +361,7 @@ namespace NGUAdvisor
             {
                 LogDebug(e.ToString());
                 LogDebug(e.StackTrace);
-                LogDebug(e.InnerException.ToString());
+                if (e.InnerException != null) LogDebug(e.InnerException.ToString());
             }
         }
 

@@ -291,9 +291,22 @@ namespace NGUAdvisor.Managers
 
                     int next = ic.checkItemTransform(e);
                     if (next <= 0) continue;
-                    string from = Main.ItemNameNice(e.id);
+                    int origId = e.id;
+                    string from = Main.ItemNameNice(origId);
                     c.inventory.deleteItem(slot);
-                    ic.itemInfo.makeLoot(next, slot);
+                    try
+                    {
+                        ic.itemInfo.makeLoot(next, slot);
+                    }
+                    catch (Exception ex)
+                    {
+                        // makeLoot threw after the item was already deleted — best-effort restore the
+                        // original at-100 item into the same slot so the climb failure is not destructive.
+                        Main.Log($"Transform climb FAILED for {from}: {ex.Message}; restoring original item");
+                        try { ic.itemInfo.makeLoot(origId, slot); }
+                        catch (Exception ex2) { Main.Log($"Transform climb restore ALSO failed for {from}: {ex2.Message}"); }
+                        return;
+                    }
                     Main.Log($"Transform climb: {from} → {Main.ItemNameNice(next)}");
                     return;   // one per pass — let inventory state settle
                 }

@@ -206,7 +206,9 @@ namespace NGUAdvisor.Managers
                 var c = Main.Character;
                 if (c == null || c.highestBoss < 17) return null;   // custom purchases: permanent unlock
                 WriteCustomPlan(c);
-                long budget = (long)(c.realExp * fraction);
+                double budgetD = c.realExp * fraction;
+                if (budgetD > long.MaxValue) budgetD = long.MaxValue;
+                long budget = (long)budgetD;
                 if (budget < 100) return null;
 
                 var stats = Snapshot(c);
@@ -276,13 +278,13 @@ namespace NGUAdvisor.Managers
                 case "Energy CAP":
                 {
                     if (c.capEnergy < 100000) return 0;          // game gate
-                    long units = maxExp * 250;                   // 250 cap per 1 EXP
+                    double units = (double)maxExp * 250;         // 250 cap per 1 EXP
                     units -= units % 250;                        // game rounds cap to 250s
                     if (units < 250) return 0;
-                    long cost = units / 250;
+                    long cost = maxExp;                          // == units / 250 exactly (units is maxExp*250)
                     c.realExp -= cost;
                     if (c.capEnergy + units >= c.hardCap()) c.capEnergy = c.hardCap();
-                    else c.capEnergy += units;
+                    else c.capEnergy += (long)units;
                     return cost;
                 }
                 case "Energy BARS":
@@ -306,13 +308,13 @@ namespace NGUAdvisor.Managers
                 case "Magic CAP":
                 {
                     if (c.magic.capMagic < 100000) return 0;
-                    long units = maxExp * 250 / 3;
+                    double units = Math.Floor((double)maxExp * 250 / 3);
                     units -= units % 250;
                     if (units < 250) return 0;
-                    long cost = units / 250 * 3;
+                    long cost = (long)(units / 250 * 3);
                     c.realExp -= cost;
                     if (c.magic.capMagic + units >= c.hardCap()) c.magic.capMagic = c.hardCap();
-                    else c.magic.capMagic += units;
+                    else c.magic.capMagic += (long)units;
                     return cost;
                 }
                 case "Magic BARS":
@@ -328,13 +330,8 @@ namespace NGUAdvisor.Managers
             return 0;
         }
 
-        public static string Fmt(double v)
-        {
-            if (v <= 0) return "0";
-            string[] suf = { "", "K", "M", "B", "T", "Q" };
-            int i = 0;
-            while (v >= 1000 && i < suf.Length - 1) { v /= 1000; i++; }
-            return v >= 100 ? $"{v:0}{suf[i]}" : $"{v:0.0}{suf[i]}";
-        }
+        // Canonical abbreviation lives in NumberFormatter.Abbrev (finding #31). Kept as a thin public alias
+        // because external callers reference ExpBalancer.Fmt.
+        public static string Fmt(double v) => NumberFormatter.Abbrev(v);
     }
 }

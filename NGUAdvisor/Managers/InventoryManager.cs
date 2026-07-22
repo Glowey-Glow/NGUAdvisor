@@ -199,8 +199,6 @@ namespace NGUAdvisor.Managers
 
         public static void ManageQuestItems(ih[] ci)
         {
-            int curPage = _ic.inventory[0].id / 60;
-
             var questItems = Array.FindAll(ci, x => IsQuest(x) && !IsBlacklisted(x) && IsLocked(x) && !IsMaxxed(x));
 
             // Merge non-maxxed quest items first
@@ -308,6 +306,10 @@ namespace NGUAdvisor.Managers
             foreach (var item in grouped)
             {
                 if (item.level != 100)
+                    continue;
+                // Never consume a transform-chain tier or a KEEP-MAX/HOLD-protected at-100 copy:
+                // TransformManager owns chain items; consuming one destroys climb/keep progress (data loss).
+                if (TransformManager.MergeAllowed(item.id).HasValue || TransformManager.Frozen(item))
                     continue;
                 var temp = Inventory.inventory[item.slot];
                 if (!temp.removable)

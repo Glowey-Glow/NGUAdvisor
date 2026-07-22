@@ -7,12 +7,19 @@ namespace NGUAdvisor.Managers
     // to produce an accurate stage, a milestone-based "next goal", and a context-aware profile recommendation
     // — replacing the crude highestBoss+difficulty heuristic. Consumed by StatusPanel/DashboardPanel/overlay.
     // Cached/throttled (heavier optimality math is added in 3.2), guarded, main-thread only.
+    //
+    // CANONICAL CHAPTER ENGINE — this Chapter (derived from actual TITAN KILLS) is the authoritative "what
+    // chapter am I in" for stage/HUD/perk/profile advice, and supersedes the coarse boss-threshold
+    // StageDetector.Chapter for those uses. StageDetector is retained ONLY for its two boss-anchored consumers
+    // (ChallengeOverlay segment gating, LevelPlanner NGU-track). The two Chapter values intentionally DIVERGE
+    // when boss progress leads titan kills (see StageDetector's class note for the full contrast) — do NOT treat
+    // them as the same number or substitute one for the other.
     public static class ProgressionAnalyzer
     {
         public struct Progression
         {
             public bool Known;
-            public int Chapter;              // 1..8
+            public int Chapter;              // 1..8. Canonical titan-kill chapter (see class note) — NOT StageDetector.Chapter (boss-threshold).
             public string Label;             // "Ch.4 T6"
             public string Difficulty;        // Normal / Evil / Sadistic
             public string Activity;          // what we're doing now

@@ -236,13 +236,15 @@ namespace NGUAdvisor.Managers
                 if (accSlots <= 0 || accPool.Count == 0) return;
                 // A pinned respawn accessory sits at index 0 and is never swapped out.
                 int fixedCount = Pinned(part.Accessory) ? 1 : 0;
-                // greedy fill
+                // Greedy fill. Each accessory id is used at most once BY DESIGN: NGU only lets one copy of a
+                // given accessory be equipped at a time, even if you own duplicates. So this uniqueness guard
+                // (and the id-dedup in BuildPools) enforces a real game rule — it is NOT an optimizer limitation.
                 while (r.Accessories.Count < accSlots)
                 {
                     int best = 0; double bs = ScoreOf();
                     foreach (var c in accPool)
                     {
-                        if (r.Accessories.Contains(c.Key)) continue;
+                        if (r.Accessories.Contains(c.Key)) continue;   // one copy per accessory id (game rule)
                         r.Accessories.Add(c.Key); double s = ScoreOf(); r.Accessories.RemoveAt(r.Accessories.Count - 1);
                         if (s > bs) { bs = s; best = c.Key; }
                     }

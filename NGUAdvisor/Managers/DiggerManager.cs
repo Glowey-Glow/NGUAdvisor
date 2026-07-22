@@ -73,6 +73,7 @@ namespace NGUAdvisor.Managers
             // Only ask for what can actually run: leveled diggers, at most one per slot. A set that
             // names locked/unleveled diggers (advisor or profile) must not fail forever over them.
             var usable = diggers.Where(d => d >= 0 && d < Diggers.Count && Diggers[d].maxLevel > 0)
+                                .Distinct()
                                 .Take(_dc.maxDiggerSlots())
                                 .ToArray();
             if (usable.Length < diggers.Length)
@@ -262,7 +263,7 @@ namespace NGUAdvisor.Managers
 
         private static void SetLevelMaxAffordable(int id, double cap)
         {
-            if (id < 0 || id > Diggers.Count)
+            if (id < 0 || id >= Diggers.Count)
                 return;
             var curLevel = Diggers[id].curLevel;
             Diggers[id].curLevel = 0L;

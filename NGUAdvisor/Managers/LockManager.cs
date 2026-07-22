@@ -85,41 +85,50 @@ namespace NGUAdvisor.Managers
 
             try
             {
-                backToQuest = _swappedFromQuest && Settings.AutoQuest;
+                try
+                {
+                    backToQuest = _swappedFromQuest && Settings.AutoQuest;
 
-                LoadoutManager.RestoreGear();
-                // The restored gear predates the lock — if the segment/objective moved meanwhile, it's
-                // stale. Let the gear refresh re-evaluate on the next tick with its bypass re-armed.
-                AdvisorApply.GearRestored();
+                    LoadoutManager.RestoreGear();
+                    // The restored gear predates the lock — if the segment/objective moved meanwhile, it's
+                    // stale. Let the gear refresh re-evaluate on the next tick with its bypass re-armed.
+                    AdvisorApply.GearRestored();
 
-                originalGearRestored = true;
+                    originalGearRestored = true;
+                }
+                finally
+                {
+                    // The mode lock must never outlive this method: a throw above (or AutoQuest going off
+                    // mid-nest) would otherwise strand it and CanSwap() would suppress every later swap.
+                    // Quest is only handed back once the pre-Quest gear is actually back on.
+                    _swappedFromQuest = false;
+
+                    if (originalGearRestored && backToQuest)
+                        AcquireLock(LockType.Quest);
+                    else
+                        ReleaseLock();
+                }
+
+                if (backToQuest && (Settings.QuestLoadout.Length > 0 || !string.IsNullOrEmpty(Settings.QuestObjective)))
+                    LoadoutManager.ChangeGear(GearOptimizer.ResolveModeGear(Settings.QuestObjective, Settings.QuestObjectiveRespawn, Settings.QuestLoadout));
             }
             finally
             {
-                // The mode lock must never outlive this method: a throw above (or AutoQuest going off
-                // mid-nest) would otherwise strand it and CanSwap() would suppress every later swap.
-                // Quest is only handed back once the pre-Quest gear is actually back on.
-                _swappedFromQuest = false;
+                // Beard/digger restores must run on every path, including a throw from RestoreGear/ChangeGear
+                // above. If they were skipped while the lock has already transitioned to None, the temporary
+                // swapped set stays equipped and the next SaveConfiguration() would snapshot it as the new
+                // baseline — permanent loadout corruption.
+                if (_swappedBeards)
+                {
+                    BeardManager.RestoreBeards();
+                    _swappedBeards = false;
+                }
 
-                if (originalGearRestored && backToQuest)
-                    AcquireLock(LockType.Quest);
-                else
-                    ReleaseLock();
-            }
-
-            if (backToQuest && (Settings.QuestLoadout.Length > 0 || !string.IsNullOrEmpty(Settings.QuestObjective)))
-                LoadoutManager.ChangeGear(GearOptimizer.ResolveModeGear(Settings.QuestObjective, Settings.QuestObjectiveRespawn, Settings.QuestLoadout));
-
-            if (_swappedBeards)
-            {
-                BeardManager.RestoreBeards();
-                _swappedBeards = false;
-            }
-
-            if (_swappedDiggers)
-            {
-                DiggerManager.RestoreDiggers();
-                _swappedDiggers = false;
+                if (_swappedDiggers)
+                {
+                    DiggerManager.RestoreDiggers();
+                    _swappedDiggers = false;
+                }
             }
         }
 
@@ -257,22 +266,31 @@ namespace NGUAdvisor.Managers
             if (CanAcquireNewLock(LockType.MoneyPit))
             {
                 AcquireLock(LockType.MoneyPit);
-                SaveConfiguration();
 
-                if (loadout?.Length > 0)
-                    LoadoutManager.ChangeGear(loadout, shockwave);
-
-                if (diggers?.Length > 0 && Settings.SwapPitDiggers)
+                try
                 {
-                    BeardManager.EquipBeards(currentLock);
-                    _swappedBeards = true;
+                    SaveConfiguration();
 
-                    DiggerManager.EquipDiggers(diggers);
-                    DiggerManager.RecapDiggers();
-                    _swappedDiggers = true;
+                    if (loadout?.Length > 0)
+                        LoadoutManager.ChangeGear(loadout, shockwave);
+
+                    if (diggers?.Length > 0 && Settings.SwapPitDiggers)
+                    {
+                        BeardManager.EquipBeards(currentLock);
+                        _swappedBeards = true;
+
+                        DiggerManager.EquipDiggers(diggers);
+                        DiggerManager.RecapDiggers();
+                        _swappedDiggers = true;
+                    }
+
+                    return true;
                 }
-
-                return true;
+                catch
+                {
+                    CleanupFailedAcquisition(LockType.MoneyPit);
+                    throw;
+                }
             }
             else if (currentLock == LockType.MoneyPit)
             {

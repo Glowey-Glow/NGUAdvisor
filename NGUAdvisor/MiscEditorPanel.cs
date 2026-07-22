@@ -54,7 +54,6 @@ namespace NGUAdvisor
             _chHead = Head("CHALLENGES", UiTheme.Magic);
             _challenges = new ChallengesBlock(_model.Challenges);
             _challenges.Changed += (s, e) => OnChanged();
-            _challenges.Resized += (s, e) => Relayout();
             _content.Controls.Add(_chHead); _content.Controls.Add(_challenges);
 
             _scroll.ClientSizeChanged += (s, e) => Relayout();
@@ -70,7 +69,6 @@ namespace NGUAdvisor
         {
             var card = new ConsumCard(bp);
             card.Changed += (s, e) => OnChanged();
-            card.CardResized += (s, e) => Relayout();
             card.DeleteRequested += (s, e) => { _model.Consumables.Remove(bp); _consCards.Remove(card); _content.Controls.Remove(card); Relayout(); OnChanged(); };
             _consCards.Add(card);
             _content.Controls.Add(card);
@@ -142,7 +140,6 @@ namespace NGUAdvisor
 
             public event EventHandler Changed;
             public event EventHandler DeleteRequested;
-            public event EventHandler CardResized;
 
             public ConsumCard(ProfileModel.StringListBreakpoint bp)
             {
@@ -351,7 +348,6 @@ namespace NGUAdvisor
             private readonly List<string> _data;
             private readonly List<ChRow> _rows = new List<ChRow>();
             public event EventHandler Changed;
-            public event EventHandler Resized;
 
             public ChallengesBlock(List<string> data)
             {

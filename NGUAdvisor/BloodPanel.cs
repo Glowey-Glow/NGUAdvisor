@@ -159,16 +159,7 @@ namespace NGUAdvisor
             Controls.Add(_advice);
         }
 
-        private static string Fmt(double v)
-        {
-            double a = Math.Abs(v);
-            if (a >= 1e15) return $"{v / 1e15:0.##}Qa";
-            if (a >= 1e12) return $"{v / 1e12:0.##}T";
-            if (a >= 1e9) return $"{v / 1e9:0.##}B";
-            if (a >= 1e6) return $"{v / 1e6:0.##}M";
-            if (a >= 1e3) return $"{v / 1e3:0.#}K";
-            return v.ToString("0");
-        }
+        private static string Fmt(double v) => NumberFormatter.Abbrev(v);   // consolidated (finding #31); handles negative deltas
 
         private static Label MakeChip(string text) => new Label
         {

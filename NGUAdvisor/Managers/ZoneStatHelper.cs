@@ -89,13 +89,21 @@ namespace NGUAdvisor.Managers
             { 40, 1.25e10 }, { 41, 1.6666666667e10 },
         };
 
+        // Adventure attack measured WITHOUT the beast-mode multiplier — the conservative baseline
+        // power that every zone one-shot / fight-type gate must agree on.
+        public static float EffectiveAdvAttack()
+        {
+            var c = Main.Character;
+            return c.totalAdvAttack() / Math.Max(1f, c.adventureController.beastModeBonus());
+        }
+
         // FightType of one specific zone at current stats (2 for zones we have no data on, so
         // unknown zones never block progress).
         public static int ZoneFightType(int zone)
         {
             if (UserOverrides == null || !UserOverrides.TryGetValue(zone, out var st))
                 return 2;
-            float power = Main.Character.totalAdvAttack() / Main.Character.adventureController.beastModeBonus();
+            float power = EffectiveAdvAttack();
             return st.FightType(power, Main.Character.totalAdvDefense());
         }
 
@@ -104,7 +112,7 @@ namespace NGUAdvisor.Managers
             if (UserOverrides == null)
                 return null;
 
-            float power = Main.Character.totalAdvAttack() / Main.Character.adventureController.beastModeBonus();
+            float power = EffectiveAdvAttack();
             float toughness = Main.Character.totalAdvDefense();
 
             // Compute the reachable-zone ceiling once instead of once per zone inside the LINQ predicate

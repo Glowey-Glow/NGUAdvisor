@@ -82,6 +82,14 @@ namespace NGUAdvisor.Managers
             var tier = ShockwaveTier();
             double gold = _character.realGold;
             var needGold = gold < tier;
+            // Cadence pulse for the two lowest "Worn" gear-farm tiers: besides needing gold when below the
+            // throw tier, also re-flag "need gold" once per accumulation window so the run keeps topping up a
+            // reserve instead of coasting. At tier 1e15 the window is 8e16 wide with a 1e15 (1/80th) low band;
+            // at tier 1e13 it is 4e14 wide with a 1e13 (1/40th) low band. These window/band constants are
+            // hand-tuned for the Worn run (origin undocumented — do not retune without validating the run live).
+            // Precision note: `gold % <window>` only stays exact while gold is small enough to keep sub-window
+            // resolution in a double (ULP exceeds 8e16 around gold ~1e33), but these branches only run at the
+            // 1e15/1e13 Worn tiers, which in practice coincide with modest gold, so the pulse stays meaningful.
             if (tier == 1e15)
                 needGold |= gold % 8e16 < 1e15;
             else if (tier == 1e13)

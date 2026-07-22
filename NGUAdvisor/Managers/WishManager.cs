@@ -85,10 +85,10 @@ namespace NGUAdvisor.Managers
                 if (validWishes.Count <= 0)
                     return;
 
-                energy = remainingEnergy / slots + Math.Sign(remainingEnergy % slots);
-                magic = remainingMagic / slots + Math.Sign(remainingMagic % slots);
-                res3 = remainingRes3 / slots + Math.Sign(remainingRes3 % slots);
-                if (energy <= 0L || magic <= 0L || res3 <= 0L)
+                energy = Math.Max(0L, remainingEnergy / slots + Math.Sign(remainingEnergy % slots));
+                magic = Math.Max(0L, remainingMagic / slots + Math.Sign(remainingMagic % slots));
+                res3 = Math.Max(0L, remainingRes3 / slots + Math.Sign(remainingRes3 % slots));
+                if (energy <= 0L && magic <= 0L && res3 <= 0L)
                     return;
 
                 int wishId = BestWishId(validWishes);

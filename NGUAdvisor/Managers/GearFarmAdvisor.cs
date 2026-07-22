@@ -352,7 +352,7 @@ namespace NGUAdvisor.Managers
                 if (c == null) return v;
 
                 double lootFactor = c.lootFactor();
-                double attack = c.totalAdvAttack();
+                double attack = ZoneStatHelper.EffectiveAdvAttack();
                 var il = c.inventory.itemList;
 
                 var plans = new List<ZonePlan>();

@@ -1172,8 +1172,8 @@ namespace NGUAdvisor
 
         private void AlignHeight(Control target, Control source)
         {
-            target.Width = source.Height + source.Margin.Top + source.Margin.Bottom;
-            target.Width -= target.Margin.Top + target.Margin.Bottom;
+            target.Height = source.Height + source.Margin.Top + source.Margin.Bottom;
+            target.Height -= target.Margin.Top + target.Margin.Bottom;
         }
 
         private void AdjustDimensions()
@@ -1347,193 +1347,199 @@ namespace NGUAdvisor
         {
             _initializing = true;
 
-            // Keep the strangler Settings tab in step with whatever changed the settings.
-            try { _basicSettings?.Sync(); } catch { }
-
-            // General Tab
-            MasterEnable.Checked = newSettings.GlobalEnabled;
-            DisableOverlay.Checked = newSettings.DisableOverlay;
-            MoneyPitRunMode.Checked = newSettings.MoneyPitRunMode;
-            AutoFightBosses.Enabled = !newSettings.MoneyPitRunMode;
-            AutoFightBosses.Checked = newSettings.AutoFight;
-            AutoBuyAdv.Checked = newSettings.AutoBuyAdventure;
-            AutoBuyEM.Checked = newSettings.AutoBuyEM;
-            AutoBuyConsumables.Checked = newSettings.AutoBuyConsumables;
-            ConsumeIfRunning.Checked = newSettings.ConsumeIfAlreadyRunning;
-            Autosave.Checked = newSettings.Autosave;
-
-            // Allocation Tab
-            ManageEnergy.Checked = newSettings.ManageEnergy;
-            ManageMagic.Checked = newSettings.ManageMagic;
-            ManageR3.Checked = newSettings.ManageR3;
-            ManageWandoos.Checked = newSettings.ManageWandoos;
-            ManageNGUDiff.Checked = newSettings.ManageNGUDiff;
-            ManageBeards.Checked = newSettings.ManageBeards;
-            ManageDiggers.Checked = newSettings.ManageDiggers;
-            UpgradeDiggers.Checked = newSettings.UpgradeDiggers;
-            DiggerCap.Text = $"{newSettings.DiggerCap:F2}";
-            ManageGear.Checked = newSettings.ManageGear;
-            ManageConsumables.Checked = newSettings.ManageConsumables;
-            AutoRebirth.Checked = newSettings.AutoRebirth;
-
-            AutoSpellSwap.Checked = newSettings.AutoSpellSwap;
-            SpaghettiCap.Value = newSettings.SpaghettiThreshold;
-            CounterfeitCap.Value = newSettings.CounterfeitThreshold;
-            BloodNumberThreshold.Text = FormatDoubleNumber(newSettings.BloodNumberThreshold);
-            CastBloodSpells.Checked = newSettings.CastBloodSpells;
-            IronPillThreshold.Value = Convert.ToDecimal(newSettings.IronPillThreshold);
-            GuffAThreshold.Value = newSettings.BloodMacGuffinAThreshold;
-            GuffBThreshold.Value = newSettings.BloodMacGuffinBThreshold;
-            IronPillOnRebirth.Checked = newSettings.IronPillOnRebirth;
-            GuffAOnRebirth.Checked = newSettings.BloodMacGuffinAOnRebirth;
-            GuffBOnRebirth.Checked = newSettings.BloodMacGuffinBOnRebirth;
-
-            // Yggdrasil Tab
-            ManageYggdrasil.Checked = newSettings.ManageYggdrasil;
-            ActivateFruits.Checked = newSettings.ActivateFruits;
-            YggSwapThreshold.Value = newSettings.YggSwapThreshold;
-            YggdrasilSwap.Checked = newSettings.SwapYggdrasilLoadouts;
-            SwapYggdrasilDiggers.Checked = newSettings.SwapYggdrasilDiggers;
-            SwapYggdrasilBeards.Checked = newSettings.SwapYggdrasilBeards;
-            _yggControls.UpdateList(newSettings.YggdrasilLoadout);
-
-            // Inventory Tab
-            ManageInventory.Checked = newSettings.ManageInventory;
-            ManageBoostConvert.Checked = newSettings.AutoConvertBoosts;
-            CubePriority.SelectedIndex = newSettings.CubePriority;
-            FavoredMacguffin.SelectedIndex = InventoryManager.macguffinList.Keys.ToList().IndexOf(newSettings.FavoredMacguffin);
-
-            BoostPriorityList.Items.Clear();
-            foreach (string priority in newSettings.BoostPriority)
-                BoostPriorityList.Items.Add(priority);
-
-            if (BoostPriorityList.Items.Count != 3)
-                BoostPriorityList.Items.AddRange(new string[] { "Power", "Toughness", "Special" });
-
-            _priorityControls.UpdateList(newSettings.PriorityBoosts);
-            _blacklistControls.UpdateList(newSettings.BoostBlacklist);
-
-            // Titans Tab
-            ManageTitans.Checked = newSettings.ManageTitans;
-            SwapTitanLoadout.Checked = newSettings.SwapTitanLoadouts;
-            SwapTitanDiggers.Checked = newSettings.SwapTitanDiggers;
-            SwapTitanBeards.Checked = newSettings.SwapTitanBeards;
-            _titanControls.UpdateList(newSettings.TitanLoadout);
-
-            for (int i = 0; i <= 13; i++)
-                _killTitan[i].Checked = newSettings.TitanSwapTargets[i];
-
-            TitanCombatMode.SelectedIndex = newSettings.TitanCombatMode;
-            TitanBeastMode.Checked = newSettings.TitanBeastMode;
-
-            // Adventure Tab
-            CombatActive.Checked = newSettings.CombatEnabled;
-            CombatMode.SelectedIndex = newSettings.CombatMode;
-            SetSnipeZone(CombatTargetZone, newSettings.SnipeZone);
-            BeastMode.Checked = newSettings.BeastMode;
-            BossesOnly.Checked = newSettings.SnipeBossOnly;
-            AllowFallthrough.Checked = newSettings.AllowZoneFallback;
-
-            TargetITOPOD.Checked = newSettings.AdventureTargetITOPOD;
-            ITOPODCombatMode.SelectedIndex = newSettings.ITOPODCombatMode;
-            ITOPODOptimizeMode.SelectedIndex = newSettings.ITOPODOptimizeMode;
-            ITOPODBeastMode.Checked = newSettings.ITOPODBeastMode;
-            ITOPODAutoPush.Checked = newSettings.ITOPODAutoPush;
-
-            UpdateItemList(BlacklistedBosses, newSettings.BlacklistedBosses, x => spriteEnemyList[x]);
-
-            // Gold Tab
-            ManageGold.Enabled = !newSettings.MoneyPitRunMode;
-            ManageGold.Checked = newSettings.ManageGoldLoadouts;
-            ResnipeInput.Value = newSettings.ResnipeTime;
-            CBlockMode.Enabled = !newSettings.MoneyPitRunMode;
-            CBlockMode.Checked = newSettings.GoldCBlockMode;
-            _goldControls.UpdateList(newSettings.GoldDropLoadout);
-            SetTitanGoldBox(newSettings);
-
-            // Quests Tab
-            ManageQuests.Checked = newSettings.AutoQuest;
-            AllowMajor.Checked = newSettings.AllowMajorQuests;
-            ButterMajors.Checked = newSettings.UseButterMajor;
-            QuestsFullBank.Checked = newSettings.QuestsFullBank;
-            ManualMinor.Checked = newSettings.ManualMinors;
-            ButterMinors.Checked = newSettings.UseButterMinor;
-            FiftyItemMinors.Checked = newSettings.FiftyItemMinors;
-            AbandonMinors.Checked = newSettings.AbandonMinors;
-            AbandonMinorThreshold.Value = newSettings.MinorAbandonThreshold;
-            ManageQuestLoadout.Checked = newSettings.ManageQuestLoadouts;
-            _questControls.UpdateList(newSettings.QuestLoadout);
-            QuestCombatMode.SelectedIndex = newSettings.QuestCombatMode;
-            QuestBeastMode.Checked = newSettings.QuestBeastMode;
-
-            // Wishes Tab
-            ManageWishes.Checked = newSettings.ManageWishes;
-            WishLimit.Value = newSettings.WishLimit;
-            WishEnergy.Value = Convert.ToDecimal(newSettings.WishEnergy);
-            WishMagic.Value = Convert.ToDecimal(newSettings.WishMagic);
-            WishR3.Value = Convert.ToDecimal(newSettings.WishR3);
-            WishMode.SelectedIndex = newSettings.WishMode;
-            WeakPriorities.Checked = newSettings.WeakPriorities;
-            _wishControls.UpdateList(newSettings.WishPriorities);
-            _wishBlacklistControls.UpdateList(newSettings.WishBlacklist);
-
-            // Pit Tab
-            AutoDailySpin.Checked = newSettings.AutoSpin;
-            AutoMoneyPit.Enabled = !newSettings.MoneyPitRunMode;
-            AutoMoneyPit.Checked = newSettings.AutoMoneyPit;
-            SwapPitDiggers.Checked = newSettings.SwapPitDiggers;
-            PredictMoneyPit.Enabled = !newSettings.MoneyPitRunMode;
-            PredictMoneyPit.Checked = newSettings.PredictMoneyPit;
-            MoneyPitDaycare.Checked = newSettings.MoneyPitDaycare;
-            SetMoneyPitThreshold(MoneyPitThreshold, newSettings);
-            DaycareThreshold.Value = newSettings.DaycareThreshold;
-            _shockwaveControls.UpdateList(newSettings.Shockwave);
-
-            // Cards Tab
-            BalanceMayo.Checked = newSettings.ManageMayo;
-            AutoCastCards.Checked = newSettings.AutoCastCards;
-            CastProtectedCards.Checked = newSettings.CastProtectedCards;
-            TrashCards.Checked = newSettings.TrashCards;
-            TrashProtectedCards.Checked = newSettings.TrashProtectedCards;
-            SortCards.Checked = newSettings.CardSortEnabled;
-
-            if (newSettings.CardSortOrder.Length > 0)
+            try
             {
-                CardSortList.DataSource = null;
-                CardSortList.DataSource = new BindingSource(newSettings.CardSortOrder, null);
+                // Keep the strangler Settings tab in step with whatever changed the settings.
+                try { _basicSettings?.Sync(); } catch { }
+
+                // General Tab
+                MasterEnable.Checked = newSettings.GlobalEnabled;
+                DisableOverlay.Checked = newSettings.DisableOverlay;
+                MoneyPitRunMode.Checked = newSettings.MoneyPitRunMode;
+                AutoFightBosses.Enabled = !newSettings.MoneyPitRunMode;
+                AutoFightBosses.Checked = newSettings.AutoFight;
+                AutoBuyAdv.Checked = newSettings.AutoBuyAdventure;
+                AutoBuyEM.Checked = newSettings.AutoBuyEM;
+                AutoBuyConsumables.Checked = newSettings.AutoBuyConsumables;
+                ConsumeIfRunning.Checked = newSettings.ConsumeIfAlreadyRunning;
+                Autosave.Checked = newSettings.Autosave;
+
+                // Allocation Tab
+                ManageEnergy.Checked = newSettings.ManageEnergy;
+                ManageMagic.Checked = newSettings.ManageMagic;
+                ManageR3.Checked = newSettings.ManageR3;
+                ManageWandoos.Checked = newSettings.ManageWandoos;
+                ManageNGUDiff.Checked = newSettings.ManageNGUDiff;
+                ManageBeards.Checked = newSettings.ManageBeards;
+                ManageDiggers.Checked = newSettings.ManageDiggers;
+                UpgradeDiggers.Checked = newSettings.UpgradeDiggers;
+                DiggerCap.Text = $"{newSettings.DiggerCap:F2}";
+                ManageGear.Checked = newSettings.ManageGear;
+                ManageConsumables.Checked = newSettings.ManageConsumables;
+                AutoRebirth.Checked = newSettings.AutoRebirth;
+
+                AutoSpellSwap.Checked = newSettings.AutoSpellSwap;
+                SpaghettiCap.Value = newSettings.SpaghettiThreshold;
+                CounterfeitCap.Value = newSettings.CounterfeitThreshold;
+                BloodNumberThreshold.Text = FormatDoubleNumber(newSettings.BloodNumberThreshold);
+                CastBloodSpells.Checked = newSettings.CastBloodSpells;
+                IronPillThreshold.Value = Convert.ToDecimal(newSettings.IronPillThreshold);
+                GuffAThreshold.Value = newSettings.BloodMacGuffinAThreshold;
+                GuffBThreshold.Value = newSettings.BloodMacGuffinBThreshold;
+                IronPillOnRebirth.Checked = newSettings.IronPillOnRebirth;
+                GuffAOnRebirth.Checked = newSettings.BloodMacGuffinAOnRebirth;
+                GuffBOnRebirth.Checked = newSettings.BloodMacGuffinBOnRebirth;
+
+                // Yggdrasil Tab
+                ManageYggdrasil.Checked = newSettings.ManageYggdrasil;
+                ActivateFruits.Checked = newSettings.ActivateFruits;
+                YggSwapThreshold.Value = newSettings.YggSwapThreshold;
+                YggdrasilSwap.Checked = newSettings.SwapYggdrasilLoadouts;
+                SwapYggdrasilDiggers.Checked = newSettings.SwapYggdrasilDiggers;
+                SwapYggdrasilBeards.Checked = newSettings.SwapYggdrasilBeards;
+                _yggControls.UpdateList(newSettings.YggdrasilLoadout);
+
+                // Inventory Tab
+                ManageInventory.Checked = newSettings.ManageInventory;
+                ManageBoostConvert.Checked = newSettings.AutoConvertBoosts;
+                CubePriority.SelectedIndex = newSettings.CubePriority;
+                FavoredMacguffin.SelectedIndex = InventoryManager.macguffinList.Keys.ToList().IndexOf(newSettings.FavoredMacguffin);
+
+                BoostPriorityList.Items.Clear();
+                foreach (string priority in newSettings.BoostPriority)
+                    BoostPriorityList.Items.Add(priority);
+
+                if (BoostPriorityList.Items.Count != 3)
+                    BoostPriorityList.Items.AddRange(new string[] { "Power", "Toughness", "Special" });
+
+                _priorityControls.UpdateList(newSettings.PriorityBoosts);
+                _blacklistControls.UpdateList(newSettings.BoostBlacklist);
+
+                // Titans Tab
+                ManageTitans.Checked = newSettings.ManageTitans;
+                SwapTitanLoadout.Checked = newSettings.SwapTitanLoadouts;
+                SwapTitanDiggers.Checked = newSettings.SwapTitanDiggers;
+                SwapTitanBeards.Checked = newSettings.SwapTitanBeards;
+                _titanControls.UpdateList(newSettings.TitanLoadout);
+
+                for (int i = 0; i <= 13; i++)
+                    _killTitan[i].Checked = newSettings.TitanSwapTargets[i];
+
+                TitanCombatMode.SelectedIndex = newSettings.TitanCombatMode;
+                TitanBeastMode.Checked = newSettings.TitanBeastMode;
+
+                // Adventure Tab
+                CombatActive.Checked = newSettings.CombatEnabled;
+                CombatMode.SelectedIndex = newSettings.CombatMode;
+                SetSnipeZone(CombatTargetZone, newSettings.SnipeZone);
+                BeastMode.Checked = newSettings.BeastMode;
+                BossesOnly.Checked = newSettings.SnipeBossOnly;
+                AllowFallthrough.Checked = newSettings.AllowZoneFallback;
+
+                TargetITOPOD.Checked = newSettings.AdventureTargetITOPOD;
+                ITOPODCombatMode.SelectedIndex = newSettings.ITOPODCombatMode;
+                ITOPODOptimizeMode.SelectedIndex = newSettings.ITOPODOptimizeMode;
+                ITOPODBeastMode.Checked = newSettings.ITOPODBeastMode;
+                ITOPODAutoPush.Checked = newSettings.ITOPODAutoPush;
+
+                UpdateItemList(BlacklistedBosses, newSettings.BlacklistedBosses, x => spriteEnemyList[x]);
+
+                // Gold Tab
+                ManageGold.Enabled = !newSettings.MoneyPitRunMode;
+                ManageGold.Checked = newSettings.ManageGoldLoadouts;
+                ResnipeInput.Value = newSettings.ResnipeTime;
+                CBlockMode.Enabled = !newSettings.MoneyPitRunMode;
+                CBlockMode.Checked = newSettings.GoldCBlockMode;
+                _goldControls.UpdateList(newSettings.GoldDropLoadout);
+                SetTitanGoldBox(newSettings);
+
+                // Quests Tab
+                ManageQuests.Checked = newSettings.AutoQuest;
+                AllowMajor.Checked = newSettings.AllowMajorQuests;
+                ButterMajors.Checked = newSettings.UseButterMajor;
+                QuestsFullBank.Checked = newSettings.QuestsFullBank;
+                ManualMinor.Checked = newSettings.ManualMinors;
+                ButterMinors.Checked = newSettings.UseButterMinor;
+                FiftyItemMinors.Checked = newSettings.FiftyItemMinors;
+                AbandonMinors.Checked = newSettings.AbandonMinors;
+                AbandonMinorThreshold.Value = newSettings.MinorAbandonThreshold;
+                ManageQuestLoadout.Checked = newSettings.ManageQuestLoadouts;
+                _questControls.UpdateList(newSettings.QuestLoadout);
+                QuestCombatMode.SelectedIndex = newSettings.QuestCombatMode;
+                QuestBeastMode.Checked = newSettings.QuestBeastMode;
+
+                // Wishes Tab
+                ManageWishes.Checked = newSettings.ManageWishes;
+                WishLimit.Value = newSettings.WishLimit;
+                WishEnergy.Value = Convert.ToDecimal(newSettings.WishEnergy);
+                WishMagic.Value = Convert.ToDecimal(newSettings.WishMagic);
+                WishR3.Value = Convert.ToDecimal(newSettings.WishR3);
+                WishMode.SelectedIndex = newSettings.WishMode;
+                WeakPriorities.Checked = newSettings.WeakPriorities;
+                _wishControls.UpdateList(newSettings.WishPriorities);
+                _wishBlacklistControls.UpdateList(newSettings.WishBlacklist);
+
+                // Pit Tab
+                AutoDailySpin.Checked = newSettings.AutoSpin;
+                AutoMoneyPit.Enabled = !newSettings.MoneyPitRunMode;
+                AutoMoneyPit.Checked = newSettings.AutoMoneyPit;
+                SwapPitDiggers.Checked = newSettings.SwapPitDiggers;
+                PredictMoneyPit.Enabled = !newSettings.MoneyPitRunMode;
+                PredictMoneyPit.Checked = newSettings.PredictMoneyPit;
+                MoneyPitDaycare.Checked = newSettings.MoneyPitDaycare;
+                SetMoneyPitThreshold(MoneyPitThreshold, newSettings);
+                DaycareThreshold.Value = newSettings.DaycareThreshold;
+                _shockwaveControls.UpdateList(newSettings.Shockwave);
+
+                // Cards Tab
+                BalanceMayo.Checked = newSettings.ManageMayo;
+                AutoCastCards.Checked = newSettings.AutoCastCards;
+                CastProtectedCards.Checked = newSettings.CastProtectedCards;
+                TrashCards.Checked = newSettings.TrashCards;
+                TrashProtectedCards.Checked = newSettings.TrashProtectedCards;
+                SortCards.Checked = newSettings.CardSortEnabled;
+
+                if (newSettings.CardSortOrder.Length > 0)
+                {
+                    CardSortList.DataSource = null;
+                    CardSortList.DataSource = new BindingSource(newSettings.CardSortOrder, null);
+                }
+                else
+                {
+                    CardSortList.Items.Clear();
+                }
+
+                for (int i = 0; i <= 13; i++)
+                {
+                    _cardRarity[i].SelectedIndex = CardManager.rarityList.Keys.ToList().IndexOf(newSettings.CardRarities[i]);
+                    _cardCost[i].SelectedIndex = Array.IndexOf(CardManager.costList, newSettings.CardCosts[i]);
+                }
+
+                // Cooking Tab
+                ManageCooking.Checked = newSettings.ManageCooking;
+                ManageCookingLoadout.Checked = newSettings.ManageCookingLoadouts;
+                _cookingControls.UpdateList(newSettings.CookingLoadout);
+
+                _loadoutsPanel?.SyncFromSettings();
+                _boostsPanel?.SyncFromSettings();
+                _adventurePanel?.SyncFromSettings();
+                _titansPanel?.SyncFromSettings();
+                _goldPanel?.SyncFromSettings();
+                _pitPanel?.SyncFromSettings();
+                _challengesPanel?.SyncFromSettings();
+                _actions?.SyncFromSettings();
+                _yggPanel?.SyncFromSettings();
+                _questsPanel?.SyncFromSettings();
+                _bloodPanel?.SyncFromSettings();
+                _autopilotPanel?.SyncFromSettings();
+                _systemIndex?.Sync();   // the index reads the same authoritative settings as its owner panel
+
+                Refresh();
             }
-            else
+            finally
             {
-                CardSortList.Items.Clear();
+                _initializing = false;
             }
-
-            for (int i = 0; i <= 13; i++)
-            {
-                _cardRarity[i].SelectedIndex = CardManager.rarityList.Keys.ToList().IndexOf(newSettings.CardRarities[i]);
-                _cardCost[i].SelectedIndex = Array.IndexOf(CardManager.costList, newSettings.CardCosts[i]);
-            }
-
-            // Cooking Tab
-            ManageCooking.Checked = newSettings.ManageCooking;
-            ManageCookingLoadout.Checked = newSettings.ManageCookingLoadouts;
-            _cookingControls.UpdateList(newSettings.CookingLoadout);
-
-            _loadoutsPanel?.SyncFromSettings();
-            _boostsPanel?.SyncFromSettings();
-            _adventurePanel?.SyncFromSettings();
-            _titansPanel?.SyncFromSettings();
-            _goldPanel?.SyncFromSettings();
-            _pitPanel?.SyncFromSettings();
-            _challengesPanel?.SyncFromSettings();
-            _actions?.SyncFromSettings();
-            _yggPanel?.SyncFromSettings();
-            _questsPanel?.SyncFromSettings();
-            _bloodPanel?.SyncFromSettings();
-            _autopilotPanel?.SyncFromSettings();
-            _systemIndex?.Sync();   // the index reads the same authoritative settings as its owner panel
-
-            Refresh();
-            _initializing = false;
         }
 
         private bool TryGetValueFromNumericUpDown(NumericUpDown upDown, out int val)

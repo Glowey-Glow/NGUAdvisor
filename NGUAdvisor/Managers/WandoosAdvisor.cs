@@ -9,8 +9,9 @@ namespace NGUAdvisor.Managers
     //   bonus      98: ((1+E/100)(1+M/25))^0.8   MEH: (1+E/5)(1+2M)   XL: ((1+6E)(1+40M))^1.05
     // The projection assumes: allocation = whole current E/M cap (how CAPWAN behaves when it can),
     // current live speed (includes OS level + bootup + gear/AT/beard/digger bonuses — identical for
-    // all three OS types, so the comparison is fair), each OS starting from level 0 (switching wipes
-    // levels), over a fixed time window.
+    // all three OS types, so the comparison is fair), the CURRENT OS keeping its already-banked
+    // levels while the other two OSs start from level 0 (switching to them wipes their levels),
+    // over a fixed time window.
     public static class WandoosAdvisor
     {
         public struct OsCase
@@ -47,7 +48,7 @@ namespace NGUAdvisor.Managers
                 double remainingMin = (target - Main.Character.rebirthTime.totalseconds) / 60.0;
                 return (int)Math.Min(Math.Max(remainingMin, 10), 240);
             }
-            catch { return 60; }
+            catch { return 120; }
         }
 
         public static Verdict Compare(int minutes)
@@ -81,6 +82,9 @@ namespace NGUAdvisor.Managers
                 double capM = c.totalCapMagic();
                 double seconds = minutes * 60.0;
 
+                int curOs = (int)c.wandoos98.os;
+                if (curOs < 0 || curOs > 2) curOs = 0;
+
                 var cases = new OsCase[3];
                 for (int os = 0; os < 3; os++)
                 {
@@ -88,6 +92,15 @@ namespace NGUAdvisor.Managers
                     double rateE = Math.Min(capE * speedE / baseTimes[os], 1.0) * 50.0;
                     double rateM = Math.Min(capM * speedM / baseTimes[os], 1.0) * 50.0;
                     double lE = rateE * seconds, lM = rateM * seconds;
+                    // The current OS keeps its already-banked levels; the other two correctly
+                    // start from 0 because switching to them wipes their levels (changeOS zeroes
+                    // energyLevel/magicLevel). Without this the current OS is understated and the
+                    // advantage ratio is biased toward recommending a switch.
+                    if (os == curOs)
+                    {
+                        lE += c.wandoos98.energyLevel;
+                        lM += c.wandoos98.magicLevel;
+                    }
                     cases[os] = new OsCase
                     {
                         Os = os,
@@ -99,8 +112,7 @@ namespace NGUAdvisor.Managers
                     };
                 }
 
-                int cur = (int)c.wandoos98.os;
-                if (cur < 0 || cur > 2) cur = 0;
+                int cur = curOs;
                 int best = 0;
                 for (int os = 1; os < 3; os++)
                     if (cases[os].Unlocked && cases[os].Bonus > cases[best].Bonus) best = os;

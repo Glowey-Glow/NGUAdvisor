@@ -14,12 +14,20 @@ namespace NGUAdvisor.Managers
     // three resource priority timelines: Energy, Magic, R3). EVERY other system (Gear, Diggers, Beards,
     // Wandoos, NGUDiff, Consumables, Rebirth, Challenges, and anything unknown) is passed through VERBATIM
     // so it can never be lost or corrupted by a round-trip. Later phases model more systems one at a time,
-    // each re-verified by the round-trip test. System ordering is preserved.
+    // each re-verified by the round-trip test. System ordering (both the top-level system order captured in
+    // _systemOrder and key order within nested objects) is preserved by re-emitting in the order SimpleJSON
+    // enumerated on load. NOTE: SimpleJSON's JSONObject is backed by a plain Dictionary<string,JSONNode>
+    // (SimpleJson.cs), whose enumeration order is not a guaranteed contract. It equals insertion (file) order
+    // here ONLY because the load->edit->save path never removes or clears keys, so on Mono/.NET Framework the
+    // never-shrunk Dictionary happens to enumerate in insertion order. If SimpleJSON is ever swapped for a
+    // hash-randomizing map, back JSONObject with an insertion-ordered structure to keep this round-trip stable.
     //
-    // "GUI owns the file": within a MODELED breakpoint, human-comment fields are dropped on save. Comments
-    // are always string-valued (Comment, Note, Priorities1..9 prose, Thresholds, ...); functional extras a
-    // breakpoint may carry (named alternate priority sets like "AdvDC"/"PrioritiesDefault", which are arrays)
-    // are non-string and are preserved verbatim. Rule: string-valued extras are comments and are dropped.
+    // "GUI owns the file": within a MODELED breakpoint, human-comment fields are dropped on save. The drop
+    // decision is made purely by KEY NAME via IsCommentKey (see CommentExact denylist + prefix rules below),
+    // NOT by value type. A key matches the comment denylist (Comment*, Note*, Thresholds, Priorities1..9 doc
+    // lines, etc.) is dropped; EVERY other extra key is preserved verbatim into Extras regardless of its value
+    // type - including named alternate priority/gear sets (arrays like "AdvDC"/"PrioritiesDefault") AND
+    // string-valued backup loadouts (e.g. "Default (MeepleMolotovEMPC)": "[ 326, ... ]"), which are user data.
     public class ProfileModel
     {
         public class PriorityBreakpoint
@@ -109,6 +117,7 @@ namespace NGUAdvisor.Managers
             new HashSet<string>(StringComparer.Ordinal) { "Energy", "Magic", "R3", "Diggers", "Beards", "Gear", "Wandoos", "NGUDiff", "Consumables", "Rebirth", "Challenges" };
 
         // Original "Breakpoints" object and its key order, for verbatim passthrough of unmodeled systems.
+        // Captures SimpleJSON's (Dictionary-backed) key enumeration order at load; == insertion order because the round-trip never removes keys.
         private readonly List<string> _systemOrder = new List<string>();
         private readonly Dictionary<string, JSONNode> _passthrough = new Dictionary<string, JSONNode>(StringComparer.Ordinal);
 
@@ -265,7 +274,8 @@ namespace NGUAdvisor.Managers
             var list = new List<ValueBreakpoint>();
             foreach (var bp in ArrayChildren(node))
             {
-                var b = new ValueBreakpoint { TimeSeconds = ParseTime(bp["Time"]), Value = bp[payloadKey].AsInt };
+                var b = new ValueBreakpoint { TimeSeconds = ParseTime(bp["Time"]) };
+                if (bp[payloadKey] != null && bp[payloadKey].IsNumber) b.Value = bp[payloadKey].AsInt;
                 if (bp.IsObject)
                     foreach (var kv in bp.AsObject)
                     {

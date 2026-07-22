@@ -7,12 +7,22 @@ namespace NGUAdvisor.Managers
     // for your stage" hint and the status HUD's "what you're working toward" line. This is a HINT only — it
     // never changes anything automatically. Thresholds are approximate and intentionally easy to tune (see
     // docs/NGU-KNOWLEDGE.md). All game reads are guarded so a not-yet-ready game returns Unknown.
+    //
+    // TWO CHAPTER ENGINES — this Chapter is NOT interchangeable with ProgressionAnalyzer.Chapter. This one is
+    // the coarse BOSS-THRESHOLD heuristic: chapter is a function of difficulty + highestBoss only. Its Evil
+    // boundaries are deliberately tuned to boss milestones (chapter stays 5 through Boss 166 so the boss-gated
+    // EVIL CLIMB / AUGMENTATION segment logic in ChallengeOverlay and the LevelPlanner NGU-track switch stay
+    // anchored) — those two consumers NEED a boss-anchored chapter, which is why this engine is retained. For
+    // everything else (HUD stage, perk plan, profile recommendation) the canonical chapter is
+    // ProgressionAnalyzer.Chapter, which reads actual TITAN KILLS. The two intentionally DIVERGE whenever boss
+    // progress runs ahead of titan kills (e.g. Evil Boss 200 with T7 unbeaten: here=6 via boss<250, there=5 via
+    // t7-not-beaten). That gap is EXPECTED, not a bug — never swap one Chapter for the other.
     public static class StageDetector
     {
         public struct Stage
         {
             public bool Known;
-            public int Chapter;            // 1..8, 0 = unknown
+            public int Chapter;            // 1..8, 0 = unknown. Boss-threshold chapter (see class note) — NOT ProgressionAnalyzer.Chapter (titan-kill).
             public string Label;           // e.g. "Ch.3 T4-BAE"
             public string Difficulty;      // "Normal" / "Evil" / "Sadistic"
             public string SuggestedProfile;// non-binding profile-name hint
