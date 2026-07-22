@@ -122,6 +122,18 @@ namespace NGUAdvisor.Managers
             if (!_character.buttons.diggers.interactable)
                 return false;
 
+            // Membership must be judged at the LEVEL-1 baseline. RecapDiggers (called right after by
+            // ApplyDiggers) resets every active digger to level 1 and redistributes the whole DiggerCap
+            // budget by priority — so a kept member's inflated level must NOT make the set read as "full"
+            // and freeze out a cheap, higher-value newcomer. The affordability gate below reads the live
+            // net (goldPerSecond), which recap leaves sitting at ~the reserve, so net − anyPositiveDrain
+            // was ALWAYS below the reserve and no new member could ever join once the active set first
+            // saturated the budget (user-caught: the cheap Stats digger, base 1e12, permanently locked out
+            // of an open slot). Resetting to level 1 here restores true headroom; recap re-levels at once.
+            foreach (var id in ActiveDiggers)
+                if (id >= 0 && id < Diggers.Count)
+                    Diggers[id].curLevel = 1;
+
             // Defensive normalization with the executor's own rules (valid, leveled, distinct, capped).
             // The planner already applies these, but the boundary must stay safe for a future caller.
             var target = requestedDiggers?
@@ -187,7 +199,17 @@ namespace NGUAdvisor.Managers
             return activeAfter.Length == target.Length && target.All(activeAfter.Contains);
         }
 
-        public static void RecapDiggers(bool ignoreCap = false)
+        // Lock/restore/quick/profile callers: EquipDiggers just wrote _curDiggers, so it IS the live
+        // priority order — level against it.
+        public static void RecapDiggers(bool ignoreCap = false) => RecapDiggers(_curDiggers, ignoreCap);
+
+        // Advisor path overload. ReconcileAdvisorDiggers deliberately does NOT update _curDiggers, so the
+        // parameterless overload would level the greedy budget in a STALE (last lock swap) or null order,
+        // silently discarding the recommendation's ranking — Adventure-leads / Stats-on-push / DC-on-titan
+        // never reached the leveler, so during a tight-budget push (Evil) the cubic Stats digger got
+        // leveled last on leftover budget instead of first. ApplyDiggers passes CurrentDiggerSet() here so
+        // the greedy allocation honors the priorities the selector actually computed.
+        public static void RecapDiggers(int[] priorityOrder, bool ignoreCap = false)
         {
             if (!_character.buttons.diggers.interactable)
                 return;
@@ -199,28 +221,43 @@ namespace NGUAdvisor.Managers
             if (!ignoreCap)
                 gps *= Settings.DiggerCap / 100.0;
 
-            var count = ActiveDiggers.Count;
-
-            foreach (var digger in ActiveDiggers)
-                SetLevelMaxAffordable(digger, gps / count);
-
-            var ordered = ActiveDiggers?.OrderFrom(_curDiggers).ToArray();
-
-            for (var i = 0; i < ordered?.Length; i++)
-            {
-                long curLevel = Diggers[ordered[i]].curLevel;
-                long num = curLevel + 1;
-
-                if (num > Diggers[ordered[i]].maxLevel)
-                    continue;
-
-                Diggers[ordered[i]].curLevel = num;
-                if (_character.totalGPSDrain() > gps)
-                    Diggers[ordered[i]].curLevel = curLevel;
-            }
+            // Greedy allocation in PRIORITY order (matches the game's own auto-level: each digger sized
+            // against the gold actually AVAILABLE, not an even gps/count share). The old even split
+            // collapsed every digger to level 1 on Evil, where per-level drains dwarf gross/count (user-
+            // caught: 6-9 diggers all stuck at level 1 with 9e21 gross). Reset to the level-1 baseline, then
+            // level high-priority diggers first against (gps - everyone else's current drain); each digger's
+            // resulting drain <= its budget, so the running total can never exceed gps.
+            var ordered = ActiveDiggers?.OrderFrom(priorityOrder).ToArray() ?? new int[0];
+            foreach (var d in ordered)
+                Diggers[d].curLevel = 1;
+            foreach (var d in ordered)
+                SetLevelMaxAffordable(d, gps - (_character.totalGPSDrain() - _dc.drain(d, 0, true)));
 
             UpgradeCheapestDigger();
             _dc.refreshMenu();
+
+            LogRecap(ordered, gps);
+        }
+
+        // Post-recap diagnostic (validation aid). Dumps the greedy PRIORITY ORDER and the resulting
+        // running level + drain per active digger, so the ordering can be confirmed live from inject.log.
+        // Debug-channel and throttled — the advisor recaps every ~30s and this must not spam.
+        private static DateTime _lastRecapDbg = DateTime.MinValue;
+
+        private static void LogRecap(int[] ordered, double budget)
+        {
+            if ((DateTime.UtcNow - _lastRecapDbg).TotalSeconds < 60)
+                return;
+            _lastRecapDbg = DateTime.UtcNow;
+            try
+            {
+                var parts = ordered
+                    .Select(d => $"{d}:L{Diggers[d].curLevel}/{Diggers[d].maxLevel}(drain {_dc.drain(d, 0, true):0.##e0})")
+                    .ToArray();
+                Main.LogDebug($"[DiggerDbg] gross={_character.grossGoldPerSecond():0.##e0} budget={budget:0.##e0} "
+                            + $"order=[{string.Join(" ", ordered.Select(d => d.ToString()).ToArray())}] -> {string.Join(", ", parts)}");
+            }
+            catch { }
         }
 
         private static void SetLevelMaxAffordable(int id, double cap)

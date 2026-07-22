@@ -415,7 +415,7 @@ namespace NGUAdvisor.Managers
             // (magic units cost 3x energy), so pool split and stat balance are decided together.
             try
             {
-                if (prog.Known && prog.Chapter >= 3 && c.highestBoss >= 17)
+                if (prog.Known && prog.Chapter >= 3 && c.highestBoss >= 17)   // custom purchases: permanent unlock
                 {
                     var xb = ExpBalancer.Analyze();
                     if (xb.Known && !xb.Balanced)
@@ -810,46 +810,81 @@ namespace NGUAdvisor.Managers
             {
                 var c = Main.Character;
                 if (c == null) return null;
-                string mode = Mode(ProgressionAnalyzer.Detect());
-                if (mode == "challenge") return null;
                 int slots = Math.Max(1, c.allDiggers.maxDiggerSlots());
-                // Fill EVERY slot (user rule: level drain is capped by RecapDiggers, so an empty
-                // slot is pure waste): mode heads lead, everything else follows; the EXP digger is
-                // promoted while farming (user-reported: EXP digger off in farm mode).
-                // DIGGER LAWS (user-corrected semantics, 3rd revision — the deep-dive model):
-                //   Digger 3 "Adv"   -> ADVENTURE stats: titans, zones, ITOPOD survival. ALWAYS ON.
-                //   Digger 2 "Stats" -> BOSS-FIGHT stats ONLY (the FIGHT BOSS menu). Titans never
-                //                       use it — on only while bosses are actively being pushed.
-                //   Digger 0 "DC" / 8 "PP" -> near-interchangeable utility pair, picked by VENUE:
-                //                       ITOPOD pays PP but has FLAT drop rolls (no DC scaling);
-                //                       zones + titan kills pay drops but no PP. Titan window ->
-                //                       DC in, PP out.
-                //   Digger 10 "Blood" -> only while rituals actually cast (live-consumer rule).
-                // Branches set the growth/mode base; the laws then override in priority order.
+
+                // "Floor-restricted" (the profile's own term): there are still content-unlocking bosses
+                // left to beat, so stats are the bottleneck to progress. Reuses the same ceiling signal
+                // the EXP-promote uses. ceiling0 == true means the climb is DONE (farming).
+                bool ceiling0 = false;
+                try { ceiling0 = c.bossID - 1 >= BossUnlockCeiling(); } catch { }
+
+                // HYBRID membership (user rule): when a MANUAL profile names diggers for this phase, THAT
+                // list is the candidate pool — the advisor adds no fill-every-slot filler on top of it. It
+                // only reorders (the DIGGER LAWS below, for leveling priority) and levels WITHIN the pool;
+                // poolFilter strips any digger a law transiently introduced. This is what keeps the NGU
+                // diggers (4/5) off before the profile's ALLNGU phase and lets the profile's phase choices
+                // win. AutoProfile has no digger breakpoints, so it always falls through to the advisor's
+                // own goal-aware fill-every-slot set (guarded on !AutoProfile so a stale manual profile
+                // left loaded while AutoProfile drives can't leak its list in).
+                HashSet<int> poolFilter = null;
                 List<int> order;
-                if (ChallengeOverlay.Segment == "NGU MARATHON")
+                int[] pool = null;
+                try
                 {
-                    order = new List<int> { 4, 5, 11, 6, 7, 8, 1, 0 };   // growth multipliers first
+                    if (Main.Settings != null && !Main.Settings.AutoProfile)
+                        pool = AllocationProfiles.Breakpoints.DiggerBreakpoints.ActiveProfileDiggers();
+                }
+                catch { }
+
+                if (pool != null && pool.Length > 0)
+                {
+                    order = new List<int>(pool.Where(d => d >= 0 && d < 12).Distinct());
+                    poolFilter = new HashSet<int>(order);
                 }
                 else
                 {
-                    order = new List<int>(RecommendedDiggers(mode));
-                    bool ceiling0 = false;
-                    try { ceiling0 = c.bossID - 1 >= BossUnlockCeiling(); } catch { }
-                    if (mode == "farm" || ceiling0)
+                    string mode = Mode(ProgressionAnalyzer.Detect());
+                    // Defer to the profile only when a MANUAL profile owns diggers via challenge-tagged
+                    // breakpoints. AutoProfile has none — so it must drive diggers (DIGGER LAWS + gold gate)
+                    // during challenges too, else the whole set sits off (user-caught: diggers never fired
+                    // in a BASIC challenge on the Evil climb, since the profile set was applied once at
+                    // rebirth at 0 gold and never retried). RecommendedDiggers maps a challenge to a set.
+                    if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
+                    // Fill EVERY slot (user rule: level drain is capped by RecapDiggers, so an empty
+                    // slot is pure waste): mode heads lead, everything else follows; the EXP digger is
+                    // promoted while farming (user-reported: EXP digger off in farm mode).
+                    // DIGGER LAWS (user-corrected semantics, 3rd revision — the deep-dive model):
+                    //   Digger 3 "Adv"   -> ADVENTURE stats: titans, zones, ITOPOD survival. ALWAYS ON.
+                    //   Digger 2 "Stats" -> BOSS-FIGHT stats: only while stats gate progress (boss push /
+                    //                       floor-restricted / challenge).
+                    //   Digger 0 "DC" / 8 "PP" -> near-interchangeable utility pair, picked by VENUE:
+                    //                       ITOPOD pays PP but has FLAT drop rolls (no DC scaling);
+                    //                       zones + titan kills pay drops but no PP. Titan window ->
+                    //                       DC in, PP out.
+                    //   Digger 10 "Blood" -> only while rituals actually cast (live-consumer rule).
+                    // Branches set the growth/mode base; the laws then override in priority order.
+                    if (ChallengeOverlay.Segment == "NGU MARATHON")
                     {
-                        int exp = FindDiggerByBonus("exp");
-                        if (exp >= 0)
+                        order = new List<int> { 4, 5, 11, 6, 7, 8, 1, 0 };   // growth multipliers first
+                    }
+                    else
+                    {
+                        order = new List<int>(RecommendedDiggers(mode));
+                        if (mode == "farm" || ceiling0)
                         {
-                            order.Remove(exp);
-                            order.Insert(Math.Min(2, order.Count), exp);
+                            int exp = FindDiggerByBonus("exp");
+                            if (exp >= 0)
+                            {
+                                order.Remove(exp);
+                                order.Insert(Math.Min(2, order.Count), exp);
+                            }
                         }
                     }
+                    for (int i = 0; i < 12; i++)
+                        if (!order.Contains(i)) order.Add(i);
                 }
-                for (int i = 0; i < 12; i++)
-                    if (!order.Contains(i)) order.Add(i);
 
-                // Context for the laws.
+                // Context for the laws (shared by the Hybrid pool and the fallback fill-every-slot set).
                 bool hunting = false;
                 try { hunting = GearHunter.Active && GearHunter.ZoneReachable(); } catch { }
                 bool itopod = false;
@@ -870,7 +905,15 @@ namespace NGUAdvisor.Managers
                     }
                 }
                 catch { }
-                bool bossPushing = ChallengeOverlay.Phase == "push" || ChallengeOverlay.Segment == "RECOVERY";
+                bool bossPushing = ChallengeOverlay.Phase == "push" || ChallengeOverlay.Segment == "RECOVERY"
+                    || ChallengeOverlay.Segment == "EVIL CLIMB";   // the Evil re-climb IS a boss push (user-caught: stats digger stayed off)
+                // Stats earns priority whenever stats gate progress: an explicit boss-push segment, a
+                // challenge (stats are suppressed), OR "floor-restricted" — still content-unlocking bosses
+                // to beat (!ceiling0). This is the profile's "1+2 needed if held back by floor restrictions
+                // or during challenges", read from the live boss ceiling rather than a static list.
+                bool inChallenge = false;
+                try { inChallenge = ChallengeDetector.Current() != null; } catch { }
+                bool statsWanted = bossPushing || !ceiling0 || inChallenge;
                 bool ritualsLive = false;
                 try
                 {
@@ -879,9 +922,9 @@ namespace NGUAdvisor.Managers
                 }
                 catch { }
 
-                // LAW: Stats digger only earns a slot while bosses are being pushed.
+                // LAW: Stats digger earns priority while stats gate progress; else it drops to the tail.
                 order.Remove(2);
-                if (bossPushing) order.Insert(Math.Min(1, order.Count), 2);
+                if (statsWanted) order.Insert(Math.Min(1, order.Count), 2);
                 else order.Add(2);
 
                 // LAW: Blood digger needs a live ritual caster.
@@ -891,22 +934,29 @@ namespace NGUAdvisor.Managers
                 // GEAR HUNT (user rule): a deliberate drop farm — DC in, PP benched, and it outranks
                 // the ITOPOD read (Target ITOPOD may still be toggled while the hunt owns routing).
                 // ITOPOD: PP earns, DC is dead (flat rolls). Zone farming: DC earns, PP idles along.
+                // Each reorder is guarded on its OWN digger being present: in the fallback all 12 are, so
+                // this is unchanged there; in Hybrid it lifts whichever the pool actually contains and
+                // never demotes the venue earner just because its swap-partner isn't in the pool.
                 if (titanWindow || hunting)
                 {
-                    order.Remove(0); order.Insert(Math.Min(1, order.Count), 0);
-                    order.Remove(8); order.Add(8);
+                    if (order.Contains(0)) { order.Remove(0); order.Insert(Math.Min(1, order.Count), 0); }
+                    if (order.Contains(0) && order.Contains(8)) { order.Remove(8); order.Add(8); }
                 }
                 else if (itopod)
                 {
-                    order.Remove(8); order.Insert(Math.Min(2, order.Count), 8);
-                    order.Remove(0); order.Add(0);
+                    if (order.Contains(8)) { order.Remove(8); order.Insert(Math.Min(2, order.Count), 8); }
+                    if (order.Contains(0) && order.Contains(8)) { order.Remove(0); order.Add(0); }
                 }
 
                 // LAW: the Adventure digger always leads — applied last so nothing outranks it.
                 order.Remove(3);
                 order.Insert(0, 3);
 
-                return order.Where(IsDiggerUnlocked).Take(slots).ToArray();
+                // Membership: unlocked, and (Hybrid) restricted to the profile pool — no law-introduced
+                // filler leaks in. Leveling priority is the law-ranked order that survives the filter.
+                var ranked = order.Where(IsDiggerUnlocked);
+                if (poolFilter != null) ranked = ranked.Where(poolFilter.Contains);
+                return ranked.Take(slots).ToArray();
             }
             catch { return null; }
         }
@@ -932,7 +982,9 @@ namespace NGUAdvisor.Managers
                 var c = Main.Character;
                 if (c == null) return null;
                 string mode = Mode(ProgressionAnalyzer.Detect());
-                if (mode == "challenge") return null;
+                // Same as diggers: AutoProfile has no challenge-tagged beard breakpoints, so drive beards in
+                // challenges too (they cost nothing) rather than leaving the set to the profile's one-shot.
+                if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
                 int slots = Math.Max(1, c.allBeards.capBeards());
                 // Beards cost nothing — fill EVERY slot (user rule): mode heads lead, rest follow.
                 var order = new List<int>(RecommendedBeards(mode));

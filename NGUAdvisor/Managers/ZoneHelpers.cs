@@ -75,6 +75,21 @@ namespace NGUAdvisor.Managers
 
         public static bool ZoneIsTitan(int zone) => Array.IndexOf(TitanZones, zone) >= 0;
 
+        // Highest boss reached AT THE CURRENT REBIRTH DIFFICULTY. The game keeps these separate: `highestBoss`
+        // is Normal's all-time max and does NOT reset on Evil/Sadistic entry, so reading it on Evil returns the
+        // Normal number (user-caught 2026-07-17: Evil boss 24 was read as Normal 301, so every boss-gated
+        // stage/climb decision behaved as late-game). Evil is "Hard" internally, Sadistic its own counter.
+        public static int CurrentHighestBoss(Character c)
+        {
+            try
+            {
+                if (c.settings.rebirthDifficulty >= difficulty.sadistic) return c.highestSadisticBoss;
+                if (c.settings.rebirthDifficulty >= difficulty.evil) return c.highestHardBoss;
+                return c.highestBoss;
+            }
+            catch { return c.highestBoss; }
+        }
+
         public static bool IsVersionedTitan(int titanIndex) => titanIndex >= 5 && titanIndex <= 11;
 
         public static bool ZoneIsWalderp(int zone) => zone == 16;

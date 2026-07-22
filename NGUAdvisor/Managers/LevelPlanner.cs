@@ -46,6 +46,7 @@ namespace NGUAdvisor.Managers
             }
 
             TickPurposeTargets(c);
+            TickNguTrack(c);
 
             bool marathon = ChallengeOverlay.Segment == "NGU MARATHON";
 
@@ -78,6 +79,38 @@ namespace NGUAdvisor.Managers
                 : "caps: none";
         }
 
+        // Guide ch5 24h structure: Normal NGUs most of the run, EVIL NGUs the LAST N hours (N = T7 versions
+        // defeated; 1h post-T7v1, 2h post-T7v2 …). Replaces the profile's hardcoded ~22h NGUDiff switch with
+        // a dynamic one — but ONLY in the Ch.5 24h shape (T7-capable, Boss 125+) with a TIME-based rebirth
+        // target; elsewhere the profile's NGUDiff owns the track. UNTESTED until Boss 125+ (T7-version read
+        // via TitanVersion(6)-1 is a first cut).
+        private static void TickNguTrack(Character c)
+        {
+            try
+            {
+                int chapter = 0;
+                try { chapter = StageDetector.Detect().Chapter; } catch { }
+                double target = -1;
+                try { target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; } catch { }
+                if (chapter != 5 || ZoneHelpers.CurrentHighestBoss(c) < 125 || target <= 0) return;
+
+                int t7 = 0;
+                try { t7 = Math.Max(0, ZoneHelpers.TitanVersion(6) - 1); } catch { }
+                double evilHours = Math.Max(1, t7);
+                double switchAt = target - evilHours * 3600.0;
+                var want = c.rebirthTime.totalseconds >= switchAt ? difficulty.evil : difficulty.normal;
+
+                if (c.settings.nguLevelTrack != want)
+                {
+                    c.settings.nguLevelTrack = want;
+                    try { c.NGUController.refreshMenu(); } catch { }
+                    ChallengeOverlay.Record("NGU track", $"→ {(want == difficulty.evil ? "EVIL" : "Normal")} NGUs",
+                        $"guide ch5: last {evilHours:0}h evil (T7 v{t7} done)");
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"LevelPlanner NGU track: {e.Message}"); }
+        }
+
         // ---- Purpose-driven AT caps (slots 2..4), live every tick while the auto profile runs. ----
 
         private static void TickPurposeTargets(Character c)
@@ -97,13 +130,15 @@ namespace NGUAdvisor.Managers
                 }
 
                 ApplyPurpose(targets, 2, BlockStopLevel(c));
-                // Wandoos stops are computed ONLY during the NGU MARATHON: the 1%-of-cap budget must
-                // be measured against the MARATHON loadout's E/M caps — the AT-hour set's weaker caps
-                // inflate the targets and steal AT levels from Power/Toughness (user-caught). The
-                // targets persist in the save, so AT HOUR allocates against the last marathon's
-                // accurate values. (A brief overshoot right at marathon start, before the NGU gear
-                // equips, self-corrects on the next tick — ApplyPurpose sets, it doesn't ratchet.)
-                if (ChallengeOverlay.Segment == "NGU MARATHON")
+                // Wandoos-AT stops are measured against the ACTIVE loadout's E/M caps, so they run only in
+                // segments where Wandoos is the INTENDED sink: NGU MARATHON, plus on Evil the EVIL CLIMB /
+                // AUGMENTATION phases (Wandoos is a primary early-Evil E/M sink). NOT AT HOUR — its weaker
+                // caps inflate the targets and steal AT from Power/Toughness (user-caught). Extending to the
+                // Evil climb fixes a STALE -1: the profile-owned marathon never runs during the climb, so the
+                // Wandoos ATs kept the Normal-era -1 and never boosted E/M Wandoos (user-caught 2026-07-17).
+                // (ApplyPurpose sets, doesn't ratchet, so a brief overshoot self-corrects next tick.)
+                string wanSeg = ChallengeOverlay.Segment;
+                if (wanSeg == "NGU MARATHON" || wanSeg == "EVIL CLIMB" || wanSeg == "AUGMENTATION")
                 {
                     ApplyPurpose(targets, 3, WandoosStopLevel(c, energy: true));
                     ApplyPurpose(targets, 4, WandoosStopLevel(c, energy: false));

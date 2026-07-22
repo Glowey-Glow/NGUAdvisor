@@ -236,27 +236,28 @@ namespace NGUAdvisor.Managers
         {
             var set = OptimizationAdvisor.CurrentDiggerSet();
             if (set == null || set.Length == 0) return;
-            var active = c.diggers.activeDiggers;
-            if (active.Count == set.Length && set.All(active.Contains)) return;
 
-            // Converge in place: obsolete diggers off, missing diggers on, everything already correct
-            // left alone. An unaffordable member stays missing and is retried whole next pass — no
-            // clear, no level reset. RecapDiggers (levels + upgrades) runs only once the set is whole,
-            // and the equip line reports only a real membership change (the old path logged on every
-            // rebuild, which only ever happened alongside a membership change).
-            if (DiggerManager.ReconcileAdvisorDiggers(set, out bool membershipChanged))
-            {
-                // A nonempty recommendation that normalizes away reconciles to an empty active set:
-                // nothing to recap, no blank success line. Only a nonempty completion recaps, and the
-                // line is emitted only for a real membership change (the old rebuild path always changed
-                // membership, so this preserves its logging without the churn).
-                if (c.diggers.activeDiggers.Count > 0)
-                {
-                    DiggerManager.RecapDiggers();
-                    if (membershipChanged)
-                        Main.Log($"Advisor: equipped diggers {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
-                }
-            }
+            // Converge membership in place (obsolete off, affordable-missing on, correct left alone), then
+            // ALWAYS re-level whatever ended up active. Leveling must NOT be gated on the full
+            // recommendation activating: a recommended digger that can't afford even level 1 (the Evil
+            // Blood digger, base drain ~1e24 >> gross ~5e21) can NEVER activate, so the old "recap only on
+            // a complete set" gate never opened and froze the whole set at level 1 the entire run (user-
+            // caught on the Evil climb; the diagnostic showed d10 unaffordable, set never completed, so
+            // RecapDiggers never ran — except the rare titan-window tick that displaced d10 with d0).
+            // ReconcileAdvisorDiggers activates every affordable member at level 1 BEFORE we level, so
+            // leveling can't shut out a member that could have run; the only members left off are ones that
+            // couldn't afford level 1 regardless. Recap every pass so levels also track gross as it climbs.
+            bool complete = DiggerManager.ReconcileAdvisorDiggers(set, out bool membershipChanged);
+            // Pass the recommendation order explicitly: reconcile is membership-only and never updates
+            // _curDiggers, so the parameterless RecapDiggers would level the greedy budget in a stale/null
+            // order and discard the ranking (Adventure-leads / Stats-on-push / DC-on-titan). With `set`,
+            // the greedy allocation levels high-priority diggers first — critical on a tight Evil budget.
+            if (c.diggers.activeDiggers.Count > 0)
+                DiggerManager.RecapDiggers(set);
+            // Log only a real, complete equip (membership actually changed AND the whole set is live) —
+            // the incomplete-but-leveling passes stay quiet so an unaffordable member can't spam the log.
+            if (complete && membershipChanged)
+                Main.Log($"Advisor: equipped diggers {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
         }
 
         private static void ApplyBeards(Character c)

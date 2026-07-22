@@ -88,6 +88,7 @@ namespace NGUAdvisor.Managers
 
         private static Stat[] Snapshot(Character c)
         {
+            // magic RESOURCE + custom purchases are permanent (never re-lock on Evil) → all-time highestBoss.
             bool magicUnlocked = c.highestBoss >= 37;
             double eP = Math.Max(0, c.energyPower) * 150.0;
             double eC = c.capEnergy / 250.0;
@@ -120,7 +121,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 var c = Main.Character;
-                if (c == null || c.highestBoss < 17) return v;   // custom purchases locked before boss 17
+                if (c == null || c.highestBoss < 17) return v;   // custom purchases (permanent unlock) before boss 17
 
                 var stats = Snapshot(c);
                 double minL = double.MaxValue, maxL = 0;
@@ -203,7 +204,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 var c = Main.Character;
-                if (c == null || c.highestBoss < 17) return null;
+                if (c == null || c.highestBoss < 17) return null;   // custom purchases: permanent unlock
                 WriteCustomPlan(c);
                 long budget = (long)(c.realExp * fraction);
                 if (budget < 100) return null;

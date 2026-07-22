@@ -911,7 +911,8 @@ namespace NGUAdvisor
 
                 if (Settings.AutoBuyEM || Settings.AutoBuyAdventure)
                 {
-                    // We haven't unlocked custom purchases yet
+                    // We haven't unlocked custom purchases yet (a PERMANENT unlock — does NOT re-lock on
+                    // Evil, so gate on all-time highestBoss, not the difficulty-local boss).
                     if (Character.highestBoss < 17)
                         return;
 
@@ -934,6 +935,7 @@ namespace NGUAdvisor
                     {
                         var energy = ePurchase.customAllCost() > 0;
                         var r3 = Character.res3.res3On && r3Purchase.customAllCost() > 0;
+                        // magic RESOURCE is permanent (only Augs/AT/TM/Blood re-lock on Evil) — highestBoss.
                         var magic = Character.highestBoss >= 37 && mPurchase.customAllCost() > 0;
 
                         if (energy)
@@ -1242,6 +1244,26 @@ namespace NGUAdvisor
                     : Settings.AdventureTargetITOPOD ? 1000 : Settings.SnipeZone;
                 if (tempZone < 1000 && !CombatManager.IsZoneUnlocked(tempZone))
                     tempZone = Settings.AllowZoneFallback ? ZoneHelpers.GetMaxReachableZone(false) : 1000;
+
+                // EVIL CLIMB pushes boss numbers to unlock T7 — that means adventuring the highest clearable
+                // zone (bosses + gold + the digger/aug income they feed), NEVER the ITOPOD, which pushes no
+                // boss and drops no gold. Target ITOPOD is a steady-state XP toggle and wrong during a climb:
+                // honoring it parked us in the ITOPOD after one kill and gross gold (the digger budget)
+                // collapsed (user-caught). Farm the furthest clearable zone for the whole climb; normal
+                // ITOPOD routing resumes automatically the moment the segment changes. Segment is only ever
+                // set under AutoProfile, so manual runs are untouched. Gear hunt (tempZone < 1000) still wins.
+                if (tempZone >= 1000 && ChallengeOverlay.Segment == "EVIL CLIMB")
+                {
+                    UpdateFurthestZone();
+                    if (_furthestZone >= 0)
+                    {
+                        CombatHelpers.IsCurrentlyAdventuring = true;
+                        CombatManager.DoZone(_furthestZone);
+                        return;
+                    }
+                    // Nothing clearable yet (fresh climb rebirth, stats too low) — fall through to normal
+                    // routing (ITOPOD) until stats support an idle zone.
+                }
 
                 // No Time Machine (locked early / TM challenge) and headed to the ITOPOD: ITOPOD enemies
                 // drop NO gold, and without gold the Augments that drive Power/Toughness stall. While we

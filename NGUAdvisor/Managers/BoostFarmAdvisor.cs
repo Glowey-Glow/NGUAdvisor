@@ -44,26 +44,31 @@ namespace NGUAdvisor.Managers
             new ZoneBoost { Zone = 15, Rolls = new[] { new[] { 50.0, 0.0035, 0.25 }, new[] { 100.0, 0.0035, 0.25 } } },
             new ZoneBoost { Zone = 17, Rolls = new[] { new[] { 100.0, 0.001, 0.2 }, new[] { 200.0, 0.001, 0.2 } } },
             new ZoneBoost { Zone = 18, Rolls = new[] { new[] { 200.0, 0.00012, 0.2 }, new[] { 500.0, 0.00012, 0.2 } } },
-            // Evil-era zones (20+): almanac-sourced, caps pending extraction (drop code uses
-            // computed tier ladders there — re-source before Evil).
-            new ZoneBoost { Zone = 20, Rolls = new[] { new[] { 10.0, 0.00055 } }, Rooted = true },
-            new ZoneBoost { Zone = 21, Rolls = new[] { new[] { 10.0, 0.00012 } }, Rooted = true },
-            new ZoneBoost { Zone = 22, Rolls = new[] { new[] { 8.0, 0.0001 } }, Rooted = true },
-            new ZoneBoost { Zone = 24, Rolls = new[] { new[] { 7.0, 5E-05 } }, Rooted = true },
-            new ZoneBoost { Zone = 25, Rolls = new[] { new[] { 8.0, 3E-05 } }, Rooted = true },
-            new ZoneBoost { Zone = 27, Rolls = new[] { new[] { 8.0, 2.2E-05 } }, Rooted = true },
-            new ZoneBoost { Zone = 28, Rolls = new[] { new[] { 8.0, 1.8E-05 } }, Rooted = true },
-            new ZoneBoost { Zone = 29, Rolls = new[] { new[] { 8.0, 1.5E-06 } }, Rooted = true },
-            new ZoneBoost { Zone = 31, Rolls = new[] { new[] { 15.0, 6E-07 } }, Rooted = true },
-            new ZoneBoost { Zone = 32, Rolls = new[] { new[] { 10.0, 4E-07 } }, Rooted = true },
-            new ZoneBoost { Zone = 33, Rolls = new[] { new[] { 15.0, 2.5E-07 } }, Rooted = true },
-            new ZoneBoost { Zone = 35, Rolls = new[] { new[] { 15.0, 1E-07 } }, Rooted = true },
-            new ZoneBoost { Zone = 36, Rolls = new[] { new[] { 15.0, 6E-08 } }, Rooted = true },
-            new ZoneBoost { Zone = 37, Rolls = new[] { new[] { 15.0, 4E-08 } }, Rooted = true },
-            new ZoneBoost { Zone = 39, Rolls = new[] { new[] { 16.0, 2.5E-08 } }, Rooted = true },
-            new ZoneBoost { Zone = 40, Rolls = new[] { new[] { 17.0, 2E-08 } }, Rooted = true },
-            new ZoneBoost { Zone = 41, Rolls = new[] { new[] { 17.0, 1.6E-08 } }, Rooted = true },
-            new ZoneBoost { Zone = 43, Rolls = new[] { new[] { 17.0, 1E-08 } }, Rooted = true },
+            // Evil-era zones (20+): chance + per-roll cap now sourced VERBATIM from LootDrop.zone{N}Drop
+            // (the Mathf.Min(chance*lootFactorRooted, cap) boost rolls), matching the Normal-zone extraction.
+            // Rooted=Evil (drop chance cube-rooted). NOTE: the drop code has a SECOND boost roll per zone
+            // (adjacent tier, same chance) not modelled here — single-roll under-counts absolute boost value
+            // ~2x but preserves the relative Evil-zone ranking; add the 2nd roll + the gear rolls
+            // (GearFarmAdvisor) when farm-vs-ITOPOD accuracy matters. Zone 29 chance is 1.5E-05 in the DROP
+            // CODE — the in-game tooltip's 1.5E-06 is a typo (verified LootDrop.zone29Drop).
+            new ZoneBoost { Zone = 20, Rolls = new[] { new[] { 10.0, 0.00055, 0.1 } }, Rooted = true },
+            new ZoneBoost { Zone = 21, Rolls = new[] { new[] { 10.0, 0.00012, 0.1 } }, Rooted = true },
+            new ZoneBoost { Zone = 22, Rolls = new[] { new[] { 8.0, 0.0001, 0.08 } }, Rooted = true },
+            new ZoneBoost { Zone = 24, Rolls = new[] { new[] { 7.0, 5E-05, 0.07 } }, Rooted = true },
+            new ZoneBoost { Zone = 25, Rolls = new[] { new[] { 8.0, 3E-05, 0.08 } }, Rooted = true },
+            new ZoneBoost { Zone = 27, Rolls = new[] { new[] { 8.0, 2.2E-05, 0.09 } }, Rooted = true },
+            new ZoneBoost { Zone = 28, Rolls = new[] { new[] { 8.0, 1.8E-05, 0.1 } }, Rooted = true },
+            new ZoneBoost { Zone = 29, Rolls = new[] { new[] { 8.0, 1.5E-05, 0.1 } }, Rooted = true },
+            new ZoneBoost { Zone = 31, Rolls = new[] { new[] { 15.0, 6E-07, 0.15 } }, Rooted = true },
+            new ZoneBoost { Zone = 32, Rolls = new[] { new[] { 10.0, 4E-07, 0.1 } }, Rooted = true },
+            new ZoneBoost { Zone = 33, Rolls = new[] { new[] { 15.0, 2.5E-07, 0.15 } }, Rooted = true },
+            new ZoneBoost { Zone = 35, Rolls = new[] { new[] { 15.0, 1E-07, 0.15 } }, Rooted = true },
+            new ZoneBoost { Zone = 36, Rolls = new[] { new[] { 15.0, 6E-08, 0.15 } }, Rooted = true },
+            new ZoneBoost { Zone = 37, Rolls = new[] { new[] { 15.0, 4E-08, 0.15 } }, Rooted = true },
+            new ZoneBoost { Zone = 39, Rolls = new[] { new[] { 16.0, 2.5E-08, 0.16 } }, Rooted = true },
+            new ZoneBoost { Zone = 40, Rolls = new[] { new[] { 17.0, 2E-08, 0.17 } }, Rooted = true },
+            new ZoneBoost { Zone = 41, Rolls = new[] { new[] { 17.0, 1.6E-08, 0.17 } }, Rooted = true },
+            new ZoneBoost { Zone = 43, Rolls = new[] { new[] { 17.0, 1E-08, 0.17 } }, Rooted = true },
         };
 
         // ITOPOD boost tier ladder (itopodDrop): tier index into the 13 boost values, from floor/50.

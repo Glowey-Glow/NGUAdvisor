@@ -75,6 +75,28 @@ namespace NGUAdvisor.Managers
             new Step("Beard Temp Level Bank IV", 0, 5),
             new Step("Time Machine Level Bank III", 0, 5),
             new Step("Time Machine Level Bank IV", 0, 5),
+            // guide ch5 continues (sayolove ch5 → NGU-KNOWLEDGE.md): Fib 1 → EM Pow/Cap 2 (L10) → Fib 3 →
+            // Banks 5 → Fib 34 → finish EM → Energy Bars 2 → Magic Bars 2. (Names verified vs Blaze Rkkz.)
+            new Step("Fibonacci Perk", 1, 5),                 // "Fib 1"
+            new Step("Generic Energy Power Perk II", 10, 5),  // "EM Pow/Cap 2 → L10"
+            new Step("Generic Energy Cap Perk II", 10, 5),
+            new Step("Generic Magic Power Perk II", 10, 5),
+            new Step("Generic Magic Cap Perk II", 10, 5),
+            new Step("Fibonacci Perk", 3, 5),                 // "Fib 3"
+            new Step("Adv. Training Level Bank V", 0, 5),      // "Beard / AT Banks 5"
+            new Step("Beard Temp Level Bank V", 0, 5),
+            new Step("Time Machine Level Bank V", 0, 5),
+            new Step("Fibonacci Perk", 34, 5),                // "Fib 34"
+            new Step("Generic Energy Power Perk II", 0, 5),   // "finish EM" (to max)
+            new Step("Generic Energy Cap Perk II", 0, 5),
+            new Step("Generic Magic Power Perk II", 0, 5),
+            new Step("Generic Magic Cap Perk II", 0, 5),
+            new Step("Generic Energy Bar Perk II", 0, 5),     // "Energy Bars 2"
+            new Step("Generic Magic Bar Perk II", 0, 5),      // "Magic Bars 2 when cheap"
+            // Boss-gated ch5 perks (user-confirmed names) placed LAST so a still-locked one never stalls
+            // the earlier plan (there's no perk boss-req field to guard on): unlock at Boss 125 / 150.
+            new Step("Welcome to Evil Difficulty", 0, 5),         // guide "Welcome to Evil" (unlocks B125)
+            new Step("Adventure Boost for Rich Perks III", 0, 5), // guide "Adventure Perk until T8" (B150)
         };
 
         // ---- Beast quirk order (guide ch4 + ch5 partial) ----

@@ -56,7 +56,7 @@ namespace NGUAdvisor.Managers
 
             var diff = c.settings.rebirthDifficulty;
             string diffName = diff == difficulty.sadistic ? "Sadistic" : diff == difficulty.evil ? "Evil" : "Normal";
-            int boss = c.highestBoss;
+            int boss = ZoneHelpers.CurrentHighestBoss(c);
 
             bool t6 = TitanBeaten(5), t7 = TitanBeaten(6), t8 = TitanBeaten(7);
 
@@ -165,24 +165,27 @@ namespace NGUAdvisor.Managers
         {
             switch (chapter)
             {
-                case 1: return "Kill Titan 1 (GRB)";
-                case 2: return "Reach Boss 100, kill Titan 4";
-                case 3: return "Farm beards, kill Titan 6";
+                // Compact hints — sized to fit the status strip's NEXT GOAL cell (the full guide detail
+                // lives in the chapter's Goal line + NGU-KNOWLEDGE.md). Standard NGU shorthand: T# = Titan,
+                // B# = Boss.
+                case 1: return "Kill T1 (GRB)";
+                case 2: return "B100 → kill T4";
+                case 3: return "Beards → kill T6";
                 case 4:
-                    if (!TitanVersionBeaten(5, 4)) return "Kill Titan 6 v4";
-                    if (boss < 300) return "Reach Boss 300";
-                    return "Attack boost, then enter Evil";
+                    if (!TitanVersionBeaten(5, 4)) return "Kill T6 v4";
+                    if (boss < 300) return "Reach B300";
+                    return "Atk boost → Evil";
                 case 5:
-                    if (!TitanBeaten(6)) return "Reach Boss 125, kill Titan 7";
-                    if (boss < 166) return "Reach Boss 166 (IDP / T8 puzzle)";
-                    return "Kill Titan 8";
+                    if (!TitanBeaten(6)) return "B125 → kill T7";
+                    if (boss < 166) return "B166 → T8 puzzle";
+                    return "Kill T8";
                 case 6:
-                    if (!TitanBeaten(7)) return "Kill Titan 8";
-                    return "Buy R3, farm Typo/Fad/JRPG";
+                    if (!TitanBeaten(7)) return "Kill T8";
+                    return "R3 → farm T-sets";
                 case 7:
-                    if (!TitanBeaten(8)) return "Kill Titan 9";
-                    return "24 AK kills, Rad set, enter Sadistic";
-                case 8: return "Sadistic: titans + attack keys";
+                    if (!TitanBeaten(8)) return "Kill T9";
+                    return "24 AK → Rad set";
+                case 8: return "Sadistic titans";
                 default: return "-";
             }
         }

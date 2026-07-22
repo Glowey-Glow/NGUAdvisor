@@ -400,7 +400,7 @@ namespace NGUAdvisor.Managers
                 // Unlock level 100 boosts
                 lockedBoosts.Where(x => x.level == 100).ToList().ForEach(maxLockedBoost => Inventory.inventory[maxLockedBoost.slot].removable = true);
 
-                int? minId = lockedBoosts.Where(x => x.level != 100).DefaultIfEmpty().Min(x => x.id);
+                int? minId = lockedBoosts.Where(x => x.level != 100).Select(x => (int?)x.id).Min();
                 if (minId <= 13)
                     _ic.selectAutoPowerTransform();
                 else if (minId <= 26)

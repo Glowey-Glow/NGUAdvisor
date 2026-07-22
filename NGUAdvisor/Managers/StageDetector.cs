@@ -50,7 +50,7 @@ namespace NGUAdvisor.Managers
                 var c = Main.Character;
                 if (c == null || c.settings == null) return Unknown;
 
-                int boss = c.highestBoss;
+                int boss = ZoneHelpers.CurrentHighestBoss(c);
                 var diff = c.settings.rebirthDifficulty;
 
                 // SuggestedProfile points at an auto-installed Goal-* preset (Managers/PresetInstaller).
@@ -59,7 +59,16 @@ namespace NGUAdvisor.Managers
 
                 if (diff == difficulty.evil)
                 {
-                    if (boss < 150) return Make(5, "Evil-IDP", "Evil", "Goal-NGU");
+                    // Ch.5 Evil-IDP spans the whole Evil re-climb THROUGH the IDP/T8 unlock (Boss 166) — the
+                    // old <150 boundary cut it short. Sub-stage label tracks the guide's re-unlock ladder:
+                    // climb → EV(58) → PPPL(100) → T7(125) → Meta(158) → IDP(166). Chapter stays 5 so the
+                    // chapter-gated segment logic (EVIL CLIMB / AUGMENTATION) is unaffected.
+                    if (boss < 166)
+                    {
+                        string sub = boss < 58 ? "climb" : boss < 100 ? "EV" : boss < 125 ? "PPPL"
+                            : boss < 158 ? "T7" : "Meta/IDP";
+                        return Make(5, $"Evil-IDP {sub}", "Evil", "Goal-NGU");
+                    }
                     if (boss < 250) return Make(6, "T8-JRPG", "Evil", "Goal-NGU");
                     return Make(7, "T9", "Evil", "Goal-NGU");
                 }

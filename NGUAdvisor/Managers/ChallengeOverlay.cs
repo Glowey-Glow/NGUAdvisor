@@ -162,6 +162,7 @@ namespace NGUAdvisor.Managers
                 // too: the auto profile re-announces when it resumes after the challenge.
                 _lastActive.Clear();
                 _templateOn.Clear();
+                _fallbackOn.Clear();
                 _lastGenKey.Clear();
             }
             if (cur == null)
@@ -201,6 +202,7 @@ namespace NGUAdvisor.Managers
         private static readonly Dictionary<ResourceType, int> _lastActive = new Dictionary<ResourceType, int>();
         private static readonly Dictionary<ResourceType, List<ResourceBreakpoint>> _fallbackParsed = new Dictionary<ResourceType, List<ResourceBreakpoint>>();
         private static readonly Dictionary<ResourceType, bool> _templateOn = new Dictionary<ResourceType, bool>();
+        private static readonly Dictionary<ResourceType, bool> _fallbackOn = new Dictionary<ResourceType, bool>();  // narrate fallback injection ONCE per state change, not per tick
         private static readonly Dictionary<string, List<ResourceBreakpoint>> _templateParsed = new Dictionary<string, List<ResourceBreakpoint>>();
 
         // Slice 3: re-weighting templates for the strip challenges. Stripping alone leaves the
@@ -239,6 +241,7 @@ namespace NGUAdvisor.Managers
                 {
                     _lastActive.Remove(type);
                     _templateOn.Remove(type);
+                    _fallbackOn.Remove(type);
                     _lscSwordOn = false;
                     // Option A: outside challenges the auto profile generates the list (challenge
                     // active with overlays off = profile rules, the conservative reading).
@@ -301,6 +304,7 @@ namespace NGUAdvisor.Managers
                             _templateOn[type] = true;
                             Record($"{type} → {cur} template", $"profile list {valid.Count}/{origCount} active — reshaping allocation");
                         }
+                        _fallbackOn[type] = false;
                         return tpl;
                     }
                 }
@@ -310,11 +314,21 @@ namespace NGUAdvisor.Managers
                     Record($"{type} → profile priorities", $"{cur}: profile list healthy again");
                 }
 
-                if (valid.Count > 0 || origCount == 0) return valid;
+                if (valid.Count > 0 || origCount == 0)
+                {
+                    _fallbackOn[type] = false;
+                    return valid;
+                }
 
                 var fb = Fallback(type);
                 if (fb.Count > 0)
-                    Record($"{type} fallback priorities injected", $"{cur}: profile list is entirely inactive");
+                {
+                    if (!_fallbackOn.TryGetValue(type, out var fbOn) || !fbOn)
+                    {
+                        _fallbackOn[type] = true;
+                        Record($"{type} fallback priorities injected", $"{cur}: profile list is entirely inactive");
+                    }
+                }
                 return fb;
             }
             catch (Exception e)
@@ -438,19 +452,45 @@ namespace NGUAdvisor.Managers
             try { runSec = c.rebirthTime.totalseconds; } catch { }
             bool atUnlocked = false;
             try { atUnlocked = c.buttons.advancedTraining.interactable; } catch { }
+            bool tmUnlocked = false;
+            try { tmUnlocked = c.buttons.brokenTimeMachine.interactable && !c.challenges.timeMachineChallenge.inChallenge; } catch { }
 
             // TIME-ANCHORED (user-reported: RECOVERY held for 5 hours because kill-recency kept
             // "push" alive — past the boss ceiling, bosses die continuously and would hold the run
             // hostage forever). The wall clock owns the shape; the number rule gets a bounded window:
-            //   TM HOUR   — first hour, and any time TM gold is zero
+            //   TM HOUR   — ONLY while TM is unlocked: first hour, and any time TM gold is zero.
+            //               Evil (and Sadistic) re-lock the Time Machine, so early-Evil runs skip
+            //               this and open on RECOVERY/NGU MARATHON until TM re-unlocks.
             //   AT HOUR   — second hour (if AT is unlocked); AtHourPlanner may extend it to the 4h
             //               mark when projected AT gains cross a titan stage or unlock a farm zone
             //               (one bounded decision per run — the time anchor stays the law)
             //   RECOVERY  — number still cheap (>=2 boss/30m), but never past hour 4
             //   MARATHON  — everything after (the guide's 22h); its start is never delayed
             bool numberCheap = !double.IsNaN(Bosses30) && Bosses30 >= 2.0;
+
+            // EVIL CLIMB (guide ch.5 sub-mode A) — early Evil is a boss RE-CLIMB, not a mature 24h run:
+            // entering Evil re-locks TM/AT/Wandoos and resets the Number, so the TM/AT/RECOVERY/MARATHON
+            // shape doesn't fit. The WHOLE pre-T7 climb (to Boss 125) pushes bosses + grows Number + levels
+            // NGUs (AT feeds the EV-exploder objective as systems re-unlock). The matching short Number-target
+            // rebirths + the first Evil Basic entry are profile-owned (EvilStart: Number/100 + BASIC-1).
+            // Chapter-gated so Normal is untouched; hands back to the normal chain at Boss 125 / T7 unlock
+            // (later slices add the guide's full 24h Evil shape past T7).
+            bool evilClimb = false;
+            try { evilClimb = Chapter() == 5 && ZoneHelpers.CurrentHighestBoss(c) < 125; } catch { }
+
+            // AUGMENTATION (guide ch.5 sub-mode B, phase 2) — once T7-capable (Boss 125+), the 24h run is
+            // TM 0–0.5h → AUGMENTATION 0.5–3h → Normal-NGU+AT → Evil-NGU. This phase runs the best augment
+            // (energy) and feeds blood for the Counterfeit-once → Blood Number spells (magic). Chapter+boss-
+            // gated; preempts TM HOUR from 0.5h so TM keeps only the guide's first half-hour. Magic→blood
+            // routing is tunable (untested until Boss 125+).
+            bool augPhase = false;
+            try { augPhase = Chapter() == 5 && ZoneHelpers.CurrentHighestBoss(c) >= 125
+                             && tmUnlocked && runSec >= 1800 && runSec < 10800; } catch { }
+
             string seg;
-            if (tmEmpty || runSec < 3600) seg = "TM HOUR";
+            if (evilClimb) seg = "EVIL CLIMB";
+            else if (augPhase) seg = "AUGMENTATION";
+            else if (tmUnlocked && (tmEmpty || runSec < 3600)) seg = "TM HOUR";
             else if (atUnlocked && runSec < AtHourPlanner.EndSec(c, runSec)) seg = "AT HOUR";
             else if (numberCheap && runSec < 14400) seg = "RECOVERY";
             else seg = "NGU MARATHON";
@@ -468,6 +508,8 @@ namespace NGUAdvisor.Managers
         {
             switch (Segment)
             {
+                case "EVIL CLIMB": return "Adventure";   // re-climb: adventure stats push the boss wall
+                case "AUGMENTATION": return "Augments";  // guide ch5 phase 2: gear for augment speed
                 case "TM HOUR": return "Time Machine";
                 case "RECOVERY": return "Adventure";
                 // AT HOUR levels the trainings — gear for AT SPEED, not combat stats (user-compared
@@ -558,6 +600,24 @@ namespace NGUAdvisor.Managers
 
             switch (seg)
             {
+                case "EVIL CLIMB":
+                    // Ch.5 re-climb (guide sub-mode A): mirror RECOVERY — push bosses (cheap adventure caps),
+                    // a small CAPTM:5 to bootstrap TM GOLD once it re-unlocks (~boss 30) so GOLD DIGGERS can
+                    // run (diggers need gold income to cover their drain; user-caught: no TM feed → grossGold
+                    // stays 0 → diggers never turn on), best augment → AT (EV-exploder) → NGUs; magic feeds
+                    // Wandoos then Number. TM/Wandoos CAP tokens self-skip while still locked.
+                    if (e) { list.Add("CAPALLBT"); list.Add("CAPTM:5"); list.Add("CAPWAN:40"); list.Add("BESTAUG"); list.Add("CAPALLAT"); }
+                    else { list.Add("CAPWAN:40"); list.Add("NGU-3"); }   // magic: Wandoos (when unlocked) then Number NGU
+                    foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    break;
+                case "AUGMENTATION":
+                    // Guide ch5 phase 2 (0.5–3h): energy → best augment (cheap stat caps first); magic →
+                    // blood (fuels the Counterfeit-once → Blood Number spells the BloodPlanner casts). The
+                    // BR-30 append in the tail is the same live-consumer-gated routing the marathon uses.
+                    if (e) { list.Add("CAPALLBT"); list.Add("BESTAUG"); }
+                    else list.Add("BR-30");
+                    foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    break;
                 case "TM HOUR":
                     // The guide's hour-0 shape (24hr profiles): cap the cheap BTs, fund TM, wandoos,
                     // rest to augs. NO AT here (user-reported: CAPALLAT was draining the TM hour) —
