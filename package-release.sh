@@ -75,8 +75,23 @@ rm -rf "$STAGE" "$ZIP"
 mkdir -p "$STAGE/injector"
 
 # single direct-inject launcher (CRLF line endings for cmd.exe)
-printf '@setlocal enableextensions\r\npushd "%%~dp0"\r\n\r\n.\\injector\\smi.exe inject -p NGUIdle -a .\\injector\\NGUAdvisor.dll -n NGUAdvisor -c Loader -m Init\r\n\r\npopd\r\n' \
-  > "$STAGE/Run NGU Advisor.bat"
+# It MUST write injector-path.txt: the advisor is byte-loaded by smi, so Assembly.Location is empty and
+# that file is the only way it can find injector\companion\NGUAdvisorCompanion.exe (auto-launch + F1).
+# Keep in sync with Advisor Launcher.exe (NGUAdvisorLauncher/Program.cs), which writes the same file.
+{ cat <<'BAT'
+@setlocal enableextensions
+pushd "%~dp0"
+
+rem The advisor is loaded from memory and cannot know where it lives - hand it our injector path so it
+rem can launch the companion UI (injector\companion\NGUAdvisorCompanion.exe; F1 reopens it in-game).
+if not exist "%USERPROFILE%\AppData\LocalLow\NGUAdvisor" mkdir "%USERPROFILE%\AppData\LocalLow\NGUAdvisor"
+<nul set /p="%~dp0injector"> "%USERPROFILE%\AppData\LocalLow\NGUAdvisor\injector-path.txt"
+
+.\injector\smi.exe inject -p NGUIdle -a .\injector\NGUAdvisor.dll -n NGUAdvisor -c Loader -m Init
+
+popd
+BAT
+} | sed 's/$/\r/' > "$STAGE/Run NGU Advisor.bat"
 
 cp "$DLL" "$STAGE/injector/NGUAdvisor.dll"
 cp "$TOOLS/SharpMonoInjector.dll" "$TOOLS/smi.exe" "$STAGE/injector/"
@@ -89,6 +104,15 @@ cp "$LAUNCHER" "$STAGE/Advisor Launcher.exe"
 mkdir -p "$STAGE/injector/companion"
 cp -r "$COMPANION_PUB/." "$STAGE/injector/companion/"
 find "$STAGE/injector/companion" -type f \( -iname '*.pdb' -o -iname '*.xml' \) -delete
+
+# --- guard: both entry points must write injector-path.txt (else no companion) ----
+grep -q 'injector-path.txt' "$STAGE/Run NGU Advisor.bat" \
+  || { echo "ERROR: staged .bat does not write injector-path.txt - companion would never launch"; exit 1; }
+# (.NET stores literals as UTF-16 in the #US heap, so strip NULs before grepping the exe)
+if ! tr -d '\000' < "$STAGE/Advisor Launcher.exe" | grep -aq 'injector-path.txt'; then
+  echo "ERROR: 'Advisor Launcher.exe' does not write injector-path.txt - companion would never launch"
+  exit 1
+fi
 
 # --- guard: never ship the bootstrap, game assemblies, or backups ------------
 if find "$STAGE" \( -iname '*Bootstrap*' -o -iname 'Assembly-CSharp.dll' -o -iname '*.bak*' -o -iname '*.orig' \) | grep -q .; then

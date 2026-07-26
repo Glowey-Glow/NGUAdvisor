@@ -3,12 +3,12 @@
 NGU Advisor is an automation platform and advisor for the Steam version of NGU Idle. An injected DLL runs
 the automation in-game; a separate **companion window** is the configuration surface and live dashboard.
 
-**Version 2.0.0** — the Companion release.
+**Version 2.0.1** — the Companion release.
 
 # Install & update
 
 1. Download the latest release from the [releases page](https://github.com/Glowey-Glow/NGUAdvisor/releases)
-   — grab the zip named for the version (`NGUAdvisor_2.0.0.zip`), **not** the source archive.
+   — grab the zip named for the version (`NGUAdvisor_2.0.1.zip`), **not** the source archive.
 2. Extract it anywhere.
 3. With **NGU Idle open**, run **`Advisor Launcher.exe`** (or the `Run NGU Advisor.bat` fallback).
 

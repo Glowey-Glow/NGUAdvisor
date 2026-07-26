@@ -2,6 +2,18 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [2.0.1] - 2026-07-26
+
+A fix release for 2.0.0. Settings and profiles are unchanged — extract over your old copy, or into a new
+folder, and run it as usual.
+
+### Fixed
+
+- **The companion window never opened in 2.0.0.** Neither `Advisor Launcher.exe` nor `Run NGU Advisor.bat`
+  told the advisor where it had been installed, so the advisor could not find the companion: it did not
+  auto-launch on injection, and **F1** appeared to do nothing. Both now record the install path, and the
+  companion opens as intended.
+
 ## [2.0.0] - 2026-07-25
 
 The **Companion** release. The in-game WinForms settings form is retired; configuration and live status
