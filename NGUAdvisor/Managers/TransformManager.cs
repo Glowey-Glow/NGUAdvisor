@@ -69,6 +69,75 @@ namespace NGUAdvisor.Managers
             return s;
         }
 
+        public class Step { public int Id; public string Name; public long Level; public bool Owned; public int Tier; }
+        public class ChainView { public List<Step> Steps = new List<Step>(); public bool Done; }
+
+        // What to SHOW for a chain in the per-step editor:
+        //  - Done: the highest step is owned at max level (chain complete) -> the UI drops the whole chain.
+        //  - Steps: a window from the highest fully-maxed tier up to (highest owned + 1), so not-yet-reached
+        //    upper tiers stay hidden and lower tiers already superseded by a maxed higher tier drop away
+        //    (Wanderer's Cane goes once Candy Cane of Doom is L100). "Small Gerbil" is hard-hidden anywhere
+        //    (endgame spoiler), regardless of ownership.
+        public static ChainView ViewChain(int chainIndex)
+        {
+            var v = new ChainView();
+            var chain = Chains[chainIndex];
+            var owned = OwnedLevels();
+
+            int topId = chain.Tiers[chain.Tiers.Length - 1];
+            if (owned.TryGetValue(topId, out var topLv) && topLv >= 100) { v.Done = true; return v; }
+
+            int ownedTier = -1, topMaxed = -1;
+            for (int t = 0; t < chain.Tiers.Length; t++)
+                if (owned.TryGetValue(chain.Tiers[t], out var lv))
+                {
+                    ownedTier = t;
+                    if (lv >= 100) topMaxed = t;
+                }
+            int lo = topMaxed >= 0 ? topMaxed : 0;
+            int hi = Math.Min(chain.Tiers.Length - 1, (ownedTier < 0 ? 0 : ownedTier) + 1);
+            if (hi < lo) hi = lo;
+            for (int t = lo; t <= hi; t++)
+            {
+                string nm = Main.ItemNameNice(chain.Tiers[t]);
+                if (nm != null && nm.IndexOf("Small Gerbil", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                long lvl = owned.TryGetValue(chain.Tiers[t], out var l) ? l : 0;
+                v.Steps.Add(new Step { Id = chain.Tiers[t], Name = nm, Level = lvl, Owned = owned.ContainsKey(chain.Tiers[t]), Tier = t });
+            }
+            return v;
+        }
+
+        // Newly-unlocked (owned) tiers default to Keep (held) — the safe direction. A per-tier "seen"
+        // bitmask records that the default was applied, so it never overrides a user's later choice.
+        private static DateTime _lastDefault = DateTime.MinValue;
+        private static void DefaultNewTiers(SavedSettings st)
+        {
+            if ((DateTime.UtcNow - _lastDefault).TotalSeconds < 15) return;
+            _lastDefault = DateTime.UtcNow;
+            var owned = OwnedLevels();
+            var seen = Grow(st.TransformSeen);
+            var keep = Grow(st.TransformKeepMax);
+            bool changed = false;
+            for (int i = 0; i < Chains.Length; i++)
+            {
+                var tiers = Chains[i].Tiers;
+                for (int t = 0; t < tiers.Length && t < 31; t++)
+                {
+                    if (!owned.ContainsKey(tiers[t])) continue;
+                    int bit = 1 << t;
+                    if ((seen[i] & bit) == 0) { seen[i] |= bit; keep[i] |= bit; changed = true; }   // default Keep
+                }
+            }
+            if (changed) { st.TransformKeepMax = keep; st.TransformSeen = seen; }
+        }
+
+        private static int[] Grow(int[] a)
+        {
+            var n = new int[Chains.Length];
+            if (a != null) for (int i = 0; i < a.Length && i < n.Length; i++) n[i] = a[i];
+            return n;
+        }
+
         private static Dictionary<int, long> OwnedLevels()
         {
             var owned = new Dictionary<int, long>();
@@ -90,6 +159,11 @@ namespace NGUAdvisor.Managers
         }
 
         private static bool Flag(int[] arr, int idx) => arr != null && idx < arr.Length && arr[idx] != 0;
+
+        // Per-STEP flag: element [chainIdx] is a per-tier bitmask; bit tierIdx = that tier's flag.
+        private static bool FlagTier(int[] arr, int chainIdx, int tierIdx) =>
+            arr != null && chainIdx >= 0 && chainIdx < arr.Length && tierIdx >= 0 && tierIdx < 31
+            && (arr[chainIdx] & (1 << tierIdx)) != 0;
 
         private enum HoldMode { HoldAll, KeepOne }
 
@@ -117,8 +191,10 @@ namespace NGUAdvisor.Managers
         public static bool? MergeAllowed(int id)
         {
             for (int i = 0; i < Chains.Length; i++)
-                if (Array.IndexOf(Chains[i].Tiers, id) >= 0)
-                    return Flag(Main.Settings?.TransformAutoClimb, i);
+            {
+                int t = Array.IndexOf(Chains[i].Tiers, id);
+                if (t >= 0) return FlagTier(Main.Settings?.TransformAutoClimb, i, t);
+            }
             return null;
         }
 
@@ -141,17 +217,16 @@ namespace NGUAdvisor.Managers
             {
                 for (int i = 0; i < Chains.Length; i++)
                 {
-                    bool climb = Flag(st.TransformAutoClimb, i);
-                    bool keep = Flag(st.TransformKeepMax, i);
-                    if (climb && !keep) continue;   // fully free chain
-                    var mode = climb ? HoldMode.KeepOne : HoldMode.HoldAll;
                     var tiers = Chains[i].Tiers;
                     for (int t = 0; t < tiers.Length - 1; t++)   // top tier can't transform anyway
                     {
                         bool gated = Chains[i].SadisticGate && t == tiers.Length - 2
                             && c.settings.rebirthDifficulty < difficulty.sadistic;
                         if (gated) continue;
-                        held[tiers[t]] = mode;
+                        bool climb = FlagTier(st.TransformAutoClimb, i, t);   // per-STEP now
+                        bool keep = FlagTier(st.TransformKeepMax, i, t);
+                        if (climb && !keep) continue;   // fully free tier
+                        held[tiers[t]] = climb ? HoldMode.KeepOne : HoldMode.HoldAll;
                     }
                 }
 
@@ -228,17 +303,17 @@ namespace NGUAdvisor.Managers
             var c = Main.Character;
             if (st == null || c == null) return;
 
+            DefaultNewTiers(st);   // newly-unlocked tiers default to Keep (held) — safe direction
             ActiveClimb(c, st);
 
             var filtered = new List<int>();
             for (int i = 0; i < Chains.Length; i++)
             {
-                if (!Flag(st.TransformFilter, i)) continue;
-                var s = Read(i);
-                if (s.OwnedTier <= 0) continue;
-                for (int t = 0; t < s.OwnedTier; t++)
+                var tiers = Chains[i].Tiers;
+                for (int t = 0; t < tiers.Length; t++)
                 {
-                    int id = Chains[i].Tiers[t];
+                    if (!FlagTier(st.TransformFilter, i, t)) continue;   // per-STEP loot filter
+                    int id = tiers[t];
                     var fl = c.inventory.itemList.itemFiltered;
                     if (id < fl.Count && !fl[id])
                     {
@@ -276,7 +351,6 @@ namespace NGUAdvisor.Managers
 
             for (int i = 0; i < Chains.Length; i++)
             {
-                if (!Flag(st.TransformAutoClimb, i)) continue;
                 var tiers = Chains[i].Tiers;
                 for (int slot = 0; slot < c.inventory.inventory.Count; slot++)
                 {
@@ -284,6 +358,7 @@ namespace NGUAdvisor.Managers
                     if (e == null || e.level < 100 || e.id == 0) continue;
                     int tierIdx = Array.IndexOf(tiers, e.id);
                     if (tierIdx < 0 || tierIdx >= tiers.Length - 1) continue;
+                    if (!FlagTier(st.TransformAutoClimb, i, tierIdx)) continue;   // per-STEP promote gate
                     bool gated = Chains[i].SadisticGate && tierIdx == tiers.Length - 2
                         && c.settings.rebirthDifficulty < difficulty.sadistic;
                     if (gated) continue;
@@ -291,9 +366,22 @@ namespace NGUAdvisor.Managers
 
                     int next = ic.checkItemTransform(e);
                     if (next <= 0) continue;
-                    string from = Main.ItemNameNice(e.id);
+                    int origId = e.id;
+                    string from = Main.ItemNameNice(origId);
                     c.inventory.deleteItem(slot);
-                    ic.itemInfo.makeLoot(next, slot);
+                    try
+                    {
+                        ic.itemInfo.makeLoot(next, slot);
+                    }
+                    catch (Exception ex)
+                    {
+                        // makeLoot threw after the item was already deleted — best-effort restore the
+                        // original at-100 item into the same slot so the climb failure is not destructive.
+                        Main.Log($"Transform climb FAILED for {from}: {ex.Message}; restoring original item");
+                        try { ic.itemInfo.makeLoot(origId, slot); }
+                        catch (Exception ex2) { Main.Log($"Transform climb restore ALSO failed for {from}: {ex2.Message}"); }
+                        return;
+                    }
                     Main.Log($"Transform climb: {from} → {Main.ItemNameNice(next)}");
                     return;   // one per pass — let inventory state settle
                 }

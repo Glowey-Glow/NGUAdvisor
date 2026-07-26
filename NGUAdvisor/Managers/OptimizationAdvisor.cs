@@ -23,55 +23,16 @@ namespace NGUAdvisor.Managers
 
         private static readonly string[] DiggerNames =
             { "Drops", "Wandoos", "Stats", "Adv", "E-NGU", "M-NGU", "E-Beard", "M-Beard", "PP", "Daycare", "Blood", "EXP" };
-        private static readonly string[] BeardNames =
+        public static readonly string[] BeardNames =
             { "Stats", "Drops", "Number", "NGU", "Wandoos", "Adv", "Golden" };
         private static readonly string[] WandoosOsNames = { "98", "MEH", "XL" };
 
-        // Autokill attack/defense/HP-REGEN requirements per titan index (0-based) and version (1-4),
-        // extracted from the game's autokillTitan{N}V{V}Achieved methods (reference/decomp-full/
-        // AdventureController.cs). Regen (third column, 0 = no check) is a REAL gate from T4 up —
-        // omitting it let the UI claim AK-ready while the game refused to fire. T4 additionally
-        // needs a maxxed item 135 and T5 needs boss5Kills >= 3; T9+ can alternatively be unlocked
-        // by kill counts. Those non-stat gates live in ZoneHelpers.AutokillAvailable — this table
-        // is the stat path you can push toward.
-        private static readonly double[][][] TitanAk =
-        {
-            new[] { new[] { 3000.0, 2500.0, 0.0 } },
-            new[] { new[] { 9000.0, 7000.0, 0.0 } },
-            new[] { new[] { 25000.0, 15000.0, 0.0 } },
-            new[] { new[] { 8e5, 4e5, 1.4e4 } },
-            new[] { new[] { 1.3e7, 7e6, 1.5e5 } },
-            new[] { new[] { 2.5e9, 1.6e9, 2.5e7 }, new[] { 2.5e10, 1.6e10, 2.5e8 }, new[] { 2.5e11, 1.6e11, 2.5e9 }, new[] { 2.5e12, 1.6e12, 2.5e10 } },
-            new[] { new[] { 5e14, 2.5e14, 5e12 }, new[] { 1e16, 5e15, 1e14 }, new[] { 2e17, 1e17, 2e15 }, new[] { 5e18, 2.5e18, 5e16 } },
-            new[] { new[] { 5e18, 2.5e18, 5e16 }, new[] { 1e20, 5e19, 1e18 }, new[] { 2e21, 1e21, 2e19 }, new[] { 5e22, 2.5e22, 5e20 } },
-            new[] { new[] { 1e23, 5e22, 1e21 }, new[] { 2e24, 1e24, 2e22 }, new[] { 4e25, 2e25, 4e23 }, new[] { 7.5e26, 3.7e26, 7.5e24 } },
-            new[] { new[] { 4e28, 2e28, 4e26 }, new[] { 3.2e29, 1.6e29, 1.6e27 }, new[] { 2e30, 1e30, 1e28 }, new[] { 1e31, 5e30, 5e28 } },
-            new[] { new[] { 1.8e31, 6e30, 1.2e29 }, new[] { 9e31, 3e31, 6e29 }, new[] { 3.6e32, 1.2e32, 2.5e30 }, new[] { 1.1e33, 3.6e32, 7.5e30 } },
-            new[] { new[] { 3e33, 1e33, 2e31 }, new[] { 1.2e34, 4e33, 8e31 }, new[] { 3.6e34, 1.2e34, 2.4e32 }, new[] { 7.2e34, 2.4e34, 4.8e32 } },
-        };
-
-        // Guide-recommended kill-ladder stats per titan/version { manual atk, manual def, idle atk,
-        // idle def } — the community guide's hand-tuned numbers (reference/ngu-guide/titan-list.md).
-        // NOT derivable from TitanAk: the old 45%/80%-of-AK scalars were calibrated on T1 and
-        // overstated Beast first-kill by ~60% and idle ~2x (user report). Idle 0/0 = the guide lists
-        // no idle numbers (Walderp, Godmother, T10-T12): those are fought manually until AK, so the
-        // ladder skips the idle stage. Manual numbers assume max move-cooldown items + Beast Mode on.
-        // Walderp's manual is the FINAL form (first form is 800K/400K).
-        private static readonly double[][][] TitanGuide =
-        {
-            new[] { new[] { 1350.0, 1350.0, 2300.0, 2100.0 } },
-            new[] { new[] { 5000.0, 4000.0, 6000.0, 5000.0 } },
-            new[] { new[] { 1.4e4, 1.2e4, 2.2e4, 1.4e4 } },
-            new[] { new[] { 4e5, 3e5, 6e5, 4e5 } },
-            new[] { new[] { 4e6, 3e6, 0.0, 0.0 } },
-            new[] { new[] { 7e8, 5e8, 1e9, 7e8 }, new[] { 7e9, 5e9, 1e10, 7e9 }, new[] { 7e10, 5e10, 1e11, 7e10 }, new[] { 7e11, 5e11, 1e12, 7e11 } },
-            new[] { new[] { 1.4e14, 9e13, 3e14, 2e14 }, new[] { 3.2e15, 1.6e15, 6e15, 4e15 }, new[] { 5.5e16, 3.5e16, 1.2e17, 8e16 }, new[] { 1.3e18, 7.5e17, 2.5e18, 1.5e18 } },
-            new[] { new[] { 1.7e18, 7e17, 0.0, 0.0 }, new[] { 3.9e19, 1.5e19, 0.0, 0.0 }, new[] { 6.6e20, 3.5e20, 0.0, 0.0 }, new[] { 1.5e22, 6.4e21, 0.0, 0.0 } },
-            new[] { new[] { 2.5e22, 1.3e22, 6e22, 3e22 }, new[] { 3.8e23, 1.6e23, 1.5e24, 7e23 }, new[] { 7.5e24, 3.5e24, 3e25, 1.5e25 }, new[] { 2e26, 1e26, 7e26, 3.5e26 } },
-            new[] { new[] { 1.55e28, 3e27, 0.0, 0.0 }, new[] { 1.3e29, 3.6e28, 0.0, 0.0 }, new[] { 7.8e29, 1.6e29, 0.0, 0.0 }, new[] { 4e30, 9e29, 0.0, 0.0 } },
-            new[] { new[] { 1.1e31, 4e30, 0.0, 0.0 }, new[] { 6e31, 1.8e31, 0.0, 0.0 }, new[] { 2.5e32, 8.2e31, 0.0, 0.0 }, new[] { 7.5e32, 2.5e32, 0.0, 0.0 } },
-            new[] { new[] { 1.47e33, 4.7e32, 0.0, 0.0 }, new[] { 5.6e33, 2.1e33, 0.0, 0.0 }, new[] { 2.1e34, 6e33, 0.0, 0.0 }, new[] { 4.1e34, 1e34, 0.0, 0.0 } },
-        };
+        // Titan requirement tables now live in the Unity-free TitanTables class so they can be shape-tested
+        // (finding #33). Aliased here so the rest of this class keeps referencing TitanAk/TitanGuide unchanged.
+        //   TitanAk:    [titanIndex][version-1] = { autokill atk, def, HP-regen (0 = no gate) }
+        //   TitanGuide: [titanIndex][version-1] = { manual atk, manual def, idle atk, idle def (0/0 = no idle stage) }
+        private static readonly double[][][] TitanAk = TitanTables.Ak;
+        private static readonly double[][][] TitanGuide = TitanTables.Guide;
 
         private static List<Rec> _cache = new List<Rec>();
         private static DateTime _cacheTime = DateTime.MinValue;
@@ -118,24 +79,32 @@ namespace NGUAdvisor.Managers
             {
                 try
                 {
-                    int idx = NextTitanIndex();
-                    if (idx >= 0 && TryAkRequirement(idx, out var reqA, out var reqD, out var reqR))
+                    // Follow the KILL LADDER, not the AK gate: NextObjective() stages the target as
+                    // first-kill -> idle-stat farm -> auto-kill (user-reported: it showed "T7 AK" for a
+                    // titan never even killed). The staging design already exists; surface its Stage here.
+                    var to = NextObjective();
+                    if (to.Known)
                     {
                         double atk = c.totalAdvAttack(), def = c.totalAdvDefense();
                         double rgn = 0;
                         try { rgn = c.totalAdvHPRegen(); } catch { }
+                        double reqA = to.ReqAttack, reqD = to.ReqDefense, reqR = to.ReqRegen;
+                        string label = $"Titan {to.Index + 1} v{to.Version} {to.Stage}";
                         if (atk >= reqA && def >= reqD && (reqR <= 0 || rgn >= reqR))
-                            list.Add(new Rec { System = "Power", Text = $"Titan {idx + 1} autokill ready", Optimal = true });
+                            list.Add(new Rec { System = "Power", Text = $"{label} ready", Optimal = true });
                         else
                         {
-                            double pct = Math.Min(atk / reqA, def / reqD);
+                            // Guard req==0 (defensive vs future titan-table edits) so % can't go NaN/Inf.
+                            double pct = 1.0;
+                            if (reqA > 0) pct = Math.Min(pct, atk / reqA);
+                            if (reqD > 0) pct = Math.Min(pct, def / reqD);
                             if (reqR > 0) pct = Math.Min(pct, rgn / reqR);
                             pct *= 100.0;
                             string regenPart = reqR > 0 && rgn < reqR ? $" / {Fmt(rgn)} of {Fmt(reqR)} regen" : "";
                             list.Add(new Rec
                             {
                                 System = "Power",
-                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for Titan {idx + 1} AK ({pct:0}%)",
+                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for {label} ({pct:0}%)",
                                 Severity = pct >= 80 ? 1 : 2
                             });
                         }
@@ -415,7 +384,7 @@ namespace NGUAdvisor.Managers
             // (magic units cost 3x energy), so pool split and stat balance are decided together.
             try
             {
-                if (prog.Known && prog.Chapter >= 3 && c.highestBoss >= 17)
+                if (prog.Known && prog.Chapter >= 3 && c.highestBoss >= 17)   // custom purchases: permanent unlock
                 {
                     var xb = ExpBalancer.Analyze();
                     if (xb.Known && !xb.Balanced)
@@ -477,16 +446,16 @@ namespace NGUAdvisor.Managers
             catch (Exception ex) { Main.LogDebug($"Advisor rec failed: {ex.Message}"); }
 
             // ITOPOD — beacon vs the idle-best floor (the advisor's own optimizer formula:
-            // floor(log1.05(attack × idleAttackPower/771.375))). Auto-managed when optimize mode is on.
+            // floor(log1.05(attack × idleAttackPower/ItopodConstants.FloorHpNormalizer))). Auto-managed when optimize mode is on.
             try
             {
                 int highest = c.adventure.highestItopodLevel;
                 if (highest > 0)
                 {
-                    double atk = c.totalAdvAttack() * c.idleAttackPower() / 771.375;
-                    int optimal = atk > 1 ? (int)Math.Floor(Math.Log(atk, 1.05)) : 0;
+                    double atk = c.totalAdvAttack() * c.idleAttackPower() / ItopodConstants.FloorHpNormalizer;
+                    int optimal = atk > 1 ? (int)Math.Floor(Math.Log(atk, ItopodConstants.FloorGrowthBase)) : 0;
                     int maxL = c.adventureController.maxItopodLevel();
-                    if (optimal > maxL) optimal = maxL - 1;
+                    if (optimal > maxL) optimal = maxL;
                     if (optimal < 0) optimal = 0;
                     int reachable = Math.Min(optimal, highest - 1);
                     bool canPushHigher = optimal > highest - 1;
@@ -527,8 +496,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 int ceiling = BossUnlockCeiling();
-                int boss = Math.Max(0, c.bossID - 1);
-                if (ceiling > 0 && boss >= ceiling)
+                if (BossScale.IsPastBossCeiling(c.effectiveBossID(), ceiling))
                     list.Add(new Rec
                     {
                         System = "Boss push",
@@ -810,46 +778,81 @@ namespace NGUAdvisor.Managers
             {
                 var c = Main.Character;
                 if (c == null) return null;
-                string mode = Mode(ProgressionAnalyzer.Detect());
-                if (mode == "challenge") return null;
                 int slots = Math.Max(1, c.allDiggers.maxDiggerSlots());
-                // Fill EVERY slot (user rule: level drain is capped by RecapDiggers, so an empty
-                // slot is pure waste): mode heads lead, everything else follows; the EXP digger is
-                // promoted while farming (user-reported: EXP digger off in farm mode).
-                // DIGGER LAWS (user-corrected semantics, 3rd revision — the deep-dive model):
-                //   Digger 3 "Adv"   -> ADVENTURE stats: titans, zones, ITOPOD survival. ALWAYS ON.
-                //   Digger 2 "Stats" -> BOSS-FIGHT stats ONLY (the FIGHT BOSS menu). Titans never
-                //                       use it — on only while bosses are actively being pushed.
-                //   Digger 0 "DC" / 8 "PP" -> near-interchangeable utility pair, picked by VENUE:
-                //                       ITOPOD pays PP but has FLAT drop rolls (no DC scaling);
-                //                       zones + titan kills pay drops but no PP. Titan window ->
-                //                       DC in, PP out.
-                //   Digger 10 "Blood" -> only while rituals actually cast (live-consumer rule).
-                // Branches set the growth/mode base; the laws then override in priority order.
+
+                // "Floor-restricted" (the profile's own term): there are still content-unlocking bosses
+                // left to beat, so stats are the bottleneck to progress. Reuses the same ceiling signal
+                // the EXP-promote uses. ceiling0 == true means the climb is DONE (farming).
+                bool ceiling0 = false;
+                try { ceiling0 = BossScale.IsPastBossCeiling(c.effectiveBossID(), BossUnlockCeiling()); } catch { }
+
+                // HYBRID membership (user rule): when a MANUAL profile names diggers for this phase, THAT
+                // list is the candidate pool — the advisor adds no fill-every-slot filler on top of it. It
+                // only reorders (the DIGGER LAWS below, for leveling priority) and levels WITHIN the pool;
+                // poolFilter strips any digger a law transiently introduced. This is what keeps the NGU
+                // diggers (4/5) off before the profile's ALLNGU phase and lets the profile's phase choices
+                // win. AutoProfile has no digger breakpoints, so it always falls through to the advisor's
+                // own goal-aware fill-every-slot set (guarded on !AutoProfile so a stale manual profile
+                // left loaded while AutoProfile drives can't leak its list in).
+                HashSet<int> poolFilter = null;
                 List<int> order;
-                if (ChallengeOverlay.Segment == "NGU MARATHON")
+                int[] pool = null;
+                try
                 {
-                    order = new List<int> { 4, 5, 11, 6, 7, 8, 1, 0 };   // growth multipliers first
+                    if (Main.Settings != null && !Main.Settings.AutoProfile)
+                        pool = AllocationProfiles.Breakpoints.DiggerBreakpoints.ActiveProfileDiggers();
+                }
+                catch { }
+
+                if (pool != null && pool.Length > 0)
+                {
+                    order = new List<int>(pool.Where(d => d >= 0 && d < 12).Distinct());
+                    poolFilter = new HashSet<int>(order);
                 }
                 else
                 {
-                    order = new List<int>(RecommendedDiggers(mode));
-                    bool ceiling0 = false;
-                    try { ceiling0 = c.bossID - 1 >= BossUnlockCeiling(); } catch { }
-                    if (mode == "farm" || ceiling0)
+                    string mode = Mode(ProgressionAnalyzer.Detect());
+                    // Defer to the profile only when a MANUAL profile owns diggers via challenge-tagged
+                    // breakpoints. AutoProfile has none — so it must drive diggers (DIGGER LAWS + gold gate)
+                    // during challenges too, else the whole set sits off (user-caught: diggers never fired
+                    // in a BASIC challenge on the Evil climb, since the profile set was applied once at
+                    // rebirth at 0 gold and never retried). RecommendedDiggers maps a challenge to a set.
+                    if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
+                    // Fill EVERY slot (user rule: level drain is capped by RecapDiggers, so an empty
+                    // slot is pure waste): mode heads lead, everything else follows; the EXP digger is
+                    // promoted while farming (user-reported: EXP digger off in farm mode).
+                    // DIGGER LAWS (user-corrected semantics, 3rd revision — the deep-dive model):
+                    //   Digger 3 "Adv"   -> ADVENTURE stats: titans, zones, ITOPOD survival. ALWAYS ON.
+                    //   Digger 2 "Stats" -> BOSS-FIGHT stats: only while stats gate progress (boss push /
+                    //                       floor-restricted / challenge).
+                    //   Digger 0 "DC" / 8 "PP" -> near-interchangeable utility pair, picked by VENUE:
+                    //                       ITOPOD pays PP but has FLAT drop rolls (no DC scaling);
+                    //                       zones + titan kills pay drops but no PP. Titan window ->
+                    //                       DC in, PP out.
+                    //   Digger 10 "Blood" -> only while rituals actually cast (live-consumer rule).
+                    // Branches set the growth/mode base; the laws then override in priority order.
+                    if (ChallengeOverlay.Segment == "NGU MARATHON")
                     {
-                        int exp = FindDiggerByBonus("exp");
-                        if (exp >= 0)
+                        order = new List<int> { 4, 5, 11, 6, 7, 8, 1, 0 };   // growth multipliers first
+                    }
+                    else
+                    {
+                        order = new List<int>(RecommendedDiggers(mode));
+                        if (mode == "farm" || ceiling0)
                         {
-                            order.Remove(exp);
-                            order.Insert(Math.Min(2, order.Count), exp);
+                            int exp = FindDiggerByBonus("exp");
+                            if (exp >= 0)
+                            {
+                                order.Remove(exp);
+                                order.Insert(Math.Min(2, order.Count), exp);
+                            }
                         }
                     }
+                    for (int i = 0; i <= Consts.MAX_DIGGER_ID; i++)
+                        if (!order.Contains(i)) order.Add(i);
                 }
-                for (int i = 0; i < 12; i++)
-                    if (!order.Contains(i)) order.Add(i);
 
-                // Context for the laws.
+                // Context for the laws (shared by the Hybrid pool and the fallback fill-every-slot set).
                 bool hunting = false;
                 try { hunting = GearHunter.Active && GearHunter.ZoneReachable(); } catch { }
                 bool itopod = false;
@@ -870,18 +873,29 @@ namespace NGUAdvisor.Managers
                     }
                 }
                 catch { }
-                bool bossPushing = ChallengeOverlay.Phase == "push" || ChallengeOverlay.Segment == "RECOVERY";
+                bool bossPushing = ChallengeOverlay.Phase == "push" || ChallengeOverlay.Segment == "RECOVERY"
+                    || ChallengeOverlay.Segment == "EVIL CLIMB";   // the Evil re-climb IS a boss push (user-caught: stats digger stayed off)
+                // Stats earns priority whenever stats gate progress: an explicit boss-push segment, a
+                // challenge (stats are suppressed), OR "floor-restricted" — still content-unlocking bosses
+                // to beat (!ceiling0). This is the profile's "1+2 needed if held back by floor restrictions
+                // or during challenges", read from the live boss ceiling rather than a static list.
+                bool inChallenge = false;
+                try { inChallenge = ChallengeDetector.Current() != null; } catch { }
+                bool statsWanted = bossPushing || !ceiling0 || inChallenge;
+                // Ask the owning planner, don't string-match another module's output. This used to be
+                // Array.IndexOf(ChallengeOverlay.AutoTokens(Magic), "BR-30"), which was wrong three ways:
+                // AutoTokens has no AutoProfile self-gate (allocation only uses it when AutoProfile is
+                // on), so with a hand-written profile this keyed the digger off a token list nothing was
+                // using; any other spelling (BR, BR-300, BR-30:20) silently failed the match and demoted
+                // the blood digger for no reason; and it built the entire magic token list — NGUAdvisors
+                // .Compute, ChapterNgusSurplus, BloodMatters — to read one bit, on the digger path.
                 bool ritualsLive = false;
-                try
-                {
-                    ritualsLive = Array.IndexOf(ChallengeOverlay.AutoTokens(
-                        AllocationProfiles.BreakpointTypes.ResourceType.Magic), "BR-30") >= 0;
-                }
+                try { ritualsLive = BloodPlanner.BloodMatters(); }
                 catch { }
 
-                // LAW: Stats digger only earns a slot while bosses are being pushed.
+                // LAW: Stats digger earns priority while stats gate progress; else it drops to the tail.
                 order.Remove(2);
-                if (bossPushing) order.Insert(Math.Min(1, order.Count), 2);
+                if (statsWanted) order.Insert(Math.Min(1, order.Count), 2);
                 else order.Add(2);
 
                 // LAW: Blood digger needs a live ritual caster.
@@ -891,22 +905,29 @@ namespace NGUAdvisor.Managers
                 // GEAR HUNT (user rule): a deliberate drop farm — DC in, PP benched, and it outranks
                 // the ITOPOD read (Target ITOPOD may still be toggled while the hunt owns routing).
                 // ITOPOD: PP earns, DC is dead (flat rolls). Zone farming: DC earns, PP idles along.
+                // Each reorder is guarded on its OWN digger being present: in the fallback all 12 are, so
+                // this is unchanged there; in Hybrid it lifts whichever the pool actually contains and
+                // never demotes the venue earner just because its swap-partner isn't in the pool.
                 if (titanWindow || hunting)
                 {
-                    order.Remove(0); order.Insert(Math.Min(1, order.Count), 0);
-                    order.Remove(8); order.Add(8);
+                    if (order.Contains(0)) { order.Remove(0); order.Insert(Math.Min(1, order.Count), 0); }
+                    if (order.Contains(0) && order.Contains(8)) { order.Remove(8); order.Add(8); }
                 }
                 else if (itopod)
                 {
-                    order.Remove(8); order.Insert(Math.Min(2, order.Count), 8);
-                    order.Remove(0); order.Add(0);
+                    if (order.Contains(8)) { order.Remove(8); order.Insert(Math.Min(2, order.Count), 8); }
+                    if (order.Contains(0) && order.Contains(8)) { order.Remove(0); order.Add(0); }
                 }
 
                 // LAW: the Adventure digger always leads — applied last so nothing outranks it.
                 order.Remove(3);
                 order.Insert(0, 3);
 
-                return order.Where(IsDiggerUnlocked).Take(slots).ToArray();
+                // Membership: unlocked, and (Hybrid) restricted to the profile pool — no law-introduced
+                // filler leaks in. Leveling priority is the law-ranked order that survives the filter.
+                var ranked = order.Where(IsDiggerUnlocked);
+                if (poolFilter != null) ranked = ranked.Where(poolFilter.Contains);
+                return ranked.Take(slots).ToArray();
             }
             catch { return null; }
         }
@@ -932,13 +953,15 @@ namespace NGUAdvisor.Managers
                 var c = Main.Character;
                 if (c == null) return null;
                 string mode = Mode(ProgressionAnalyzer.Detect());
-                if (mode == "challenge") return null;
+                // Same as diggers: AutoProfile has no challenge-tagged beard breakpoints, so drive beards in
+                // challenges too (they cost nothing) rather than leaving the set to the profile's one-shot.
+                if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
                 int slots = Math.Max(1, c.allBeards.capBeards());
                 // Beards cost nothing — fill EVERY slot (user rule): mode heads lead, rest follow.
                 var order = new List<int>(RecommendedBeards(mode));
-                for (int i = 0; i < 7; i++)
+                for (int i = 0; i <= Consts.MAX_BEARD_ID; i++)
                     if (!order.Contains(i)) order.Add(i);
-                return order.Where(b => b != 6 || GoldenUnlocked()).Take(slots).ToArray();
+                return order.Where(b => b != Consts.MAX_BEARD_ID || GoldenUnlocked()).Take(slots).ToArray();
             }
             catch { return null; }
         }
@@ -947,7 +970,10 @@ namespace NGUAdvisor.Managers
         private static string Mode(ProgressionAnalyzer.Progression prog)
         {
             if (prog.Activity != null && prog.Activity.StartsWith("Challenge")) return "challenge";
-            if (prog.NextGoal != null && prog.NextGoal.IndexOf("Titan", StringComparison.OrdinalIgnoreCase) >= 0) return "push";
+            // Push = actively chasing a titan kill. Goals use "T#" shorthand (e.g. "B125 -> kill T7"),
+            // so match a T followed by a digit as well as the literal word "Titan" (Sadistic goal).
+            if (prog.NextGoal != null && (prog.NextGoal.IndexOf("Titan", StringComparison.OrdinalIgnoreCase) >= 0
+                || System.Text.RegularExpressions.Regex.IsMatch(prog.NextGoal, "T\\d"))) return "push";
             return "farm";
         }
 
@@ -1070,13 +1096,6 @@ namespace NGUAdvisor.Managers
         private static string Name(string[] names, int i) => i >= 0 && i < names.Length ? names[i] : i.ToString();
         private static int Clamp(int i) => i < 0 ? 0 : (i >= WandoosOsNames.Length ? WandoosOsNames.Length - 1 : i);
 
-        private static string Fmt(double v)
-        {
-            if (v <= 0) return "0";
-            string[] suf = { "", "K", "M", "B", "T", "Q", "Qi", "Sx", "Sp", "Oc", "No", "De" };
-            int i = 0;
-            while (v >= 1000 && i < suf.Length - 1) { v /= 1000; i++; }
-            return v >= 100 ? $"{v:0}{suf[i]}" : $"{v:0.0}{suf[i]}";
-        }
+        private static string Fmt(double v) => NumberFormatter.Abbrev(v);   // consolidated (finding #31)
     }
 }

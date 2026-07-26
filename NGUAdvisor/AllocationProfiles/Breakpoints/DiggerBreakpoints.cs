@@ -7,10 +7,26 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 {
     public class DiggerBreakpoints : BaseBreakpoints<int[]>
     {
-        public DiggerBreakpoints() : base() { }
+        // The most recently constructed instance = the loaded profile's digger timeline (only one profile
+        // is live at a time; a reload rebuilds the wrapper and re-points this). The advisor's Hybrid
+        // membership reads the active list through here without needing a path to the private wrapper.
+        public static DiggerBreakpoints Current { get; private set; }
+
+        public DiggerBreakpoints() : base() { Current = this; }
 
         public DiggerBreakpoints(JSONNode bps) :
-            base(bps, (bp) => bp["List"].AsArray.Children.Select(x => x.AsInt).Where(x => x <= 11).ToArray()) { }
+            base(bps, (bp) => bp["List"].AsArray.Children.Select(x => x.AsInt).Where(x => x <= 11).ToArray())
+        {
+            Current = this;
+        }
+
+        // The profile's digger list for the current rebirth time / active challenge, or null when the
+        // profile names no diggers (empty timeline) — in which case the advisor generates its own set.
+        public static int[] ActiveProfileDiggers()
+        {
+            try { return Current?.GetCurrentBreakpoint()?.priorities; }
+            catch { return null; }
+        }
 
         protected override bool PerformSwap(Breakpoint bp)
         {

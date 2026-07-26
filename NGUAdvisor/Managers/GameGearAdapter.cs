@@ -12,8 +12,8 @@ namespace NGUAdvisor.Managers
     //   Toughness= CalcCap(capDefense, level)
     //   spec i   = CalcCap(speciCap, level) added to the stat(s) that specType feeds (GearObjectives.SpecTypeToStats)
     //
-    // NOT YET INCLUDED (next iteration, needed to match the website exactly): set bonuses and the infinity
-    // cube. Per-item spec stats dominate ranking, so this is a valid first cut to validate the pipeline.
+    // NOT YET INCLUDED (next iteration, needed to match the website exactly): set bonuses. The infinity cube
+    // IS included (see BuildCube). Per-item spec stats dominate ranking, so this is a valid cut to validate the pipeline.
     public static class GameGearAdapter
     {
         private static float CalcCap(float cap, int level) => Mathf.Floor(cap * (1f + level / 100f));

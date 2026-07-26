@@ -64,16 +64,48 @@ namespace NGUAdvisor.Managers
         // 24HR-completions>=3 as the CBlock2-done proxy.
         private static void Pools(Character c, out double pe, out double pm)
         {
-            pe = PoolE; pm = PoolM;
+            // Difficulty/phase EXP split, single-sourced + headless-tested in ExpRatio (audit M5). This
+            // method does the game-coupled reads; ExpRatio holds the pure ratio matrix.
+            bool isEvil = false, t7Killed = false, magicNgusCapped = false, normalMagicSkew = false;
             try
             {
+                var diff = c.settings.rebirthDifficulty;
+                isEvil = diff == difficulty.evil;
+
                 int t6v = 1;
                 try { t6v = ZoneHelpers.TitanVersion(5); } catch { }
+                int t7v = 0;
+                try { t7v = ZoneHelpers.TitanVersion(6); } catch { }
+                t7Killed = t7v >= 1;                      // "post-T7" once Titan 7 has been killed (v1)
+
+                // Evil ch.5 gate: energy-only begins only once the Ygg (magic NGU 0) and EXP (magic NGU 1)
+                // magic NGUs can be consistently capped — proxied by both reaching a positive target on the
+                // active NGU track (the advisor's own TargetMet rule). Before that, keep buying magic.
+                try { magicNgusCapped = MagicNguAtTarget(c, 0) && MagicNguAtTarget(c, 1); } catch { }
+
                 bool cblock2Done = false;
                 try { cblock2Done = c.challenges.hour24Challenge.curCompletions >= 3; } catch { }
-                if ((t6v >= 2 || cblock2Done) && t6v < 4) { pe = 0.4; pm = 0.6; }
+
+                // Normal-only magic skew (guide D4: post-CBlock2 / T6v2, before T6v4). Guarded to Normal so
+                // it can't leak onto Evil/Sadistic; Evil follows its own rule above.
+                normalMagicSkew = diff == difficulty.normal && (t6v >= 2 || cblock2Done) && t6v < 4;
             }
             catch { }
+            ExpRatio.Split(isEvil, t7Killed, magicNgusCapped, normalMagicSkew, out pe, out pm);
+            // Manual override (companion "Set ratio"): user-set energy share of the EXP pool.
+            try { var mset = Main.Settings; if (mset != null && mset.ExpManualRatio) { pe = Math.Max(0, Math.Min(100, mset.ExpEnergyShare)) / 100.0; pm = 1.0 - pe; } } catch { }
+        }
+
+        // A magic NGU is "capped" (bar consistently fillable) when it has reached a positive target on the
+        // active NGU level track — mirrors NGUBP.TargetMet, minus the target<0 "no target" case (which must
+        // NOT read as capped, or energy-only would start with no magic NGU goal set).
+        private static bool MagicNguAtTarget(Character c, int idx)
+        {
+            // Guide ch.5 means the NORMAL-track Ygg/EXP caps ("Normal NGU Ygg/EXP"): read the normal
+            // target/level even on Evil. The Evil NGU caps are far off and are NOT the trigger
+            // (user-confirmed: "we are not close to Evil NGU cap").
+            var s = c.NGU.magicSkills[idx];
+            return s.target > 0 && s.level >= s.target;
         }
         private const double ShP = 750.0 / 1710, ShC = 640.0 / 1710, ShB = 320.0 / 1710;
 
@@ -88,6 +120,7 @@ namespace NGUAdvisor.Managers
 
         private static Stat[] Snapshot(Character c)
         {
+            // magic RESOURCE + custom purchases are permanent (never re-lock on Evil) → all-time highestBoss.
             bool magicUnlocked = c.highestBoss >= 37;
             double eP = Math.Max(0, c.energyPower) * 150.0;
             double eC = c.capEnergy / 250.0;
@@ -120,7 +153,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 var c = Main.Character;
-                if (c == null || c.highestBoss < 17) return v;   // custom purchases locked before boss 17
+                if (c == null || c.highestBoss < 17) return v;   // custom purchases (permanent unlock) before boss 17
 
                 var stats = Snapshot(c);
                 double minL = double.MaxValue, maxL = 0;
@@ -203,9 +236,11 @@ namespace NGUAdvisor.Managers
             try
             {
                 var c = Main.Character;
-                if (c == null || c.highestBoss < 17) return null;
+                if (c == null || c.highestBoss < 17) return null;   // custom purchases: permanent unlock
                 WriteCustomPlan(c);
-                long budget = (long)(c.realExp * fraction);
+                double budgetD = c.realExp * fraction;
+                if (budgetD > long.MaxValue) budgetD = long.MaxValue;
+                long budget = (long)budgetD;
                 if (budget < 100) return null;
 
                 var stats = Snapshot(c);
@@ -275,13 +310,13 @@ namespace NGUAdvisor.Managers
                 case "Energy CAP":
                 {
                     if (c.capEnergy < 100000) return 0;          // game gate
-                    long units = maxExp * 250;                   // 250 cap per 1 EXP
+                    double units = (double)maxExp * 250;         // 250 cap per 1 EXP
                     units -= units % 250;                        // game rounds cap to 250s
                     if (units < 250) return 0;
-                    long cost = units / 250;
+                    long cost = maxExp;                          // == units / 250 exactly (units is maxExp*250)
                     c.realExp -= cost;
                     if (c.capEnergy + units >= c.hardCap()) c.capEnergy = c.hardCap();
-                    else c.capEnergy += units;
+                    else c.capEnergy += (long)units;
                     return cost;
                 }
                 case "Energy BARS":
@@ -305,13 +340,13 @@ namespace NGUAdvisor.Managers
                 case "Magic CAP":
                 {
                     if (c.magic.capMagic < 100000) return 0;
-                    long units = maxExp * 250 / 3;
+                    double units = Math.Floor((double)maxExp * 250 / 3);
                     units -= units % 250;
                     if (units < 250) return 0;
-                    long cost = units / 250 * 3;
+                    long cost = (long)(units / 250 * 3);
                     c.realExp -= cost;
                     if (c.magic.capMagic + units >= c.hardCap()) c.magic.capMagic = c.hardCap();
-                    else c.magic.capMagic += units;
+                    else c.magic.capMagic += (long)units;
                     return cost;
                 }
                 case "Magic BARS":
@@ -327,13 +362,8 @@ namespace NGUAdvisor.Managers
             return 0;
         }
 
-        public static string Fmt(double v)
-        {
-            if (v <= 0) return "0";
-            string[] suf = { "", "K", "M", "B", "T", "Q" };
-            int i = 0;
-            while (v >= 1000 && i < suf.Length - 1) { v /= 1000; i++; }
-            return v >= 100 ? $"{v:0}{suf[i]}" : $"{v:0.0}{suf[i]}";
-        }
+        // Canonical abbreviation lives in NumberFormatter.Abbrev (finding #31). Kept as a thin public alias
+        // because external callers reference ExpBalancer.Fmt.
+        public static string Fmt(double v) => NumberFormatter.Abbrev(v);
     }
 }

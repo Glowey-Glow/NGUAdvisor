@@ -120,8 +120,7 @@ namespace NGUAdvisor.Managers
                 // TRUE remaining time to the scheduled rebirth. RunHorizonMinutes clamps to >=10min for
                 // the Wandoos projection, which is too optimistic for pill timing — use the real value
                 // here (MaxValue when no rebirth is scheduled: the pill will eventually come off cooldown).
-                double trueRunLeft = double.MaxValue;
-                try { double tgt = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; if (tgt > 0) trueRunLeft = Math.Max(0, tgt - c.rebirthTime.totalseconds); } catch { }
+                double trueRunLeft = RunLeftSeconds(c);
                 double cdLeft = Math.Max(0, spells.adventureSpellCooldown - c.bloodMagic.adventureSpellTime.totalseconds);
                 double minBlood = spells.minAdventureBlood();
 
@@ -155,7 +154,7 @@ namespace NGUAdvisor.Managers
                         bestPossible *= c.adventureController.itopod.ironPillBonus();
                 }
                 catch { }
-                bool pillWorth = bestPossible >= advNow * 0.001;
+                bool pillWorth = bestPossible >= advNow * BloodMagicManager.PillWorthFraction;
                 p.PillWorthwhile = pillWorth;
                 if (!pillWorth)
                 {
@@ -202,6 +201,21 @@ namespace NGUAdvisor.Managers
                         ? $"Iron Pill ready — accruing blood ({ExpBalancer.Fmt(blood)}, +{ExpBalancer.Fmt(bps)}/s)"
                         : "Iron Pill ready but NO blood income — allocate magic to rituals";
                     p.Severity = bps > 0 ? 0 : 1;
+                    return p;
+                }
+
+                // Mirror the caster fail-safe (BloodMagicManager.IronPill.FailSafeHold): it holds for the
+                // first 30 minutes the pill is available (pooling a stronger cast) and refuses any cast under
+                // 10% of base adventure power. Don't advertise "CAST NOW" for a cast the caster will refuse;
+                // keep pooling instead (PoolForPill stays set by FillRouting while cdLeft<900).
+                double availableFor = c.bloodMagic.adventureSpellTime.totalseconds - spells.adventureSpellCooldown;
+                if (availableFor < BloodMagicManager.PillMinAvailableSec
+                    || p.PillPowerNow < advNow * BloodMagicManager.PillWorthFraction)
+                {
+                    p.Text = availableFor < BloodMagicManager.PillMinAvailableSec
+                        ? $"Iron Pill ready — pooling {FmtH(Math.Max(0, BloodMagicManager.PillMinAvailableSec - availableFor))} more (fail-safe holds the first 30m for a stronger cast)"
+                        : $"Iron Pill ready — holding: cast {p.PillPowerNow} < 10% of base adv power {ExpBalancer.Fmt(advNow)}";
+                    p.Severity = 0;
                     return p;
                 }
 
@@ -253,8 +267,8 @@ namespace NGUAdvisor.Managers
         //  - Counterfeit Gold only helps if the Time Machine has base gold to multiply, and matters
         //    most while gold-starved for augments.
         //  - Spaghetti (drop chance) while the farm zone's recommended DC isn't met.
-        //  - NUMBER boost is linear with no diminishing returns — the default sink — but dead in NORB
-        //    (no rebirth = no Number gain) and pointless when rebirth is off.
+        //  - NUMBER boost is the default sink — dead only in NORB (no rebirth = the banked multi is
+        //    never cashed) and when no rebirth is scheduled.
         public static void FillRouting(ref Plan p)
         {
             try
@@ -265,12 +279,13 @@ namespace NGUAdvisor.Managers
                 p.RouteKnown = true;
 
                 double cdLeft = Math.Max(0, c.bloodSpells.adventureSpellCooldown - c.bloodMagic.adventureSpellTime.totalseconds);
-                double runLeft = WandoosAdvisor.RunHorizonMinutes() * 60.0;
-                double trueRunLeft = double.MaxValue;
-                try { double tgt = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; if (tgt > 0) trueRunLeft = Math.Max(0, tgt - c.rebirthTime.totalseconds); } catch { }
+                double trueRunLeft = RunLeftSeconds(c);
                 // Pool ONLY for a pill that can move the needle AND can be cast before rebirth (user-
                 // reported: it pooled magic into blood for a pill whose cooldown outlasted the run).
-                if (Main.Settings != null && Main.Settings.CastBloodSpells && p.PillWorthwhile
+                // The gate mirrors ApplyBlood's own (AdvisorBlood && CastBloodSpells): with
+                // CastBloodSpells on but AdvisorBlood off nothing casts on planner timing, so pooling
+                // would strand the blood until the rebirth force-cast.
+                if (AdvisorOwnsBlood() && p.PillWorthwhile
                     && !p.UnreachableThisRun && cdLeft < Math.Min(trueRunLeft, 900))
                 {
                     p.PoolForPill = true;
@@ -278,11 +293,22 @@ namespace NGUAdvisor.Managers
                     return;
                 }
 
-                // SINGLE-SINK routing (user pick): all leftover blood-time goes to the ONE best use for the
-                // run's goal, each capped at its optimal level. The game splits blood EVENLY among enabled
-                // toggles, so enabling several DILUTES them — pick exactly one. Priority auto-derived from
-                // context: Counterfeit gold (gold-starved for augs) > Spaghetti (farming below zone DC) >
-                // NUMBER (bank to target). All three investments PERSIST past rebirth (only the pool resets).
+                // SINGLE-SINK routing (user pick): the game splits blood EVENLY among enabled toggles,
+                // so enabling several DILUTES them — pick exactly one.
+                //
+                // The three sinks are NOT commensurable (decomp):
+                //   NUMBER  rebirthPower += blood  — LINEAR and uncapped (RebirthPowerSpell), and a
+                //           straight multiplier on the WHOLE next-run attack/defense multi
+                //           (Rebirth.calculateNextMultis), re-based to 1.0 every rebirth.
+                //   Gold    1 + floor((log2(b/min)+1)^2)/100   — LOG.
+                //   Loot    +1% drop chance per DOUBLING of b  — LOG.
+                // All three are wiped by bloodMagicController.reset() at rebirth — an earlier comment
+                // here claimed they persist; they do not. Only NUMBER leaves anything behind, as the
+                // multi banked a moment earlier by setNewMultis().
+                //
+                // So gold/loot buy IN-RUN throughput whose value decays with the time left to earn it
+                // back, while NUMBER banks the same blood at a linear rate whenever it is spent. Order:
+                // NUMBER floor > gold > loot (while the investment window is open) > NUMBER.
                 bool norb = false;
                 try { norb = ChallengeDetector.Current() == "NORB"; } catch { }
                 bool rebirthOn = Main.Profile != null && Main.Profile.NextRebirthTargetSeconds() > 0;
@@ -294,40 +320,146 @@ namespace NGUAdvisor.Managers
 
                 p.WantGold = p.WantLoot = p.WantRebirth = false;
 
-                // Gold demand = augs OR diggers (user rule): once augs are funded the digger max-level
-                // upgrades are the next gold sink, and they need a far HIGHER gold cap — Counterfeit
-                // stays credited until those are funded too.
-                bool goldDemand = OptimizationAdvisor.GoldStarvedForAugs(c, 2.0)
-                    || OptimizationAdvisor.GoldStarvedForDiggers(c);
-                if (c.machine.realBaseGold > 0 && goldDemand && GoldBelowKnee(c, bps, out var goldReason))
+                bool numberEligible = !norb && rebirthOn;
+
+                // Routing PRIORITY is the pure ladder in BloodRouter.DecideRoute (audit M5): NUMBER floor
+                // > gold > loot (while the investment window is open) > NUMBER default > idle. The
+                // "Number ≥" knob is a FLOOR, not a ceiling (the old code stopped at the target, capping
+                // a linear uncapped multiplier and — because the auto profile funds rituals only while a
+                // sink is live — cutting blood income for the rest of the run). Predicates stay LAZY so
+                // evaluation is identical to before: the floor is decided without touching the window,
+                // the window is read at most once (memoized here), gold/loot carry their out-param reason
+                // strings, and loot is only probed if gold declines.
+                bool windowOpen = false, windowComputed = false;
+                Func<bool> window = () =>
                 {
-                    p.WantGold = true;
-                    p.RouteReason = goldReason + (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) ? " · augs unfunded" : " · digger upgrades unfunded");
-                }
-                else if (DcBelowZoneRec(c, out var dcReason))
+                    if (!windowComputed) { windowOpen = !numberEligible || InvestmentWindowOpen(c); windowComputed = true; }
+                    return windowOpen;
+                };
+                string goldReason = null, dcReason = null;
+                var route = BloodRouter.DecideRoute(
+                    numberEligible, numTarget, rebirthPower,
+                    window,
+                    () => c.machine.realBaseGold > 0
+                        && (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) || OptimizationAdvisor.GoldStarvedForDiggers(c))
+                        && GoldBelowKnee(c, bps, out goldReason),
+                    () => DcBelowZoneRec(c, out dcReason));
+
+                switch (route)
                 {
-                    p.WantLoot = true;
-                    p.RouteReason = dcReason;
-                }
-                else if (!norb && rebirthOn && numTarget > 0 && rebirthPower < numTarget)
-                {
-                    p.WantRebirth = true;
-                    bool ceiling = false;
-                    try { ceiling = c.bossID - 1 >= OptimizationAdvisor.BossUnlockCeiling(); } catch { }
-                    p.RouteReason = ceiling
-                        ? $"NUMBER (boss EXP push · banking to {ExpBalancer.Fmt(numTarget)})"
-                        : $"NUMBER (banking to {ExpBalancer.Fmt(numTarget)})";
-                }
-                else
-                {
-                    // Nothing worth banking: keep every auto-spell OFF so blood magic doesn't drain the
-                    // marathon's magic cap (BR-30 gates on a live NUMBER/pill). Set a Number target to bank.
-                    p.RouteReason = numTarget <= 0 && rebirthOn && !norb
-                        ? "blood idle — set a Number target to bank rebirth power"
-                        : "blood idle — no sink worth banking now";
+                    case BloodRoute.NumberFloor:
+                        p.WantRebirth = true;
+                        p.RouteReason = $"NUMBER (below floor {ExpBalancer.Fmt(numTarget)} · now x{ExpBalancer.Fmt(rebirthPower)})";
+                        break;
+                    case BloodRoute.Gold:
+                        p.WantGold = true;
+                        p.RouteReason = goldReason + (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) ? " · augs unfunded" : " · digger upgrades unfunded");
+                        break;
+                    case BloodRoute.Loot:
+                        p.WantLoot = true;
+                        p.RouteReason = dcReason;
+                        break;
+                    case BloodRoute.NumberDefault:
+                        // DEFAULT SINK. Any blood still pooled at rebirth is force-cast here anyway
+                        // (BaseRebirth.CastBloodSpellsForRebirth), so routing it now costs nothing and
+                        // starts compounding immediately.
+                        p.WantRebirth = true;
+                        bool ceiling = false;
+                        try { ceiling = BossScale.IsPastBossCeiling(c.effectiveBossID(), OptimizationAdvisor.BossUnlockCeiling()); } catch { }
+                        string why = windowOpen ? "default sink" : "banking the run's tail";
+                        p.RouteReason = ceiling
+                            ? $"NUMBER (boss EXP push · {why} · now x{ExpBalancer.Fmt(rebirthPower)})"
+                            : $"NUMBER ({why} · now x{ExpBalancer.Fmt(rebirthPower)})";
+                        break;
+                    default:
+                        // Genuinely nothing to bank: keep every auto-spell OFF so blood magic doesn't
+                        // drain the marathon's magic cap (BR-30 gates on a live sink).
+                        p.RouteReason = norb
+                            ? "blood idle — NORB: no rebirth to cash a NUMBER multi into"
+                            : "blood idle — no rebirth scheduled to bank NUMBER for";
+                        break;
                 }
             }
             catch (Exception e) { Main.LogDebug($"BloodPlanner routing: {e.Message}"); }
+        }
+
+        // TRUE seconds to the scheduled rebirth; MaxValue when none is scheduled.
+        private static double RunLeftSeconds(Character c)
+        {
+            try
+            {
+                double tgt = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
+                if (tgt > 0) return Math.Max(0, tgt - c.rebirthTime.totalseconds);
+            }
+            catch { }
+            return double.MaxValue;
+        }
+
+        // Gold/loot only outrank NUMBER while enough of the run remains for their LOG-scaled, in-run
+        // bonus to earn back the blood it costs — both are wiped at rebirth and must be re-earned, so
+        // their value decays to nothing as the deadline approaches. NUMBER is time-indifferent, so it
+        // always owns the tail of the run.
+        private const double InvestmentWindowFraction = 0.5;
+
+        private static bool InvestmentWindowOpen(Character c)
+        {
+            try
+            {
+                double tgt = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
+                if (tgt <= 0) return true;
+                return Math.Max(0, tgt - c.rebirthTime.totalseconds) > tgt * InvestmentWindowFraction;
+            }
+            catch { return true; }
+        }
+
+        // Mirrors ApplyBlood's gate (AdvisorApply: AdvisorBlood, then CastBloodSpells). Both must be on
+        // for the advisor to own blood routing and pill timing.
+        private static bool AdvisorOwnsBlood()
+        {
+            try
+            {
+                var s = Main.Settings;
+                return s != null && s.AdvisorBlood && s.CastBloodSpells;
+            }
+            catch { return false; }
+        }
+
+        // Does blood have a live consumer worth spending ritual magic on? The auto profile asks this
+        // before funding BR-30 (ChallengeOverlay).
+        //
+        // It must answer with the routing INTENT, not with the toggles ApplyBlood last wrote. The old
+        // code read the live flags, which meant the profile could only fund rituals AFTER a sink was
+        // already live — and ApplyBlood is throttled to 60s, so the flags lag by up to a tick. Combined
+        // with NUMBER being gated behind a threshold that defaults to 0, that was a deadlock: no
+        // threshold -> no live toggle -> no rituals -> no blood -> NUMBER stuck at 1.0 forever, which
+        // bit hardest late-game once the Iron Pill stopped being worth pursuing and was no longer
+        // holding rituals open on its own.
+        //
+        // When the advisor does NOT own blood, the live toggles ARE the intent (set by the user or by
+        // AutoSpellSwap in Main), so read them.
+        private static bool _bloodMattersCache = true;
+        private static DateTime _bloodMattersAt = DateTime.MinValue;
+
+        public static bool BloodMatters()
+        {
+            if ((DateTime.UtcNow - _bloodMattersAt).TotalSeconds < 10) return _bloodMattersCache;
+            _bloodMattersAt = DateTime.UtcNow;
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return _bloodMattersCache = true;
+                if (!AdvisorOwnsBlood())
+                {
+                    var bm = c.bloodMagic;
+                    return _bloodMattersCache = bm.rebirthAutoSpell || bm.lootAutoSpell || bm.goldAutoSpell;
+                }
+                var p = Analyze();
+                FillRouting(ref p);
+                _bloodMattersCache = (p.RouteKnown && (p.PoolForPill || p.WantRebirth || p.WantLoot || p.WantGold))
+                    || PillWorthPursuing();
+            }
+            catch { _bloodMattersCache = true; }   // fail-safe: keep rituals if the state read throws
+            return _bloodMattersCache;
         }
 
         // Counterfeit gold cost-curve knee. Game: +N% GPS needs goldSpellBlood = minGold x 2^(sqrt(N)-1).

@@ -7,12 +7,19 @@ namespace NGUAdvisor.Managers
     // to produce an accurate stage, a milestone-based "next goal", and a context-aware profile recommendation
     // — replacing the crude highestBoss+difficulty heuristic. Consumed by StatusPanel/DashboardPanel/overlay.
     // Cached/throttled (heavier optimality math is added in 3.2), guarded, main-thread only.
+    //
+    // CANONICAL CHAPTER ENGINE — this Chapter (derived from actual TITAN KILLS) is the authoritative "what
+    // chapter am I in" for stage/HUD/perk/profile advice, and supersedes the coarse boss-threshold
+    // StageDetector.Chapter for those uses. StageDetector is retained ONLY for its two boss-anchored consumers
+    // (ChallengeOverlay segment gating, LevelPlanner NGU-track). The two Chapter values intentionally DIVERGE
+    // when boss progress leads titan kills (see StageDetector's class note for the full contrast) — do NOT treat
+    // them as the same number or substitute one for the other.
     public static class ProgressionAnalyzer
     {
         public struct Progression
         {
             public bool Known;
-            public int Chapter;              // 1..8
+            public int Chapter;              // 1..8. Canonical titan-kill chapter (see class note) — NOT StageDetector.Chapter (boss-threshold).
             public string Label;             // "Ch.4 T6"
             public string Difficulty;        // Normal / Evil / Sadistic
             public string Activity;          // what we're doing now
@@ -56,7 +63,7 @@ namespace NGUAdvisor.Managers
 
             var diff = c.settings.rebirthDifficulty;
             string diffName = diff == difficulty.sadistic ? "Sadistic" : diff == difficulty.evil ? "Evil" : "Normal";
-            int boss = c.highestBoss;
+            int boss = ZoneHelpers.CurrentHighestBoss(c);
 
             bool t6 = TitanBeaten(5), t7 = TitanBeaten(6), t8 = TitanBeaten(7);
 
@@ -125,11 +132,29 @@ namespace NGUAdvisor.Managers
             _focusTime = DateTime.UtcNow;
             try
             {
-                string objName = chapter <= 4 ? "Power" : "NGUs";
+                // Score against the ACTIVE gear objective — the one the equip logic actually optimises
+                // for — so this gap agrees with what's equipped and with the Re-optimize-now button.
+                // Scoring a fixed objective (NGUs) while gear is equipped for a different one (e.g. Power
+                // on a titan push) reported a phantom "+N%" gap (user-reported: says +11% while the
+                // loadout already agrees). Fall back to the chapter default when no objective is active.
+                // Match the equip logic EXACTLY — same objective AND same forceTopRespawn flag — so the
+                // rec can never advertise a gap the advisor won't act on. forceTopRespawn deliberately
+                // trades objective score for a respawn item; scoring the pure objective (forceRespawn=
+                // false, the old default here) reported that trade as a phantom "+N%" that the equip /
+                // Re-optimize-now path correctly calls "already optimal" (the persistent +11% NGUs). And
+                // when no gear objective is active, the advisor isn't managing gear — advertise no gap.
+                string objName = null; bool forceRespawn = false;
+                try
+                {
+                    objName = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+                    forceRespawn = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn;
+                }
+                catch { }
+                if (string.IsNullOrEmpty(objName)) { _focus = ""; return _focus; }
                 var obj = GearOptimizer.FindObjective(objName);
                 if (obj == null) { _focus = ""; return _focus; }
                 double cur = GearOptimizer.CurrentScore(obj);
-                double opt = GearOptimizer.Optimize(obj).Score;
+                double opt = GearOptimizer.Optimize(obj, forceRespawn).Score;
                 if (cur > 0 && opt > cur)
                 {
                     double pct = (opt / cur - 1.0) * 100.0;
@@ -165,24 +190,27 @@ namespace NGUAdvisor.Managers
         {
             switch (chapter)
             {
-                case 1: return "Kill Titan 1 (GRB)";
-                case 2: return "Reach Boss 100, kill Titan 4";
-                case 3: return "Farm beards, kill Titan 6";
+                // Compact hints — sized to fit the status strip's NEXT GOAL cell (the full guide detail
+                // lives in the chapter's Goal line + NGU-KNOWLEDGE.md). Standard NGU shorthand: T# = Titan,
+                // B# = Boss.
+                case 1: return "Kill T1 (GRB)";
+                case 2: return "B100 → kill T4";
+                case 3: return "Beards → kill T6";
                 case 4:
-                    if (!TitanVersionBeaten(5, 4)) return "Kill Titan 6 v4";
-                    if (boss < 300) return "Reach Boss 300";
-                    return "Attack boost, then enter Evil";
+                    if (!TitanVersionBeaten(5, 4)) return "Kill T6 v4";
+                    if (boss < 300) return "Reach B300";
+                    return "Atk boost → Evil";
                 case 5:
-                    if (!TitanBeaten(6)) return "Reach Boss 125, kill Titan 7";
-                    if (boss < 166) return "Reach Boss 166 (IDP / T8 puzzle)";
-                    return "Kill Titan 8";
+                    if (!TitanBeaten(6)) return "B125 → kill T7";
+                    if (boss < 166) return "B166 → T8 puzzle";
+                    return "Kill T8";
                 case 6:
-                    if (!TitanBeaten(7)) return "Kill Titan 8";
-                    return "Buy R3, farm Typo/Fad/JRPG";
+                    if (!TitanBeaten(7)) return "Kill T8";
+                    return "R3 → farm T-sets";
                 case 7:
-                    if (!TitanBeaten(8)) return "Kill Titan 9";
-                    return "24 AK kills, Rad set, enter Sadistic";
-                case 8: return "Sadistic: titans + attack keys";
+                    if (!TitanBeaten(8)) return "Kill T9";
+                    return "24 AK → Rad set";
+                case 8: return "Sadistic titans";
                 default: return "-";
             }
         }

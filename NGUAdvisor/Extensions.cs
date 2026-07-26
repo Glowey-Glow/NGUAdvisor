@@ -10,18 +10,17 @@ namespace NGUAdvisor
 {
     public static class EnumerableExtensions
     {
-        // Orders elements in first collection by their order in second collection
+        // Orders elements in first collection by their order in second collection. Logic lives in the
+        // Unity-free Managers.DiggerMath.OrderByPriority so it can be unit-tested (audit M5); this stays
+        // as the thin extension the digger callers already use.
         public static IEnumerable<TSource> OrderFrom<TSource>(this IEnumerable<TSource> first, IEnumerable<TSource> second)
-        {
-            if (second == null)
-                return first;
-            return second.Concat(first).Intersect(first);
-        }
+            => Managers.DiggerMath.OrderByPriority(first, second);
 
         // Returns all maximum values in a generic sequence according to a specified key selector function
         public static IEnumerable<TSource> AllMaxBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> selector) where TKey : IComparable
         {
             var array = source.ToArray();
+            if (array.Length == 0) return array;
             var max = selector(array[0]);
             var count = 1;
             for (var i = 1; i < array.Length; i++)
@@ -47,6 +46,7 @@ namespace NGUAdvisor
         public static IEnumerable<TSource> AllMinBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> selector) where TKey : IComparable
         {
             var array = source.ToArray();
+            if (array.Length == 0) return array;
             var min = selector(array[0]);
             var count = 1;
             for (var i = 1; i < array.Length; i++)
@@ -84,6 +84,7 @@ namespace NGUAdvisor
             {
                 result = type.GetField(name, flags);
                 fieldCache.Add(key, result);
+                if (result == null) WarnMissingMember(type, name, "field");
             }
 
             return result;
@@ -99,25 +100,48 @@ namespace NGUAdvisor
             {
                 result = type.GetMethod(name, flags, null, paramTypes, null);
                 methodCache.Add(key, result);
+                if (result == null) WarnMissingMember(type, name, "method");
             }
 
             return result;
         }
 
-        public static TRes GetFieldValue<TObj, TRes>(this TObj obj, string name) => (TRes)GetFieldInfo<TObj>(name).GetValue(obj);
+        // M8 (audit): a reflected member that no longer exists (a game update renamed/moved it) used to
+        // cache null and then NRE on every access — a silent feature-death once a caller's try/catch
+        // swallowed it. Missing members now return default / no-op AND are logged ONCE, so game-version
+        // drift is visible (pairs with CompatibilityGate) instead of a mystery crash.
+        private static readonly HashSet<string> _warnedMissing = new HashSet<string>();
+        private static void WarnMissingMember(Type type, string name, string kind)
+        {
+            var what = type.Name + "." + name + " (" + kind + ")";
+            if (_warnedMissing.Add(what))
+                try { LogDebug("[reflect] " + what + " not found — a game update likely renamed it; that feature is degraded, not crashing."); } catch { }
+        }
 
-        public static void SetFieldValue<TObj>(this TObj obj, string name, object value) => GetFieldInfo<TObj>(name).SetValue(obj, value);
+        public static TRes GetFieldValue<TObj, TRes>(this TObj obj, string name)
+        {
+            var fi = GetFieldInfo<TObj>(name);
+            return fi == null ? default(TRes) : (TRes)fi.GetValue(obj);
+        }
+
+        public static void SetFieldValue<TObj>(this TObj obj, string name, object value)
+        {
+            var fi = GetFieldInfo<TObj>(name);
+            if (fi != null) fi.SetValue(obj, value);
+        }
 
         public static void CallMethod<TObj>(this TObj obj, string name, object[] parameters = null)
         {
             Type[] paramTypes = parameters?.Select(x => x.GetType()).ToArray() ?? Type.EmptyTypes;
-            GetMethodInfo<TObj>(name, paramTypes).Invoke(obj, parameters);
+            var mi = GetMethodInfo<TObj>(name, paramTypes);
+            if (mi != null) mi.Invoke(obj, parameters);
         }
 
         public static TRes CallMethod<TObj, TRes>(this TObj obj, string name, object[] parameters = null)
         {
             Type[] paramTypes = parameters?.Select(x => x.GetType()).ToArray() ?? Type.EmptyTypes;
-            return (TRes)GetMethodInfo<TObj>(name, paramTypes).Invoke(obj, parameters);
+            var mi = GetMethodInfo<TObj>(name, paramTypes);
+            return mi == null ? default(TRes) : (TRes)mi.Invoke(obj, parameters);
         }
     }
 

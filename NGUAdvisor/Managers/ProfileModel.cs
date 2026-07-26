@@ -14,12 +14,20 @@ namespace NGUAdvisor.Managers
     // three resource priority timelines: Energy, Magic, R3). EVERY other system (Gear, Diggers, Beards,
     // Wandoos, NGUDiff, Consumables, Rebirth, Challenges, and anything unknown) is passed through VERBATIM
     // so it can never be lost or corrupted by a round-trip. Later phases model more systems one at a time,
-    // each re-verified by the round-trip test. System ordering is preserved.
+    // each re-verified by the round-trip test. System ordering (both the top-level system order captured in
+    // _systemOrder and key order within nested objects) is preserved by re-emitting in the order SimpleJSON
+    // enumerated on load. NOTE: SimpleJSON's JSONObject is backed by a plain Dictionary<string,JSONNode>
+    // (SimpleJson.cs), whose enumeration order is not a guaranteed contract. It equals insertion (file) order
+    // here ONLY because the load->edit->save path never removes or clears keys, so on Mono/.NET Framework the
+    // never-shrunk Dictionary happens to enumerate in insertion order. If SimpleJSON is ever swapped for a
+    // hash-randomizing map, back JSONObject with an insertion-ordered structure to keep this round-trip stable.
     //
-    // "GUI owns the file": within a MODELED breakpoint, human-comment fields are dropped on save. Comments
-    // are always string-valued (Comment, Note, Priorities1..9 prose, Thresholds, ...); functional extras a
-    // breakpoint may carry (named alternate priority sets like "AdvDC"/"PrioritiesDefault", which are arrays)
-    // are non-string and are preserved verbatim. Rule: string-valued extras are comments and are dropped.
+    // "GUI owns the file": within a MODELED breakpoint, human-comment fields are dropped on save. The drop
+    // decision is made purely by KEY NAME via IsCommentKey (see CommentExact denylist + prefix rules below),
+    // NOT by value type. A key matches the comment denylist (Comment*, Note*, Thresholds, Priorities1..9 doc
+    // lines, etc.) is dropped; EVERY other extra key is preserved verbatim into Extras regardless of its value
+    // type - including named alternate priority/gear sets (arrays like "AdvDC"/"PrioritiesDefault") AND
+    // string-valued backup loadouts (e.g. "Default (MeepleMolotovEMPC)": "[ 326, ... ]"), which are user data.
     public class ProfileModel
     {
         public class PriorityBreakpoint
@@ -109,8 +117,152 @@ namespace NGUAdvisor.Managers
             new HashSet<string>(StringComparer.Ordinal) { "Energy", "Magic", "R3", "Diggers", "Beards", "Gear", "Wandoos", "NGUDiff", "Consumables", "Rebirth", "Challenges" };
 
         // Original "Breakpoints" object and its key order, for verbatim passthrough of unmodeled systems.
+        // Captures SimpleJSON's (Dictionary-backed) key enumeration order at load; == insertion order because the round-trip never removes keys.
         private readonly List<string> _systemOrder = new List<string>();
         private readonly Dictionary<string, JSONNode> _passthrough = new Dictionary<string, JSONNode>(StringComparer.Ordinal);
+
+        // ----- companion Timeline-Editor mutations -----
+        // Kept on the SHARED model so the round-trip stays lossless (passthrough / alternate sets
+        // preserved) and the op is unit-tested; ProfileService wraps it with load -> validate ->
+        // write-in-place and the injector's AllocationWatcher reloads.
+
+        /// <summary>Remove one breakpoint from a system's timeline. False on unknown system / out-of-range index.</summary>
+        public bool RemoveBreakpoint(string systemKey, int index)
+        {
+            switch (systemKey)
+            {
+                case "energy": return RemoveAt(Energy, index);
+                case "magic": return RemoveAt(Magic, index);
+                case "r3": return RemoveAt(R3, index);
+                case "gear": return RemoveAt(Gear, index);
+                case "diggers": return RemoveAt(Diggers, index);
+                case "beards": return RemoveAt(Beards, index);
+                case "wandoos": return RemoveAt(Wandoos, index);
+                case "ngudiff": return RemoveAt(NGUDiff, index);
+                case "consumables": return RemoveAt(Consumables, index);
+                case "rebirth": return RemoveAt(Rebirth, index);
+                default: return false;
+            }
+        }
+
+        private static bool RemoveAt<T>(List<T> list, int index)
+        {
+            if (list == null || index < 0 || index >= list.Count) return false;
+            list.RemoveAt(index);
+            return true;
+        }
+
+        /// <summary>
+        /// Insert a new blank breakpoint at <paramref name="sec"/> and return its index (ascending-time
+        /// position; ties append after existing equal-time entries). -1 for an unknown system. The runtime
+        /// re-sorts by time on load (BaseBreakpoints), so position is purely for a chronological UI; the blank
+        /// defaults are structurally valid (empty priorities/items, Value 0, Rebirth Type "Time").
+        /// </summary>
+        public int AddBreakpoint(string systemKey, int sec)
+        {
+            if (sec < 0) sec = 0;
+            switch (systemKey)
+            {
+                case "energy": return InsertSorted(Energy, new PriorityBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "magic": return InsertSorted(Magic, new PriorityBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "r3": return InsertSorted(R3, new PriorityBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "gear": return InsertSorted(Gear, new ListBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "diggers": return InsertSorted(Diggers, new ListBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "beards": return InsertSorted(Beards, new ListBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "wandoos": return InsertSorted(Wandoos, new ValueBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "ngudiff": return InsertSorted(NGUDiff, new ValueBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "consumables": return InsertSorted(Consumables, new StringListBreakpoint { TimeSeconds = sec }, b => b.TimeSeconds);
+                case "rebirth": return InsertSorted(Rebirth, new RebirthEntry { TimeSeconds = sec, Type = "Time" }, b => b.TimeSeconds);
+                default: return -1;
+            }
+        }
+
+        private static int InsertSorted<T>(List<T> list, T item, Func<T, int> time)
+        {
+            int i = 0;
+            while (i < list.Count && time(list[i]) <= time(item)) i++;
+            list.Insert(i, item);
+            return i;
+        }
+
+        /// <summary>Set one breakpoint's time (seconds). False on unknown system / out-of-range index.</summary>
+        public bool SetTimeSeconds(string systemKey, int index, int sec)
+        {
+            if (sec < 0) sec = 0;
+            switch (systemKey)
+            {
+                case "energy": return At(Energy, index, b => b.TimeSeconds = sec);
+                case "magic": return At(Magic, index, b => b.TimeSeconds = sec);
+                case "r3": return At(R3, index, b => b.TimeSeconds = sec);
+                case "gear": return At(Gear, index, b => b.TimeSeconds = sec);
+                case "diggers": return At(Diggers, index, b => b.TimeSeconds = sec);
+                case "beards": return At(Beards, index, b => b.TimeSeconds = sec);
+                case "wandoos": return At(Wandoos, index, b => b.TimeSeconds = sec);
+                case "ngudiff": return At(NGUDiff, index, b => b.TimeSeconds = sec);
+                case "consumables": return At(Consumables, index, b => b.TimeSeconds = sec);
+                case "rebirth": return At(Rebirth, index, b => b.TimeSeconds = sec);
+                default: return false;
+            }
+        }
+
+        /// <summary>Set a priority timeline breakpoint's ordered tokens (energy/magic/r3 only).</summary>
+        public bool SetPriorities(string systemKey, int index, List<string> tokens)
+        {
+            var l = systemKey == "energy" ? Energy : systemKey == "magic" ? Magic : systemKey == "r3" ? R3 : null;
+            return At(l, index, b => b.Priorities = tokens ?? new List<string>());
+        }
+
+        /// <summary>Set an int-list breakpoint's items (gear/diggers/beards). Gear switches to manual-ID mode.</summary>
+        public bool SetItems(string systemKey, int index, List<int> ids)
+        {
+            var l = systemKey == "gear" ? Gear : systemKey == "diggers" ? Diggers : systemKey == "beards" ? Beards : null;
+            return At(l, index, b => { b.Items = ids ?? new List<int>(); if (systemKey == "gear") { b.Objective = ""; b.ForceRespawn = false; } });
+        }
+
+        /// <summary>Put a gear breakpoint into optimize-objective mode (clears the manual ID list).</summary>
+        public bool SetGearObjective(int index, string objective, bool forceRespawn) =>
+            At(Gear, index, b => { b.Objective = objective ?? ""; b.ForceRespawn = forceRespawn; b.Items = new List<int>(); });
+
+        /// <summary>Set a single-value breakpoint's value (wandoos/ngudiff).</summary>
+        public bool SetValue(string systemKey, int index, int value)
+        {
+            var l = systemKey == "wandoos" ? Wandoos : systemKey == "ngudiff" ? NGUDiff : null;
+            return At(l, index, b => b.Value = value);
+        }
+
+        /// <summary>Set the consumables breakpoint's string items ("CODE" / "CODE:amount").</summary>
+        public bool SetStringItems(int index, List<string> items) =>
+            At(Consumables, index, b => b.Items = items ?? new List<string>());
+
+        /// <summary>Set a rebirth entry's Type + optional numeric Target.</summary>
+        public bool SetRebirth(int index, string type, double? target) =>
+            At(Rebirth, index, b => { b.Type = type ?? ""; b.Target = target; });
+
+        /// <summary>Set a breakpoint's challenge tag ("" = untagged). Rebirth entries carry no challenge.</summary>
+        public bool SetChallenge(string systemKey, int index, string challenge)
+        {
+            var c = challenge ?? "";
+            switch (systemKey)
+            {
+                case "energy": return At(Energy, index, b => b.Challenge = c);
+                case "magic": return At(Magic, index, b => b.Challenge = c);
+                case "r3": return At(R3, index, b => b.Challenge = c);
+                case "gear": return At(Gear, index, b => b.Challenge = c);
+                case "diggers": return At(Diggers, index, b => b.Challenge = c);
+                case "beards": return At(Beards, index, b => b.Challenge = c);
+                case "wandoos": return At(Wandoos, index, b => b.Challenge = c);
+                case "ngudiff": return At(NGUDiff, index, b => b.Challenge = c);
+                case "consumables": return At(Consumables, index, b => b.Challenge = c);
+                default: return false;
+            }
+        }
+
+        private static bool At<T>(List<T> list, int index, Action<T> apply)
+        {
+            if (list == null || index < 0 || index >= list.Count) return false;
+            apply(list[index]);
+            return true;
+        }
 
         // ----- Load -----
 
@@ -265,7 +417,8 @@ namespace NGUAdvisor.Managers
             var list = new List<ValueBreakpoint>();
             foreach (var bp in ArrayChildren(node))
             {
-                var b = new ValueBreakpoint { TimeSeconds = ParseTime(bp["Time"]), Value = bp[payloadKey].AsInt };
+                var b = new ValueBreakpoint { TimeSeconds = ParseTime(bp["Time"]) };
+                if (bp[payloadKey] != null && bp[payloadKey].IsNumber) b.Value = bp[payloadKey].AsInt;
                 if (bp.IsObject)
                     foreach (var kv in bp.AsObject)
                     {

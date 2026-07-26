@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NGU Advisor — modern UI companion host (out-of-process).
+    Separate project by design: it runs on modern .NET (net8.0), which the game's Unity/Mono
+    runtime CANNOT load in-process. It is a thin WebView2 host + named-pipe client that renders
+    the Focus web UI and relays snapshots/commands to the injected DLL over pipe "NGUAdvisorUI".
+
+    This project is intentionally NOT part of NGUAdvisor.sln and never touches the injector DLL.
+    Build:  dotnet build NGUAdvisorCompanion/NGUAdvisorCompanion.csproj -c Debug
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- disable: the shared injector sources (ProfileModel/SimpleJSON) are pre-nullable-annotations C# 7.3. -->
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NGUAdvisorCompanion</RootNamespace>
+    <Version>2.0.0</Version>
+    <ApplicationIcon>advisor.ico</ApplicationIcon>
+    <AssemblyName>NGUAdvisorCompanion</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <!-- WebView2 runtime ships evergreen with Windows; no bundled fixed-version runtime needed. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- The WebView2 package ships an unused WPF wrapper (Microsoft.Web.WebView2.Wpf.dll) that pulls a
+         newer WindowsBase; we use only the WinForms wrapper, so demote its benign version-conflict warning. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- embed a PNG the window/taskbar icon is built from at runtime (GetHicon — avoids GDI+'s flaky
+         PNG-in-.ico parsing); advisor.ico above stays the Explorer/exe icon. -->
+    <EmbeddedResource Include="appicon.png" LogicalName="appicon.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Floating 1.0.* so restore always picks the latest stable WebView2 SDK (avoids pinning a
+         version that may not exist on this box). The evergreen runtime is already installed. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Focus web UI, served to the WebView2 via a virtual host mapping. Copied next to the exe. -->
+    <None Update="wwwroot\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SHARED injector sources (dependency-free): the SAME profile serializer both sides use, so the
+         Timeline Editor's read/edit/write round-trips identically (idempotency depends on shared code). -->
+    <Compile Include="..\NGUAdvisor\Managers\ProfileModel.cs" Link="Shared\ProfileModel.cs" />
+    <Compile Include="..\NGUAdvisor\Managers\SystemCatalog.cs" Link="Shared\SystemCatalog.cs" />
+    <Compile Include="..\NGUAdvisor\Managers\PriorityCatalog.cs" Link="Shared\PriorityCatalog.cs" />
+    <Compile Include="..\NGUAdvisor\Managers\BreakpointEditor.cs" Link="Shared\BreakpointEditor.cs" />
+    <Compile Include="..\NGUAdvisor\Managers\ProfileValidator.cs" Link="Shared\ProfileValidator.cs" />
+    <Compile Include="..\NGUAdvisor\SimpleJson.cs" Link="Shared\SimpleJson.cs" />
+  </ItemGroup>
+
+</Project>

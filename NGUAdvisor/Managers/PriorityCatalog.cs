@@ -46,7 +46,11 @@ namespace NGUAdvisor.Managers
             new BaseType("WAN",     false, 0, "Wandoos (magic)"),
             new BaseType("TM",      false, 0, "Time Machine (magic)"),
             new BaseType("RIT",     true, 40, "Ritual (by number)"),
-            new BaseType("BR",      true, 1440, "Blood Rituals — cast (optional -minutes limit)"),
+            // -index is SECONDS, not minutes: BR.CastRituals(secondsToRun) skips any ritual whose time
+            // left exceeds it, and the README's example is BR-3600 = "ends before the 1 hour mark".
+            // The editor advertised minutes with a 1440 max, so BR-30 read as half an hour when it is
+            // half a minute. Max = 86400 (24h) to match the seconds reading.
+            new BaseType("BR",      true, 86400, "Blood Rituals — cast (optional -seconds limit)"),
         };
 
         private static readonly List<BaseType> R3 = new List<BaseType>

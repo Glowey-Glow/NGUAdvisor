@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
@@ -8,11 +9,16 @@ namespace NGUAdvisor.Managers
     // The advisor parses profiles with SimpleJSON, which is extremely lenient: it treats } and ]
     // as interchangeable and silently ignores stray/missing commas, so a malformed profile does not
     // crash - it misparses silently and the bot misbehaves with no feedback. This validator does a
-    // strict RFC-8259 parse (with one intentional tolerance: trailing commas, which every real parser
-    // here accepts) and reports the first structural problem with a line/column, so the user can fix
+    // near-RFC-8259 parse (with intentional tolerances: trailing commas, plus number lexing that
+    // accepts a few non-canonical-but-unambiguous forms such as leading zeros and a bare leading
+    // decimal point like -.5, which the SimpleJSON parse path also accepts) and reports the first
+    // structural problem with a line/column, so the user can fix
     // it instead of guessing. Zero game/Unity dependencies so it is unit-testable in isolation.
     public static class ProfileValidator
     {
+        // P0 (M2): reject a pathologically large profile up front. Real profiles are a few KB.
+        private const int MaxProfileChars = 4000000;
+
         public struct Result
         {
             public bool Ok;
@@ -27,6 +33,9 @@ namespace NGUAdvisor.Managers
         {
             if (json == null)
                 return Fail(json, 0, "Profile is empty.");
+
+            if (json.Length > MaxProfileChars)
+                return Fail(json, 0, $"Profile is too large ({json.Length:N0} characters; limit {MaxProfileChars:N0}).");
 
             var p = new Parser(json);
             p.SkipWhitespace();
@@ -76,6 +85,13 @@ namespace NGUAdvisor.Managers
             private readonly string _s;
             public int Pos;
 
+            // P0 (M2): recursion-depth guard. ParseObject/ParseArray recurse through ParseValue; an
+            // unbounded nesting (e.g. "[[[[..." from a crafted/corrupt profile) would overflow the
+            // call stack — an UNCATCHABLE crash. Real profiles nest a handful of levels; 200 is far
+            // beyond any legitimate document but well under the stack limit.
+            private int _depth;
+            private const int MaxDepth = 200;
+
             public Parser(string s)
             {
                 _s = s;
@@ -103,28 +119,41 @@ namespace NGUAdvisor.Managers
             public bool ParseValue(out Result err)
             {
                 err = Result.Success;
-                SkipWhitespace();
-                if (Eof)
+
+                // Bracket the recursive descent: _depth reflects current nesting (breadth is unaffected
+                // because siblings increment then decrement in turn via the finally).
+                if (++_depth > MaxDepth)
                 {
-                    err = Err("Expected a value but reached the end of the profile.");
+                    err = Err($"Profile nesting is too deep (limit {MaxDepth}); likely a malformed or malicious profile.");
+                    _depth--;
                     return false;
                 }
-
-                var c = Cur;
-                switch (c)
+                try
                 {
-                    case '{': return ParseObject(out err);
-                    case '[': return ParseArray(out err);
-                    case '"': return ParseString(out err);
-                    case 't':
-                    case 'f': return ParseKeyword(out err);
-                    case 'n': return ParseKeyword(out err);
-                    default:
-                        if (c == '-' || (c >= '0' && c <= '9'))
-                            return ParseNumber(out err);
-                        err = Err($"Unexpected character '{Describe(c)}' where a value was expected.");
+                    SkipWhitespace();
+                    if (Eof)
+                    {
+                        err = Err("Expected a value but reached the end of the profile.");
                         return false;
+                    }
+
+                    var c = Cur;
+                    switch (c)
+                    {
+                        case '{': return ParseObject(out err);
+                        case '[': return ParseArray(out err);
+                        case '"': return ParseString(out err);
+                        case 't':
+                        case 'f': return ParseKeyword(out err);
+                        case 'n': return ParseKeyword(out err);
+                        default:
+                            if (c == '-' || (c >= '0' && c <= '9'))
+                                return ParseNumber(out err);
+                            err = Err($"Unexpected character '{Describe(c)}' where a value was expected.");
+                            return false;
+                    }
                 }
+                finally { _depth--; }
             }
 
             private bool ParseObject(out Result err)
@@ -134,6 +163,7 @@ namespace NGUAdvisor.Managers
                 SkipWhitespace();
                 if (!Eof && Cur == '}') { Pos++; return true; }
 
+                var seen = new HashSet<string>();
                 while (true)
                 {
                     SkipWhitespace();
@@ -147,7 +177,12 @@ namespace NGUAdvisor.Managers
                         err = Err($"Expected a property name in double quotes, found '{Describe(Cur)}'.");
                         return false;
                     }
-                    if (!ParseString(out err)) return false;
+                    if (!ParseString(out err, out var key)) return false;
+                    if (!seen.Add(key))
+                    {
+                        err = Err($"Duplicate property name '{key}' in object.");
+                        return false;
+                    }
 
                     SkipWhitespace();
                     if (Eof || Cur != ':')
@@ -222,13 +257,26 @@ namespace NGUAdvisor.Managers
 
             private bool ParseString(out Result err)
             {
+                return ParseString(out err, out _);
+            }
+
+            private bool ParseString(out Result err, out string value)
+            {
                 err = Result.Success;
+                value = null;
                 int start = Pos;
                 Pos++; // consume opening quote
                 while (Pos < _s.Length)
                 {
                     var c = _s[Pos];
-                    if (c == '"') { Pos++; return true; }
+                    if (c == '"')
+                    {
+                        Pos++;
+                        // Decode escapes so that e.g. "a" and "a" collide the same way
+                        // SimpleJson's dictionary-based parsing would treat them as duplicates.
+                        value = DecodeStringLiteral(_s.Substring(start, Pos - start));
+                        return true;
+                    }
                     if (c == '\\')
                     {
                         Pos++;
@@ -269,6 +317,44 @@ namespace NGUAdvisor.Managers
                 }
                 err = ErrAt(start, "Unterminated string - missing closing quote.");
                 return false;
+            }
+
+            // Decodes a raw quoted JSON string literal (including the surrounding quotes) into its
+            // logical value, so that key-comparison for duplicate detection matches what a real JSON
+            // parser (e.g. SimpleJSON building a Dictionary) would treat as identical keys. Assumes
+            // the literal was already validated by ParseString (well-formed escapes, no stray control
+            // characters), so it does not re-validate here.
+            private static string DecodeStringLiteral(string literal)
+            {
+                var sb = new StringBuilder(literal.Length);
+                for (int i = 1; i < literal.Length - 1; i++)
+                {
+                    var c = literal[i];
+                    if (c != '\\')
+                    {
+                        sb.Append(c);
+                        continue;
+                    }
+                    i++;
+                    var e = literal[i];
+                    switch (e)
+                    {
+                        case '"': sb.Append('"'); break;
+                        case '\\': sb.Append('\\'); break;
+                        case '/': sb.Append('/'); break;
+                        case 'b': sb.Append('\b'); break;
+                        case 'f': sb.Append('\f'); break;
+                        case 'n': sb.Append('\n'); break;
+                        case 'r': sb.Append('\r'); break;
+                        case 't': sb.Append('\t'); break;
+                        case 'u':
+                            var hex = literal.Substring(i + 1, 4);
+                            sb.Append((char)int.Parse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture));
+                            i += 4;
+                            break;
+                    }
+                }
+                return sb.ToString();
             }
 
             private bool ParseNumber(out Result err)

@@ -29,7 +29,7 @@ namespace NGUAdvisor.Managers
             if (gearIds?.Length > 0 == false)
                 return;
 
-            if (GetCurrentGear().Where(x => x > 0).OrderBy(x => x).SequenceEqual(gearIds.Where(x => x > 0).Distinct().OrderBy(x => x)))
+            if (GetCurrentGear().Where(x => x > 0).Distinct().OrderBy(x => x).SequenceEqual(gearIds.Where(x => x > 0).Distinct().OrderBy(x => x)))
                 return;
 
             Log($"Received New Gear for {LockManager.GetLockTypeName()}: {string.Join(", ", gearIds)}");

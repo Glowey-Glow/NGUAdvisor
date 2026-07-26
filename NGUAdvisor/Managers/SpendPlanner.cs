@@ -24,6 +24,19 @@ namespace NGUAdvisor.Managers
             public bool Affordable;
         }
 
+        // Full-plan view for the companion Perks & Quirks page (NextPerk/NextQuirk give only the single
+        // next buy). Each step carries per-step status so the UI can render the whole ordered plan.
+        public struct PlanStep
+        {
+            public int Id;
+            public string Name;
+            public long CurLevel;
+            public long Target;
+            public long Cost;
+            public int MinChapter;
+            public string State;   // "done" | "current" | "queued" | "chapter" | "diff"
+        }
+
         private struct Step
         {
             public string Match;    // matched against live name list
@@ -75,6 +88,28 @@ namespace NGUAdvisor.Managers
             new Step("Beard Temp Level Bank IV", 0, 5),
             new Step("Time Machine Level Bank III", 0, 5),
             new Step("Time Machine Level Bank IV", 0, 5),
+            // guide ch5 continues (sayolove ch5 → NGU-KNOWLEDGE.md): Fib 1 → EM Pow/Cap 2 (L10) → Fib 3 →
+            // Banks 5 → Fib 34 → finish EM → Energy Bars 2 → Magic Bars 2. (Names verified vs Blaze Rkkz.)
+            new Step("Fibonacci Perk", 1, 5),                 // "Fib 1"
+            new Step("Generic Energy Power Perk II", 10, 5),  // "EM Pow/Cap 2 → L10"
+            new Step("Generic Energy Cap Perk II", 10, 5),
+            new Step("Generic Magic Power Perk II", 10, 5),
+            new Step("Generic Magic Cap Perk II", 10, 5),
+            new Step("Fibonacci Perk", 3, 5),                 // "Fib 3"
+            new Step("Adv. Training Level Bank V", 0, 5),      // "Beard / AT Banks 5"
+            new Step("Beard Temp Level Bank V", 0, 5),
+            new Step("Time Machine Level Bank V", 0, 5),
+            new Step("Fibonacci Perk", 34, 5),                // "Fib 34"
+            new Step("Generic Energy Power Perk II", 0, 5),   // "finish EM" (to max)
+            new Step("Generic Energy Cap Perk II", 0, 5),
+            new Step("Generic Magic Power Perk II", 0, 5),
+            new Step("Generic Magic Cap Perk II", 0, 5),
+            new Step("Generic Energy Bar Perk II", 0, 5),     // "Energy Bars 2"
+            new Step("Generic Magic Bar Perk II", 0, 5),      // "Magic Bars 2 when cheap"
+            // Boss-gated ch5 perks (user-confirmed names) placed LAST so a still-locked one never stalls
+            // the earlier plan (there's no perk boss-req field to guard on): unlock at Boss 125 / 150.
+            new Step("Welcome to Evil Difficulty", 0, 5),         // guide "Welcome to Evil" (unlocks B125)
+            new Step("Adventure Boost for Rich Perks III", 0, 5), // guide "Adventure Perk until T8" (B150)
         };
 
         // ---- Beast quirk order (guide ch4 + ch5 partial) ----
@@ -211,6 +246,41 @@ namespace NGUAdvisor.Managers
             return b;
         }
 
+        // The whole ITOPOD perk plan with per-step status, for the P&Q page. "current" = the step
+        // NextPerk() would buy now; "chapter"/"diff" = queued but gated; "done" = at/above target.
+        public static List<PlanStep> PerkPlanView()
+        {
+            var outp = new List<PlanStep>();
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return outp;
+                var ipc = c.adventureController.itopod;
+                var levels = c.adventure.itopod.perkLevel;
+                if (ipc == null || levels == null) return outp;
+                int chapter = Chapter();
+                var diff = c.settings.rebirthDifficulty;
+                bool currentSet = false;
+                foreach (var step in PerkPlan)
+                {
+                    int id = FindByName(ipc.perkName, step.Match, "perk");
+                    if (id < 0 || id >= levels.Count || id >= ipc.maxLevel.Count) continue;
+                    long max = ipc.maxLevel[id] > 0 ? ipc.maxLevel[id] : long.MaxValue;
+                    long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
+                    var ps = new PlanStep { Id = id, Name = ipc.perkName[id]?.Trim(), CurLevel = levels[id], Target = target, MinChapter = step.MinChapter };
+                    try { ps.Cost = ipc.perkCost(id); } catch { }
+                    if (levels[id] >= target) ps.State = "done";
+                    else if (chapter < step.MinChapter) ps.State = "chapter";
+                    else if (id < ipc.perkDifficultyReq.Count && ipc.perkDifficultyReq[id] > diff) ps.State = "diff";
+                    else if (!currentSet) { ps.State = "current"; currentSet = true; }
+                    else ps.State = "queued";
+                    outp.Add(ps);
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"SpendPlanner perk view: {e.Message}"); }
+            return outp;
+        }
+
         // The first perk buy the guide still has QUEUED but which is gated by chapter or difficulty
         // — what banked PP is FOR (mirrors NextQuirkPlanned; user-reported: NextPerk()=unknown
         // surfaced as "plan complete" while later-chapter steps were still queued).
@@ -246,8 +316,12 @@ namespace NGUAdvisor.Managers
             return f;
         }
 
-        // Buy toward the current perk step; a bounded number of levels per call. Replicates the
-        // game's tryLevelUp checks, then applies points/level/doEffect directly (no UI churn).
+        // Buys toward the current perk step, up to maxBuys levels per call. Mirrors the game's own
+        // per-click buy path ItopodPerkController.doLevelUp(id): deduct perkPoints, increment
+        // perkLevel[id], then doEffect(id) (the derived-stat recompute). The ONLY things doLevelUp does
+        // that we deliberately skip are its three UI-refresh calls -- showTooltip(id), updateText(),
+        // changePage(page) -- none of which touch game state; skipping them avoids UI churn/redraw on the
+        // advisor loop. There are no achievement or unlock hooks in that path. (Verified vs Assembly-CSharp.)
         public static int BuyPerks(int maxBuys)
         {
             int bought = 0;
@@ -306,6 +380,40 @@ namespace NGUAdvisor.Managers
             return b;
         }
 
+        // The whole Beast quirk plan with per-step status, for the P&Q page (mirror of PerkPlanView).
+        public static List<PlanStep> QuirkPlanView()
+        {
+            var outp = new List<PlanStep>();
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return outp;
+                var qc = c.beastQuestPerkController;
+                var levels = c.beastQuest.quirkLevel;
+                if (qc == null || levels == null) return outp;
+                int chapter = Chapter();
+                var diff = c.settings.rebirthDifficulty;
+                bool currentSet = false;
+                foreach (var step in QuirkPlan)
+                {
+                    int id = FindByName(qc.quirkName, step.Match, "quirk");
+                    if (id < 0 || id >= levels.Count || id >= qc.maxLevel.Count) continue;
+                    long max = qc.maxLevel[id] > 0 ? qc.maxLevel[id] : long.MaxValue;
+                    long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
+                    var ps = new PlanStep { Id = id, Name = qc.quirkName[id]?.Trim(), CurLevel = levels[id], Target = target, MinChapter = step.MinChapter };
+                    try { ps.Cost = qc.quirkCost(id); } catch { }
+                    if (levels[id] >= target) ps.State = "done";
+                    else if (chapter < step.MinChapter) ps.State = "chapter";
+                    else if (id < qc.quirkDifficultyReq.Count && qc.quirkDifficultyReq[id] > diff) ps.State = "diff";
+                    else if (!currentSet) { ps.State = "current"; currentSet = true; }
+                    else ps.State = "queued";
+                    outp.Add(ps);
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"SpendPlanner quirk view: {e.Message}"); }
+            return outp;
+        }
+
         public struct PlannedBuy
         {
             public bool Known;
@@ -352,6 +460,9 @@ namespace NGUAdvisor.Managers
             return f;
         }
 
+        // Same contract as BuyPerks: mirrors BeastQuestPerkController.doLevelUp(id) -- deduct quirkPoints,
+        // increment quirkLevel[id], doEffect(id) -- and skips only its UI calls (showTooltip, updateText),
+        // which carry no game state.
         public static int BuyQuirks(int maxBuys)
         {
             int bought = 0;
@@ -426,7 +537,10 @@ namespace NGUAdvisor.Managers
             catch { return false; }
         }
 
-        // One tier per call (tiers are chunky purchases). Replicates the game's buy: deduct + increment.
+        // One tier per call (tiers are chunky purchases). Mirrors FruitController.upgrade()'s state
+        // mutation exactly: deduct seeds, increment fruits[id].maxTier. That game method has NO per-tier
+        // doEffect; everything else it runs (unlockInfo(), updateFruitDisplay(), tooltips) is UI-only and
+        // is deliberately skipped here.
         public static bool BuyFruitTier()
         {
             try

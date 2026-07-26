@@ -24,6 +24,8 @@ namespace NGUAdvisor.Managers
             public Consumable(int id, string useMethod, double? time = null)
             {
                 pod = _character.allArbitrary.arbitraryPods.Find(x => x.id == id);
+                if (pod == null)
+                    throw new ArgumentException($"No arbitrary pod found for consumable id {id} ({useMethod}); it may not be unlocked yet.");
                 name = pod.itemName;
                 this.useMethod = useMethod;
                 this.time = time;
@@ -31,38 +33,46 @@ namespace NGUAdvisor.Managers
 
             public static Consumable CreateInstance(string name)
             {
-                switch (name)
+                try
                 {
-                    case "EPOT-A":
-                        return new EnergyPotionA();
-                    case "EPOT-B":
-                        return new EnergyPotionB();
-                    case "EPOT-C":
-                        return new EnergyPotionD();
-                    case "MPOT-A":
-                        return new MagicPotionA();
-                    case "MPOT-B":
-                        return new MagicPotionB();
-                    case "MPOT-C":
-                        return new MagicPotionD();
-                    case "R3POT-A":
-                        return new R3PotionA();
-                    case "R3POT-B":
-                        return new R3PotionB();
-                    case "R3POT-C":
-                        return new R3PotionD();
-                    case "EBARBAR":
-                        return new EnergyBarBar();
-                    case "MBARBAR":
-                        return new MagicBarBar();
-                    case "MUFFIN":
-                        return new Muffin();
-                    case "LC":
-                        return new LootCharm();
-                    case "SLC":
-                        return new SuperLootCharm();
-                    case "MAYO":
-                        return new Mayo();
+                    switch (name)
+                    {
+                        case "EPOT-A":
+                            return new EnergyPotionA();
+                        case "EPOT-B":
+                            return new EnergyPotionB();
+                        case "EPOT-C":
+                            return new EnergyPotionD();
+                        case "MPOT-A":
+                            return new MagicPotionA();
+                        case "MPOT-B":
+                            return new MagicPotionB();
+                        case "MPOT-C":
+                            return new MagicPotionD();
+                        case "R3POT-A":
+                            return new R3PotionA();
+                        case "R3POT-B":
+                            return new R3PotionB();
+                        case "R3POT-C":
+                            return new R3PotionD();
+                        case "EBARBAR":
+                            return new EnergyBarBar();
+                        case "MBARBAR":
+                            return new MagicBarBar();
+                        case "MUFFIN":
+                            return new Muffin();
+                        case "LC":
+                            return new LootCharm();
+                        case "SLC":
+                            return new SuperLootCharm();
+                        case "MAYO":
+                            return new Mayo();
+                    }
+                }
+                catch (ArgumentException e)
+                {
+                    Log($"ConsumablesManager - Could not create consumable '{name}': {e.Message}");
+                    return null;
                 }
                 return null;
             }
@@ -416,7 +426,6 @@ namespace NGUAdvisor.Managers
             foreach (var kvp in consumables)
                 kvp.Key.Eat(kvp.Value, time);
 
-            Array.Resize(ref _lastConsumables, consumables.Count);
             _lastConsumables = consumables.Keys.ToArray();
             _lastTime = time;
         }

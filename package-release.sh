@@ -2,9 +2,11 @@
 #
 # package-release.sh — build a runnable NGU Advisor release zip from THIS (public) source tree.
 #
-# Produces  dist/dist_<version>.zip  containing:
-#   Run NGU Advisor.bat        (single direct-inject launcher — no bootstrap / hot-reload)
+# Produces  dist/NGUAdvisor_<version>.zip  containing:
+#   Advisor Launcher.exe        (iconned launcher — direct-inject, no bootstrap / hot-reload)
+#   Run NGU Advisor.bat         (.bat fallback, same direct-inject)
 #   injector/NGUAdvisor.dll     (freshly built from this tree)
+#   injector/companion/         (self-contained WebView2 companion UI; auto-launched by the advisor)
 #   injector/SharpMonoInjector.dll, injector/smi.exe   (third-party injector tools)
 #   sampleprofiles/             (Normal / Evil / Sadistic)
 #
@@ -37,7 +39,7 @@ VERSION="${1:-$(grep -oE 'Version = "[^"]+"' "$ROOT/NGUAdvisor/Main.cs" | head -
 
 OUT="$ROOT/dist"
 STAGE="$OUT/NGUAdvisor-$VERSION"
-ZIP="$OUT/dist_$VERSION.zip"
+ZIP="$OUT/NGUAdvisor_$VERSION.zip"
 
 echo "==> NGU Advisor release packager"
 echo "    version : $VERSION"
@@ -56,6 +58,17 @@ DLL="$(ls -t "$ROOT/NGUAdvisor/bin/Release/net48/"NGUAdvisor.r*.dll 2>/dev/null 
 [ -f "$DLL" ] || { echo "ERROR: build produced no NGUAdvisor.r*.dll"; exit 1; }
 echo "    built: $(basename "$DLL")"
 
+echo "==> Building Advisor Launcher (Release)..."
+dotnet build "$ROOT/NGUAdvisorLauncher/NGUAdvisorLauncher.csproj" -c Release -v quiet
+LAUNCHER="$ROOT/NGUAdvisorLauncher/bin/Release/net48/Advisor Launcher.exe"
+[ -f "$LAUNCHER" ] || { echo "ERROR: launcher build produced no 'Advisor Launcher.exe'"; exit 1; }
+
+echo "==> Publishing Companion (Release, self-contained win-x64)..."
+COMPANION_PUB="$ROOT/NGUAdvisorCompanion/bin/Release/net8.0-windows/win-x64/publish"
+rm -rf "$COMPANION_PUB"
+dotnet publish "$ROOT/NGUAdvisorCompanion/NGUAdvisorCompanion.csproj" -c Release -r win-x64 --self-contained true -v quiet
+[ -f "$COMPANION_PUB/NGUAdvisorCompanion.exe" ] || { echo "ERROR: companion publish produced no NGUAdvisorCompanion.exe"; exit 1; }
+
 # --- stage -------------------------------------------------------------------
 echo "==> Staging $STAGE ..."
 rm -rf "$STAGE" "$ZIP"
@@ -68,6 +81,14 @@ printf '@setlocal enableextensions\r\npushd "%%~dp0"\r\n\r\n.\\injector\\smi.exe
 cp "$DLL" "$STAGE/injector/NGUAdvisor.dll"
 cp "$TOOLS/SharpMonoInjector.dll" "$TOOLS/smi.exe" "$STAGE/injector/"
 cp -r "$PROFILES" "$STAGE/sampleprofiles"
+
+# iconned launcher (primary) — the .bat above stays as a fallback
+cp "$LAUNCHER" "$STAGE/Advisor Launcher.exe"
+
+# self-contained WebView2 companion, auto-launched by the advisor from injector/companion/
+mkdir -p "$STAGE/injector/companion"
+cp -r "$COMPANION_PUB/." "$STAGE/injector/companion/"
+find "$STAGE/injector/companion" -type f \( -iname '*.pdb' -o -iname '*.xml' \) -delete
 
 # --- guard: never ship the bootstrap, game assemblies, or backups ------------
 if find "$STAGE" \( -iname '*Bootstrap*' -o -iname 'Assembly-CSharp.dll' -o -iname '*.bak*' -o -iname '*.orig' \) | grep -q .; then

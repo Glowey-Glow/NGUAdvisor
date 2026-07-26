@@ -39,7 +39,7 @@ namespace NGUAdvisor.Managers
 
         public static float BaseGlobalCooldown() => _character.inventory.itemList.redLiquidComplete ? 0.8f : 1f;
 
-        public static float RemainingGlobalCooldown() => Mathf.Max(0f, _pc.moveTimer - BaseGlobalCooldown());
+        public static float RemainingGlobalCooldown() => Mathf.Max(0f, _pc.moveTimer);
 
         public static float BaseRespawnTime() => _ac.respawnTime();
 
@@ -525,15 +525,15 @@ namespace NGUAdvisor.Managers
 
         public static bool ChargeActive() => _pc.chargeFactor > 1f;
 
-        public static bool OffensiveBuffActive() => _pc.offenseBuffTime > 0f;
+        public static bool OffensiveBuffActive() => _pc.offenseBuffTime >= 0f;
 
-        public static bool UltimateBuffActive() => _pc.ultimateBuffTime > 0f;
+        public static bool UltimateBuffActive() => _pc.ultimateBuffTime >= 0f;
 
         public static bool HyperRegenActive() => _pc.hyperRegenTime > 0f;
 
         public static bool BeastModeActive() => _character.adventure.beastModeOn;
 
-        public static bool MegaBuffActive() => _pc.megaBuffTime > 0f;
+        public static bool MegaBuffActive() => _pc.megaBuffTime >= 0f;
         #endregion
 
         #region Other Cooldowns and Secondary Buffs

@@ -171,7 +171,7 @@ namespace NGUAdvisor.Managers
             {
                 if (zone < 0 || zone >= 1000 || ZoneHelpers.ZoneIsTitan(zone)) return fallback;
                 if (ZoneStatHelper.UserOverrides == null || !ZoneStatHelper.UserOverrides.TryGetValue(zone, out var st)) return fallback;
-                float attack = _character.totalAdvAttack() / _ac.beastModeBonus();
+                float attack = ZoneStatHelper.EffectiveAdvAttack();
                 if (st.OPower > 0 && attack > st.OPower) return Math.Min(fallback, 0.2f);
                 if (attack >= st.IPower && _character.totalAdvDefense() >= st.IToughness) return Math.Min(fallback, 0.6f);
             }
@@ -194,7 +194,7 @@ namespace NGUAdvisor.Managers
         private static bool CheckEnemy()
         {
             // Skip blacklisted enemies
-            if (Adventure.zone < 1000 && Settings.BlacklistedBosses.Contains(_ac.currentEnemy.spriteID))
+            if (Adventure.zone < 1000 && (Settings.BlacklistedBosses?.Contains(_ac.currentEnemy.spriteID) ?? false))
                 return MoveToZone(-1);
 
             bool bossOnly = IsCurrentlyAdventuring ? Settings.SnipeBossOnly : IsCurrentlyGoldSniping;

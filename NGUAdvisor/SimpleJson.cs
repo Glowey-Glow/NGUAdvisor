@@ -133,6 +133,14 @@ namespace SimpleJSON
 
     public abstract partial class JSONNode
     {
+        // P0 (M2): serializing recurses one call frame per nesting level (see the JSONArray/JSONObject
+        // WriteToStringBuilder overrides). A pathologically deep node graph — e.g. built from a crafted
+        // profile — would overflow the call stack, an UNCATCHABLE crash of the whole process. The
+        // container writers bump this depth and stop recursing (emit null) past the cap. Real profiles
+        // nest a handful of levels; 256 is far beyond any legitimate document.
+        internal const int MaxSerializeDepth = 256;
+        [System.ThreadStatic] internal static int SerializeDepth;
+
         #region Enumerators
         public struct Enumerator
         {
@@ -333,7 +341,9 @@ namespace SimpleJSON
             }
             set
             {
-                Value = value.ToString();
+                // InvariantCulture so a comma-decimal OS locale can't write "1,5" (structurally invalid JSON).
+                // Matches the invariant parse in the getter above and every JSONNumber I/O site (findings #1/#2).
+                Value = value.ToString(CultureInfo.InvariantCulture);
             }
         }
 
@@ -536,8 +546,9 @@ namespace SimpleJSON
             else
             {
                 double val;
-                if (double.TryParse(token, out val))
-                    ctx.Add(tokenName, val);
+                if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out val)
+                    && !double.IsNaN(val) && !double.IsInfinity(val))
+                    ctx.Add(tokenName, new JSONNumber(token));
                 else
                     ctx.Add(tokenName, token);
             }
@@ -678,11 +689,21 @@ namespace SimpleJSON
                                     break;
                                 case 'u':
                                     {
-                                        string s = aJSON.Substring(i + 1, 4);
-                                        Token.Append((char)int.Parse(
-                                            s,
-                                            System.Globalization.NumberStyles.AllowHexSpecifier));
-                                        i += 4;
+                                        if (i + 5 <= aJSON.Length &&
+                                            int.TryParse(
+                                                aJSON.Substring(i + 1, 4),
+                                                System.Globalization.NumberStyles.AllowHexSpecifier,
+                                                System.Globalization.CultureInfo.InvariantCulture,
+                                                out int code))
+                                        {
+                                            Token.Append((char)code);
+                                            i += 4;
+                                        }
+                                        else
+                                        {
+                                            // Malformed \u escape (truncated or non-hex): treat as literal.
+                                            Token.Append(C);
+                                        }
                                         break;
                                     }
                                 default:
@@ -791,24 +812,30 @@ namespace SimpleJSON
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append('[');
-            int count = m_List.Count;
-            if (inline)
-                aMode = JSONTextMode.Compact;
-            for (int i = 0; i < count; i++)
+            if (SerializeDepth >= MaxSerializeDepth) { aSB.Append("null"); return; }   // P0 (M2): guard stack
+            SerializeDepth++;
+            try
             {
-                if (i > 0)
-                    aSB.Append(',');
-                if (aMode == JSONTextMode.Indent)
-                    aSB.AppendLine();
+                aSB.Append('[');
+                int count = m_List.Count;
+                if (inline)
+                    aMode = JSONTextMode.Compact;
+                for (int i = 0; i < count; i++)
+                {
+                    if (i > 0)
+                        aSB.Append(',');
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.AppendLine();
 
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.Append(' ', aIndent + aIndentInc);
+                    m_List[i].WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                }
                 if (aMode == JSONTextMode.Indent)
-                    aSB.Append(' ', aIndent + aIndentInc);
-                m_List[i].WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                    aSB.AppendLine().Append(' ', aIndent);
+                aSB.Append(']');
             }
-            if (aMode == JSONTextMode.Indent)
-                aSB.AppendLine().Append(' ', aIndent);
-            aSB.Append(']');
+            finally { SerializeDepth--; }
         }
     }
     // End of JSONArray
@@ -933,29 +960,35 @@ namespace SimpleJSON
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append('{');
-            bool first = true;
-            if (inline)
-                aMode = JSONTextMode.Compact;
-            foreach (var k in m_Dict)
+            if (SerializeDepth >= MaxSerializeDepth) { aSB.Append("null"); return; }   // P0 (M2): guard stack
+            SerializeDepth++;
+            try
             {
-                if (!first)
-                    aSB.Append(',');
-                first = false;
+                aSB.Append('{');
+                bool first = true;
+                if (inline)
+                    aMode = JSONTextMode.Compact;
+                foreach (var k in m_Dict)
+                {
+                    if (!first)
+                        aSB.Append(',');
+                    first = false;
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.AppendLine();
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.Append(' ', aIndent + aIndentInc);
+                    aSB.Append('\"').Append(Escape(k.Key)).Append('\"');
+                    if (aMode == JSONTextMode.Compact)
+                        aSB.Append(':');
+                    else
+                        aSB.Append(" : ");
+                    k.Value.WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                }
                 if (aMode == JSONTextMode.Indent)
-                    aSB.AppendLine();
-                if (aMode == JSONTextMode.Indent)
-                    aSB.Append(' ', aIndent + aIndentInc);
-                aSB.Append('\"').Append(Escape(k.Key)).Append('\"');
-                if (aMode == JSONTextMode.Compact)
-                    aSB.Append(':');
-                else
-                    aSB.Append(" : ");
-                k.Value.WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                    aSB.AppendLine().Append(' ', aIndent);
+                aSB.Append('}');
             }
-            if (aMode == JSONTextMode.Indent)
-                aSB.AppendLine().Append(' ', aIndent);
-            aSB.Append('}');
+            finally { SerializeDepth--; }
         }
 
     }
@@ -1011,6 +1044,7 @@ namespace SimpleJSON
     public partial class JSONNumber : JSONNode
     {
         private double m_Data;
+        private string m_RawString;
 
         public override JSONNodeType Tag { get { return JSONNodeType.Number; } }
         public override bool IsNumber { get { return true; } }
@@ -1018,11 +1052,11 @@ namespace SimpleJSON
 
         public override string Value
         {
-            get { return m_Data.ToString(); }
+            get { return m_Data.ToString(CultureInfo.InvariantCulture); }
             set
             {
                 double v;
-                if (double.TryParse(value, out v))
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out v))
                     m_Data = v;
             }
         }
@@ -1030,7 +1064,7 @@ namespace SimpleJSON
         public override double AsDouble
         {
             get { return m_Data; }
-            set { m_Data = value; }
+            set { m_Data = value; m_RawString = null; }
         }
 
         public JSONNumber(double aData)
@@ -1041,11 +1075,12 @@ namespace SimpleJSON
         public JSONNumber(string aData)
         {
             Value = aData;
+            m_RawString = aData;
         }
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append(m_Data);
+            aSB.Append(m_RawString ?? m_Data.ToString("G17", CultureInfo.InvariantCulture));
         }
         private static bool IsNumeric(object value)
         {

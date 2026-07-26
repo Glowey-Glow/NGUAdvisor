@@ -66,11 +66,21 @@ namespace NGUAdvisor
         [SerializeField] private bool _bloodMacGuffinBOnRebirth;
         [SerializeField] private bool _autoBuyEm;
         [SerializeField] private bool _autoBuyAdventure;
+        [SerializeField] private bool _expManualRatio;
+        [SerializeField] private int _expEnergyShare = 50;
         [SerializeField] private double _bloodNumberThreshold;
+        // AT HOUR extension decision, persisted so an advisor reload cannot cancel an extension already
+        // in flight (AtHourPlanner's statics don't survive one). Internal — not user-facing, not in
+        // SettingsIndex. 0 = no decision this run; cleared when a rebirth re-arms the planner.
+        [SerializeField] private double _atHourPlannedEnd;
+        [SerializeField] private double _atHourDecidedRunSec;
         [SerializeField] private int[] _quickLoadout;
         [SerializeField] private int[] _quickDiggers;
         [SerializeField] private int[] _quickBeards;
         [SerializeField] private bool _globalEnabled;
+        // Inverted (default false = launch ENABLED) so a settings.json predating this field auto-launches:
+        // JsonUtility.FromJson does NOT run field initializers, so an ABSENT bool deserializes to false.
+        [SerializeField] private bool _companionLaunchDisabled;
         [SerializeField] private bool _combatEnabled;
         [SerializeField] private bool _useButterMajor;
         [SerializeField] private bool _useButterMinor;
@@ -187,9 +197,12 @@ namespace NGUAdvisor
         [SerializeField] private bool _lscTargetsSaved;
         [SerializeField] private long _lscSavedAugTarget;
         [SerializeField] private long _lscSavedUpgTarget;
+        // Per-STEP flags: each element is a per-tier BITMASK (bit t = tier t of that chain), so per-item
+        // Promote / Keep / Filter fit the existing int[5] schema with no serialization change.
         [SerializeField] private int[] _transformAutoClimb;
         [SerializeField] private int[] _transformKeepMax;
         [SerializeField] private int[] _transformFilter;
+        [SerializeField] private int[] _transformSeen;   // which (chain,tier) the "default Keep on unlock" has been applied to
 
         private readonly string _savePath;
         private bool _disableSave;
@@ -252,16 +265,16 @@ namespace NGUAdvisor
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, int length, T defaultValue = default)
         {
-            if (newSetting?.Length != length)
+            var result = new T[length];
+            for (var i = 0; i < length; i++)
+                result[i] = defaultValue;
+            if (newSetting != null)
             {
-                setting = new T[length];
-                for (var i = 0; i < length; i++)
-                    setting[i] = defaultValue;
+                var count = Math.Min(newSetting.Length, length);
+                for (var i = 0; i < count; i++)
+                    result[i] = newSetting[i];
             }
-            else
-            {
-                setting = newSetting;
-            }
+            setting = result;
         }
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, Func<T, bool> predicate)
@@ -284,24 +297,16 @@ namespace NGUAdvisor
 
         private void AssignValues<T>(ref T[] setting, T[] newSetting, int length, Func<T, bool> predicate, T defaultValue = default)
         {
-            if (newSetting?.Length != length)
+            var result = new T[length];
+            for (var i = 0; i < length; i++)
+                result[i] = defaultValue;
+            if (newSetting != null)
             {
-                setting = new T[length];
-                for (var i = 0; i < length; i++)
-                    setting[i] = defaultValue;
+                var count = Math.Min(newSetting.Length, length);
+                for (var i = 0; i < count; i++)
+                    result[i] = predicate(newSetting[i]) ? newSetting[i] : defaultValue;
             }
-            else
-            {
-                var temp = new List<T>();
-                foreach (var item in newSetting)
-                {
-                    if (predicate(item))
-                        temp.Add(item);
-                    else
-                        temp.Add(defaultValue);
-                }
-                setting = temp.ToArray();
-            }
+            setting = result;
         }
 
         private void AssignBoostPriority(string[] newSetting)
@@ -317,30 +322,47 @@ namespace NGUAdvisor
         {
             if (id < 0 || id > Consts.MAX_GEAR_ID)
                 return false;
-            return (int)Main.Character.itemInfo.type[id] <= 5;
+            // M9 fail-safe: during early load the game's item table can be null/not-ready. Validating
+            // against it then silently drops the user's valid gear ids — which the next save persists
+            // (permanent data loss). If we can't validate, KEEP the id; genuine cleanup still happens
+            // once the table is available.
+            try { return (int)Main.Character.itemInfo.type[id] <= 5; }
+            catch { return true; }
         }
 
         private bool IsAdvEnemy(int id)
         {
-            var enemyList = Main.Character.adventureController.enemyList;
-            for (var i = 0; i < enemyList.Count; i++)
+            // M9 fail-safe: keep the id if the adventure enemy list isn't populated yet (early load) —
+            // an empty/null list would otherwise silently drop valid enemy/boss selections and persist
+            // the loss. Only filter once the list is genuinely available.
+            try
             {
-                if (ZoneHelpers.ZoneIsTitan(i))
-                    continue;
-                if (enemyList[i].Any(x => x.spriteID == id))
+                var enemyList = Main.Character.adventureController.enemyList;
+                if (enemyList == null || enemyList.Count == 0)
                     return true;
+                for (var i = 0; i < enemyList.Count; i++)
+                {
+                    if (ZoneHelpers.ZoneIsTitan(i))
+                        continue;
+                    if (enemyList[i].Any(x => x.spriteID == id))
+                        return true;
+                }
+                return false;
             }
-            return false;
+            catch { return true; }
         }
 
         public void MassUpdate(SavedSettings other)
         {
             _globalEnabled = other?.GlobalEnabled ?? false;
+            _companionLaunchDisabled = !(other?.LaunchCompanion ?? true);
             _disableOverlay = other?.DisableOverlay ?? false;
             _moneyPitRunMode = other?.MoneyPitRunMode ?? false;
             _autoFight = other?.AutoFight ?? false;
             _autoBuyEm = other?.AutoBuyEM ?? false;
             _autoBuyAdventure = other?.AutoBuyAdventure ?? false;
+            _expManualRatio = other?.ExpManualRatio ?? false;
+            _expEnergyShare = other?.ExpEnergyShare ?? 50;
             _autoBuyConsumables = other?.AutoBuyConsumables ?? false;
             _consumeIfAlreadyRunning = other?.ConsumeIfAlreadyRunning ?? false;
             _autosave = other?.Autosave ?? false;
@@ -363,6 +385,8 @@ namespace NGUAdvisor
 
             _autoSpellSwap = other?.AutoSpellSwap ?? false;
             AssignValue(ref _bloodNumberThreshold, other?.BloodNumberThreshold, (value) => value >= 0.0, 0.0);
+            AssignValue(ref _atHourPlannedEnd, other?.AtHourPlannedEnd, (value) => value >= 0.0, 0.0);
+            AssignValue(ref _atHourDecidedRunSec, other?.AtHourDecidedRunSec, (value) => value >= 0.0, 0.0);
             AssignValue(ref _counterfeitThreshold, other?.CounterfeitThreshold, (value) => value >= 0);
             AssignValue(ref _spaghettiThreshold, other?.SpaghettiThreshold, (value) => value >= 0);
             _castBloodSpells = other?.CastBloodSpells ?? false;
@@ -395,10 +419,10 @@ namespace NGUAdvisor
             _swapTitanBeards = other?.SwapTitanBeards ?? false;
             AssignValues(ref _titanLoadout, other?.TitanLoadout, (id) => IsEquipment(id));
             AssignValue(ref _titanCombatMode, other?.TitanCombatMode, (mode) => mode >= 0 && mode <= 4);
-            AssignValues(ref _titanSwapTargets, other?.TitanSwapTargets, 14);
+            AssignValues(ref _titanSwapTargets, other?.TitanSwapTargets, Consts.MAX_TITAN);
 
             _combatEnabled = other?.CombatEnabled ?? false;
-            AssignValue(ref _combatMode, other.CombatMode, (mode) => mode >= 0 && mode <= 4);
+            AssignValue(ref _combatMode, other?.CombatMode, (mode) => mode >= 0 && mode <= 4);
             _beastMode = other?.BeastMode ?? false;
             AssignValue(ref _snipeZone, other?.SnipeZone, (id) => ZoneHelpers.ZoneList.ContainsKey(id) && !ZoneHelpers.ZoneIsTitan(id));
             _snipeBossOnly = other?.SnipeBossOnly ?? false;
@@ -419,8 +443,8 @@ namespace NGUAdvisor
             _goldSnipeComplete = other?.GoldSnipeComplete ?? false;
             _goldCBlockMode = other?.GoldCBlockMode ?? false;
             AssignValues(ref _goldDropLoadout, other?.GoldDropLoadout, (id) => IsEquipment(id));
-            AssignValues(ref _titanGoldTargets, other?.TitanGoldTargets, 14);
-            AssignValues(ref _titanMoneyDone, other?.TitanMoneyDone, 14);
+            AssignValues(ref _titanGoldTargets, other?.TitanGoldTargets, Consts.MAX_TITAN);
+            AssignValues(ref _titanMoneyDone, other?.TitanMoneyDone, Consts.MAX_TITAN);
 
             _autoQuest = other?.AutoQuest ?? false;
             _allowMajorQuests = other?.AllowMajorQuests ?? false;
@@ -462,8 +486,8 @@ namespace NGUAdvisor
             _trashCards = other?.TrashCards ?? false;
             _trashProtectedCards = other?.TrashProtectedCards ?? false;
             AssignValues(ref _cardSortOrder, other?.CardSortOrder, (item) => Array.IndexOf(CardManager.sortList, item) >= 0);
-            AssignValues(ref _cardRarities, other?.CardRarities, 14, (id) => CardManager.rarityList.ContainsKey(id), -1);
-            AssignValues(ref _cardCosts, other?.CardCosts, 14, (cost) => Array.IndexOf(CardManager.costList, cost) >= 0);
+            AssignValues(ref _cardRarities, other?.CardRarities, Consts.MAX_CARD_FILTERS, (id) => CardManager.rarityList.ContainsKey(id), -1);
+            AssignValues(ref _cardCosts, other?.CardCosts, Consts.MAX_CARD_FILTERS, (cost) => Array.IndexOf(CardManager.costList, cost) >= 0);
 
             _manageCooking = other?.ManageCooking ?? false;
             _manageCookingLoadouts = other?.ManageCookingLoadouts ?? false;
@@ -498,7 +522,7 @@ namespace NGUAdvisor
             _advisorYggBuys = other?.AdvisorYggBuys ?? false;
             _advisorExpBuys = other?.AdvisorExpBuys ?? false;
             _autoTitanGold = other?.AutoTitanGold ?? false;
-            AssignValues(ref _titanGoldVersionBanked, other?.TitanGoldVersionBanked, 14);
+            AssignValues(ref _titanGoldVersionBanked, other?.TitanGoldVersionBanked, Consts.MAX_TITAN);
             _advisorBlood = other?.AdvisorBlood ?? false;
             _advisorShowOptimal = other?.AdvisorShowOptimal ?? false;
             _wideLayout = other?.WideLayout ?? false;
@@ -520,13 +544,13 @@ namespace NGUAdvisor
             _lscTargetsSaved = other?.LscTargetsSaved ?? false;
             _lscSavedAugTarget = other?.LscSavedAugTarget ?? 0;
             _lscSavedUpgTarget = other?.LscSavedUpgTarget ?? 0;
+            // Per-step model: flags are per-tier bitmasks and NEW tiers default to Keep (held) via
+            // TransformManager's default-on-unlock pass — so there is no blanket auto-climb default now
+            // (a freshly-unlocked tier holds until the user opts it into Promote).
             AssignValues(ref _transformAutoClimb, other?.TransformAutoClimb, 5);
-            // Auto-climb defaults ON: transforming at max level is the game's normal progression —
-            // a fresh/legacy settings file must not silently freeze maxed chain items.
-            if (other?.TransformAutoClimb == null || other.TransformAutoClimb.Length == 0)
-                _transformAutoClimb = new[] { 1, 1, 1, 1, 1 };
             AssignValues(ref _transformKeepMax, other?.TransformKeepMax, 5);
             AssignValues(ref _transformFilter, other?.TransformFilter, 5);
+            AssignValues(ref _transformSeen, other?.TransformSeen, 5);
         }
 
         public int SnipeZone
@@ -1126,6 +1150,32 @@ namespace NGUAdvisor
             }
         }
 
+        // Companion "Set ratio" override: when on, the EXP balancer uses ExpEnergyShare as the energy
+        // fraction of the pool (100 = energy only, 0 = magic only, 50 = the guide's even/3:1 split)
+        // instead of the auto phase-computed split.
+        public bool ExpManualRatio
+        {
+            get => _expManualRatio;
+            set
+            {
+                if (value == _expManualRatio) return;
+                _expManualRatio = value;
+                SaveSettings();
+            }
+        }
+
+        public int ExpEnergyShare
+        {
+            get => _expEnergyShare;
+            set
+            {
+                int v = value < 0 ? 0 : value > 100 ? 100 : value;
+                if (v == _expEnergyShare) return;
+                _expEnergyShare = v;
+                SaveSettings();
+            }
+        }
+
         public bool AutoBuyAdventure
         {
             get => _autoBuyAdventure;
@@ -1144,6 +1194,28 @@ namespace NGUAdvisor
             {
                 if (value == _bloodNumberThreshold) return;
                 _bloodNumberThreshold = value;
+                SaveSettings();
+            }
+        }
+
+        public double AtHourPlannedEnd
+        {
+            get => _atHourPlannedEnd;
+            set
+            {
+                if (value == _atHourPlannedEnd) return;
+                _atHourPlannedEnd = value;
+                SaveSettings();
+            }
+        }
+
+        public double AtHourDecidedRunSec
+        {
+            get => _atHourDecidedRunSec;
+            set
+            {
+                if (value == _atHourDecidedRunSec) return;
+                _atHourDecidedRunSec = value;
                 SaveSettings();
             }
         }
@@ -1173,6 +1245,17 @@ namespace NGUAdvisor
             {
                 if (value == _globalEnabled) return;
                 _globalEnabled = value;
+                SaveSettings();
+            }
+        }
+
+        public bool LaunchCompanion
+        {
+            get => !_companionLaunchDisabled;
+            set
+            {
+                if (value == !_companionLaunchDisabled) return;
+                _companionLaunchDisabled = !value;
                 SaveSettings();
             }
         }
@@ -2021,7 +2104,7 @@ namespace NGUAdvisor
         }
 
         // A/B layout test: widens the settings window (default ~608 client from DPI autoscale halving
-        // the designed 1216) to 940. Applied at form construction — flip + reinject to compare.
+        // the designed 1216) to 940. Applied at form construction — flip + Reload Advisor to compare.
         public bool WideLayout
         {
             get => _wideLayout;
@@ -2169,6 +2252,12 @@ namespace NGUAdvisor
         {
             get => _transformFilter;
             set { _transformFilter = value; SaveSettings(); }
+        }
+
+        public int[] TransformSeen
+        {
+            get => _transformSeen;
+            set { _transformSeen = value; SaveSettings(); }
         }
 
         public int[] TitanGoldVersionBanked

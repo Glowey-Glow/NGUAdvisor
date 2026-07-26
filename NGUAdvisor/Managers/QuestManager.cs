@@ -407,7 +407,7 @@ namespace NGUAdvisor.Managers
                 // the pooling trade-off; the burst is what spends the bank.
                 var abandonQuest = Settings.QuestsFullBank && questBankOverfill
                     && !(Settings.PoolMajorQuests && !Settings.QuestBurstActive);
-                if (majorQuests && Settings.AbandonMinors)
+                if (majorQuests && Settings.AbandonMinors && Quest.targetDrops > 0)
                 {
                     float progress = Quest.curDrops / (float)Quest.targetDrops * 100;
                     // If all this is true get rid of this minor quest
