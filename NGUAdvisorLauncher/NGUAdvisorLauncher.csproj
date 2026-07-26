@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    "Advisor Launcher.exe" — a tiny net48 console launcher that replaces Run NGU Advisor.bat so the
+    thing the user double-clicks carries the advisor icon. net48 = no runtime to bundle (ships with
+    Windows), ~15 KB. It mirrors the hot-reload bat: write injector-path.txt, then inject the bootstrap
+    via smi.exe (which byte-loads NGUAdvisor.dll). The classic .bat files stay as fallbacks.
+
+    Builds with just the .NET SDK via the net48 reference-assemblies NuGet (no Visual Studio / targeting
+    pack), same as NGUAdvisor.csproj.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>Advisor Launcher</AssemblyName>
+    <RootNamespace>NGUAdvisorLauncher</RootNamespace>
+    <ApplicationIcon>advisor.ico</ApplicationIcon>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

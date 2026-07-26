@@ -66,6 +66,8 @@ namespace NGUAdvisor
         [SerializeField] private bool _bloodMacGuffinBOnRebirth;
         [SerializeField] private bool _autoBuyEm;
         [SerializeField] private bool _autoBuyAdventure;
+        [SerializeField] private bool _expManualRatio;
+        [SerializeField] private int _expEnergyShare = 50;
         [SerializeField] private double _bloodNumberThreshold;
         // AT HOUR extension decision, persisted so an advisor reload cannot cancel an extension already
         // in flight (AtHourPlanner's statics don't survive one). Internal — not user-facing, not in
@@ -76,6 +78,9 @@ namespace NGUAdvisor
         [SerializeField] private int[] _quickDiggers;
         [SerializeField] private int[] _quickBeards;
         [SerializeField] private bool _globalEnabled;
+        // Inverted (default false = launch ENABLED) so a settings.json predating this field auto-launches:
+        // JsonUtility.FromJson does NOT run field initializers, so an ABSENT bool deserializes to false.
+        [SerializeField] private bool _companionLaunchDisabled;
         [SerializeField] private bool _combatEnabled;
         [SerializeField] private bool _useButterMajor;
         [SerializeField] private bool _useButterMinor;
@@ -192,9 +197,12 @@ namespace NGUAdvisor
         [SerializeField] private bool _lscTargetsSaved;
         [SerializeField] private long _lscSavedAugTarget;
         [SerializeField] private long _lscSavedUpgTarget;
+        // Per-STEP flags: each element is a per-tier BITMASK (bit t = tier t of that chain), so per-item
+        // Promote / Keep / Filter fit the existing int[5] schema with no serialization change.
         [SerializeField] private int[] _transformAutoClimb;
         [SerializeField] private int[] _transformKeepMax;
         [SerializeField] private int[] _transformFilter;
+        [SerializeField] private int[] _transformSeen;   // which (chain,tier) the "default Keep on unlock" has been applied to
 
         private readonly string _savePath;
         private bool _disableSave;
@@ -314,30 +322,47 @@ namespace NGUAdvisor
         {
             if (id < 0 || id > Consts.MAX_GEAR_ID)
                 return false;
-            return (int)Main.Character.itemInfo.type[id] <= 5;
+            // M9 fail-safe: during early load the game's item table can be null/not-ready. Validating
+            // against it then silently drops the user's valid gear ids — which the next save persists
+            // (permanent data loss). If we can't validate, KEEP the id; genuine cleanup still happens
+            // once the table is available.
+            try { return (int)Main.Character.itemInfo.type[id] <= 5; }
+            catch { return true; }
         }
 
         private bool IsAdvEnemy(int id)
         {
-            var enemyList = Main.Character.adventureController.enemyList;
-            for (var i = 0; i < enemyList.Count; i++)
+            // M9 fail-safe: keep the id if the adventure enemy list isn't populated yet (early load) —
+            // an empty/null list would otherwise silently drop valid enemy/boss selections and persist
+            // the loss. Only filter once the list is genuinely available.
+            try
             {
-                if (ZoneHelpers.ZoneIsTitan(i))
-                    continue;
-                if (enemyList[i].Any(x => x.spriteID == id))
+                var enemyList = Main.Character.adventureController.enemyList;
+                if (enemyList == null || enemyList.Count == 0)
                     return true;
+                for (var i = 0; i < enemyList.Count; i++)
+                {
+                    if (ZoneHelpers.ZoneIsTitan(i))
+                        continue;
+                    if (enemyList[i].Any(x => x.spriteID == id))
+                        return true;
+                }
+                return false;
             }
-            return false;
+            catch { return true; }
         }
 
         public void MassUpdate(SavedSettings other)
         {
             _globalEnabled = other?.GlobalEnabled ?? false;
+            _companionLaunchDisabled = !(other?.LaunchCompanion ?? true);
             _disableOverlay = other?.DisableOverlay ?? false;
             _moneyPitRunMode = other?.MoneyPitRunMode ?? false;
             _autoFight = other?.AutoFight ?? false;
             _autoBuyEm = other?.AutoBuyEM ?? false;
             _autoBuyAdventure = other?.AutoBuyAdventure ?? false;
+            _expManualRatio = other?.ExpManualRatio ?? false;
+            _expEnergyShare = other?.ExpEnergyShare ?? 50;
             _autoBuyConsumables = other?.AutoBuyConsumables ?? false;
             _consumeIfAlreadyRunning = other?.ConsumeIfAlreadyRunning ?? false;
             _autosave = other?.Autosave ?? false;
@@ -519,13 +544,13 @@ namespace NGUAdvisor
             _lscTargetsSaved = other?.LscTargetsSaved ?? false;
             _lscSavedAugTarget = other?.LscSavedAugTarget ?? 0;
             _lscSavedUpgTarget = other?.LscSavedUpgTarget ?? 0;
+            // Per-step model: flags are per-tier bitmasks and NEW tiers default to Keep (held) via
+            // TransformManager's default-on-unlock pass — so there is no blanket auto-climb default now
+            // (a freshly-unlocked tier holds until the user opts it into Promote).
             AssignValues(ref _transformAutoClimb, other?.TransformAutoClimb, 5);
-            // Auto-climb defaults ON: transforming at max level is the game's normal progression —
-            // a fresh/legacy settings file must not silently freeze maxed chain items.
-            if (other?.TransformAutoClimb == null || other.TransformAutoClimb.Length == 0)
-                _transformAutoClimb = new[] { 1, 1, 1, 1, 1 };
             AssignValues(ref _transformKeepMax, other?.TransformKeepMax, 5);
             AssignValues(ref _transformFilter, other?.TransformFilter, 5);
+            AssignValues(ref _transformSeen, other?.TransformSeen, 5);
         }
 
         public int SnipeZone
@@ -1125,6 +1150,32 @@ namespace NGUAdvisor
             }
         }
 
+        // Companion "Set ratio" override: when on, the EXP balancer uses ExpEnergyShare as the energy
+        // fraction of the pool (100 = energy only, 0 = magic only, 50 = the guide's even/3:1 split)
+        // instead of the auto phase-computed split.
+        public bool ExpManualRatio
+        {
+            get => _expManualRatio;
+            set
+            {
+                if (value == _expManualRatio) return;
+                _expManualRatio = value;
+                SaveSettings();
+            }
+        }
+
+        public int ExpEnergyShare
+        {
+            get => _expEnergyShare;
+            set
+            {
+                int v = value < 0 ? 0 : value > 100 ? 100 : value;
+                if (v == _expEnergyShare) return;
+                _expEnergyShare = v;
+                SaveSettings();
+            }
+        }
+
         public bool AutoBuyAdventure
         {
             get => _autoBuyAdventure;
@@ -1194,6 +1245,17 @@ namespace NGUAdvisor
             {
                 if (value == _globalEnabled) return;
                 _globalEnabled = value;
+                SaveSettings();
+            }
+        }
+
+        public bool LaunchCompanion
+        {
+            get => !_companionLaunchDisabled;
+            set
+            {
+                if (value == !_companionLaunchDisabled) return;
+                _companionLaunchDisabled = !value;
                 SaveSettings();
             }
         }
@@ -2190,6 +2252,12 @@ namespace NGUAdvisor
         {
             get => _transformFilter;
             set { _transformFilter = value; SaveSettings(); }
+        }
+
+        public int[] TransformSeen
+        {
+            get => _transformSeen;
+            set { _transformSeen = value; SaveSettings(); }
         }
 
         public int[] TitanGoldVersionBanked

@@ -362,7 +362,8 @@ namespace NGUAdvisor.Managers
                     try
                     {
                         if (ZoneHelpers.ZoneIsTitan(zone)) continue;
-                        if (zone >= ZoneHelpers.ZoneUnlocks.Length || c.bossID <= ZoneHelpers.ZoneUnlocks[zone]) continue;
+                        // Same unlock gate as the boost advisor, single-sourced + headless-tested (audit M5).
+                        if (!BossScale.IsZoneUnlocked(c.effectiveBossID(), zone, ZoneHelpers.ZoneUnlocks)) continue;
                         // Only one-shottable zones farm at full cadence (same gate as the boost advisor).
                         if (ZoneStatHelper.UserOverrides != null && ZoneStatHelper.UserOverrides.TryGetValue(zone, out var st))
                             if (st.OPower > 0 && attack < st.OPower) continue;

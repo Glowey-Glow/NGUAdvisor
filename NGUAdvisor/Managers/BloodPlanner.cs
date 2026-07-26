@@ -322,57 +322,62 @@ namespace NGUAdvisor.Managers
 
                 bool numberEligible = !norb && rebirthOn;
 
-                // The "Number ≥" knob is a FLOOR, not a ceiling: while under it NUMBER outranks the
-                // in-run sinks. The old code stopped routing at the target, which capped a linear
-                // uncapped multiplier at a hand-typed number — and because the auto profile funds
-                // rituals only while a sink is live (ChallengeOverlay), stopping also cut blood income
-                // for the rest of the run.
-                if (numberEligible && numTarget > 0 && rebirthPower < numTarget)
+                // Routing PRIORITY is the pure ladder in BloodRouter.DecideRoute (audit M5): NUMBER floor
+                // > gold > loot (while the investment window is open) > NUMBER default > idle. The
+                // "Number ≥" knob is a FLOOR, not a ceiling (the old code stopped at the target, capping
+                // a linear uncapped multiplier and — because the auto profile funds rituals only while a
+                // sink is live — cutting blood income for the rest of the run). Predicates stay LAZY so
+                // evaluation is identical to before: the floor is decided without touching the window,
+                // the window is read at most once (memoized here), gold/loot carry their out-param reason
+                // strings, and loot is only probed if gold declines.
+                bool windowOpen = false, windowComputed = false;
+                Func<bool> window = () =>
                 {
-                    p.WantRebirth = true;
-                    p.RouteReason = $"NUMBER (below floor {ExpBalancer.Fmt(numTarget)} · now x{ExpBalancer.Fmt(rebirthPower)})";
-                    return;
-                }
+                    if (!windowComputed) { windowOpen = !numberEligible || InvestmentWindowOpen(c); windowComputed = true; }
+                    return windowOpen;
+                };
+                string goldReason = null, dcReason = null;
+                var route = BloodRouter.DecideRoute(
+                    numberEligible, numTarget, rebirthPower,
+                    window,
+                    () => c.machine.realBaseGold > 0
+                        && (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) || OptimizationAdvisor.GoldStarvedForDiggers(c))
+                        && GoldBelowKnee(c, bps, out goldReason),
+                    () => DcBelowZoneRec(c, out dcReason));
 
-                // With NUMBER off the table (NORB / no rebirth scheduled) there is nothing to bank, so
-                // the in-run sinks are the only use for blood and the window never closes.
-                bool windowOpen = !numberEligible || InvestmentWindowOpen(c);
-
-                // Gold demand = augs OR diggers (user rule): once augs are funded the digger max-level
-                // upgrades are the next gold sink, and they need a far HIGHER gold cap — Counterfeit
-                // stays credited until those are funded too.
-                bool goldDemand = OptimizationAdvisor.GoldStarvedForAugs(c, 2.0)
-                    || OptimizationAdvisor.GoldStarvedForDiggers(c);
-                if (windowOpen && c.machine.realBaseGold > 0 && goldDemand && GoldBelowKnee(c, bps, out var goldReason))
+                switch (route)
                 {
-                    p.WantGold = true;
-                    p.RouteReason = goldReason + (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) ? " · augs unfunded" : " · digger upgrades unfunded");
-                }
-                else if (windowOpen && DcBelowZoneRec(c, out var dcReason))
-                {
-                    p.WantLoot = true;
-                    p.RouteReason = dcReason;
-                }
-                else if (numberEligible)
-                {
-                    // DEFAULT SINK. Any blood still pooled at rebirth is force-cast here anyway
-                    // (BaseRebirth.CastBloodSpellsForRebirth), so routing it now costs nothing and
-                    // starts compounding immediately.
-                    p.WantRebirth = true;
-                    bool ceiling = false;
-                    try { ceiling = c.bossID - 1 >= OptimizationAdvisor.BossUnlockCeiling(); } catch { }
-                    string why = windowOpen ? "default sink" : "banking the run's tail";
-                    p.RouteReason = ceiling
-                        ? $"NUMBER (boss EXP push · {why} · now x{ExpBalancer.Fmt(rebirthPower)})"
-                        : $"NUMBER ({why} · now x{ExpBalancer.Fmt(rebirthPower)})";
-                }
-                else
-                {
-                    // Genuinely nothing to bank: keep every auto-spell OFF so blood magic doesn't drain
-                    // the marathon's magic cap (BR-30 gates on a live sink).
-                    p.RouteReason = norb
-                        ? "blood idle — NORB: no rebirth to cash a NUMBER multi into"
-                        : "blood idle — no rebirth scheduled to bank NUMBER for";
+                    case BloodRoute.NumberFloor:
+                        p.WantRebirth = true;
+                        p.RouteReason = $"NUMBER (below floor {ExpBalancer.Fmt(numTarget)} · now x{ExpBalancer.Fmt(rebirthPower)})";
+                        break;
+                    case BloodRoute.Gold:
+                        p.WantGold = true;
+                        p.RouteReason = goldReason + (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) ? " · augs unfunded" : " · digger upgrades unfunded");
+                        break;
+                    case BloodRoute.Loot:
+                        p.WantLoot = true;
+                        p.RouteReason = dcReason;
+                        break;
+                    case BloodRoute.NumberDefault:
+                        // DEFAULT SINK. Any blood still pooled at rebirth is force-cast here anyway
+                        // (BaseRebirth.CastBloodSpellsForRebirth), so routing it now costs nothing and
+                        // starts compounding immediately.
+                        p.WantRebirth = true;
+                        bool ceiling = false;
+                        try { ceiling = BossScale.IsPastBossCeiling(c.effectiveBossID(), OptimizationAdvisor.BossUnlockCeiling()); } catch { }
+                        string why = windowOpen ? "default sink" : "banking the run's tail";
+                        p.RouteReason = ceiling
+                            ? $"NUMBER (boss EXP push · {why} · now x{ExpBalancer.Fmt(rebirthPower)})"
+                            : $"NUMBER ({why} · now x{ExpBalancer.Fmt(rebirthPower)})";
+                        break;
+                    default:
+                        // Genuinely nothing to bank: keep every auto-spell OFF so blood magic doesn't
+                        // drain the marathon's magic cap (BR-30 gates on a live sink).
+                        p.RouteReason = norb
+                            ? "blood idle — NORB: no rebirth to cash a NUMBER multi into"
+                            : "blood idle — no rebirth scheduled to bank NUMBER for";
+                        break;
                 }
             }
             catch (Exception e) { Main.LogDebug($"BloodPlanner routing: {e.Message}"); }

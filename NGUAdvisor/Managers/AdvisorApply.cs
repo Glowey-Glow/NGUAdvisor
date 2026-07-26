@@ -157,6 +157,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 if (Main.Settings == null || !Main.Settings.GlobalEnabled) return;
+                if (!CompatibilityGate.ActionsAllowed) return;   // observe-only on an unrecognized game build (P0-3)
                 var c = Main.Character;
                 if (c == null) return;
                 if ((DateTime.UtcNow - _lastTick).TotalSeconds < 30) return;
@@ -303,6 +304,7 @@ namespace NGUAdvisor.Managers
         // Blood planner auto: cast Iron Pill at the breakpoint-optimal moment (BloodPlanner decides;
         // the threshold path in CastBloodSpells is disabled for the pill while this is on).
         private static DateTime _lastBloodCheck = DateTime.MinValue;
+        private static string _lastRouteReason;
 
         private static void ApplyBlood()
         {
@@ -323,12 +325,22 @@ namespace NGUAdvisor.Managers
                 bool r = !plan.PoolForPill && plan.WantRebirth;
                 bool l = !plan.PoolForPill && plan.WantLoot;
                 bool g = !plan.PoolForPill && plan.WantGold;
-                if (bm.rebirthAutoSpell != r || bm.lootAutoSpell != l || bm.goldAutoSpell != g)
+                bool changed = bm.rebirthAutoSpell != r || bm.lootAutoSpell != l || bm.goldAutoSpell != g;
+                if (changed)
                 {
                     bm.rebirthAutoSpell = r;
                     bm.lootAutoSpell = l;
                     bm.goldAutoSpell = g;
-                    Main.Log($"Advisor: blood routing -> {(plan.PoolForPill ? "pooling for Iron Pill (all auto-spells off)" : plan.RouteReason)}");
+                }
+                // Log on a toggle change OR whenever the REASON changes. Logging only on change made
+                // the routing invisible whenever the advisor booted into an already-correct toggle
+                // state — the common case after a reload — so "working" and "never ran" looked the
+                // same in inject.log.
+                string reason = plan.PoolForPill ? "pooling for Iron Pill (all auto-spells off)" : plan.RouteReason;
+                if (changed || reason != _lastRouteReason)
+                {
+                    _lastRouteReason = reason;
+                    Main.Log($"Advisor: blood routing -> {reason}{(changed ? "" : " (toggles already correct)")}");
                 }
             }
         }
@@ -782,6 +794,69 @@ namespace NGUAdvisor.Managers
         {
             _lastGearObjective = null;
             _lastGearCheck = DateTime.MinValue;
+        }
+
+        // Companion "Re-optimize gear now" button. Unlike GearRestored() (which only re-arms the throttled
+        // auto pass — and that pass still bails on ManageGear-off / locks / the anti-churn bar, so the user
+        // sees "nothing happened"), this is an explicit manual action: it resolves the active objective,
+        // equips the optimizer's best set right now on the main thread, and returns a human-readable outcome
+        // so the companion can show it. Returns WHY nothing changed when a set can't be equipped, instead of
+        // silently no-op'ing. Must run on the Unity main thread (DrainCommands guarantees this).
+        public static string ForceGearReoptimize()
+        {
+            try
+            {
+                if (Main.Settings == null || !Main.Settings.ManageGear)
+                    return "Gear automation is OFF — turn it on (Gear view · Automation) to let the advisor equip gear.";
+                if (LockManager.HasQuestLock())
+                    return "A major quest is running — gear is held to the quest set until it finishes.";
+                try { if (ChallengeDetector.Current() == "NOEC") return "No-Equipment Challenge is active — there's nothing to equip."; } catch { }
+
+                bool inChallenge = false;
+                try { inChallenge = ChallengeDetector.Current() != null; } catch { }
+                string objName = !inChallenge && GearHunter.Active
+                    ? "LOOT HUNTER"
+                    : ChallengeOverlay.GearObjectiveOverride ?? AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+                if (string.IsNullOrEmpty(objName))
+                    return "No gear objective is active right now — nothing to optimize toward.";
+
+                if (objName == "LOOT HUNTER")
+                {
+                    var huntIds = GearHunter.ResolveLoadout(out var what);
+                    if (huntIds.Length == 0) return "The loot-hunter loadout resolved empty.";
+                    LoadoutManager.ChangeGear(huntIds);
+                    Main.InventoryController.assignCurrentEquipToLoadout(0);
+                    _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
+                    Main.Log($"Advisor: gear re-optimized on request — loot hunter ({what})");
+                    return $"Equipped the loot-hunter set ({what}).";
+                }
+
+                var obj = GearOptimizer.FindObjective(objName);
+                if (obj == null) return $"Couldn't find the '{objName}' objective.";
+                double cur = GearOptimizer.CurrentScore(obj);
+                var best = GearOptimizer.Optimize(obj, AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn);
+                if (best == null) return "The optimizer returned no set for this objective.";
+                var ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
+                if (ids.Length == 0) return "The optimizer returned an empty set.";
+
+                _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
+                // Don't downgrade: if the worn set already scores at/above the optimizer's best, leave it.
+                if (cur > 0 && best.Score <= cur)
+                    return $"Already optimal for '{obj.Name}' — your equipped set is the best available.";
+
+                double gain = cur > 0 ? (best.Score / cur - 1) * 100 : 0;
+                LoadoutManager.ChangeGear(ids);
+                Main.InventoryController.assignCurrentEquipToLoadout(0);
+                Main.Log($"Advisor: gear re-optimized on request for '{obj.Name}' (+{gain:0.#}%)");
+                return gain > 0.05
+                    ? $"Equipped the best set for '{obj.Name}' — +{gain:0.#}% over what was on."
+                    : $"Equipped the best set for '{obj.Name}'.";
+            }
+            catch (Exception e)
+            {
+                Main.LogDebug($"ForceGearReoptimize: {e}");
+                return "Re-optimize hit an error — check the Debug log.";
+            }
         }
 
         private static void ApplyGearRefresh()

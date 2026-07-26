@@ -21,6 +21,10 @@ namespace NGUAdvisor.AllocationProfiles
 
         public bool IsAllocationRunning;
 
+        // P0 (M2): refuse absurdly large profile files before parsing (guards the iterative JSON.Parse
+        // from building an unbounded DOM out of a crafted/corrupt file). Real profiles are a few KB.
+        private const long MaxProfileBytes = 8000000;
+
         public CustomAllocation(string profilesDir, string profile)
         {
             _allocationPath = Path.Combine(profilesDir, profile + ".json");
@@ -33,6 +37,14 @@ namespace NGUAdvisor.AllocationProfiles
             {
                 try
                 {
+                    var fi = new FileInfo(_allocationPath);
+                    if (fi.Length > MaxProfileBytes)
+                    {
+                        Log($"Allocation profile '{_profileName}' is too large ({fi.Length:N0} bytes; limit {MaxProfileBytes:N0}). Refusing to load.");
+                        _wrapper = new BreakpointWrapper();
+                        return;
+                    }
+
                     _wrapper = new BreakpointWrapper(JSON.Parse(File.ReadAllText(_allocationPath))["Breakpoints"]);
 
                     Log(_wrapper.BuildAllocationString(_profileName));
@@ -125,6 +137,9 @@ namespace NGUAdvisor.AllocationProfiles
             if (!Settings.GlobalEnabled)
                 return;
 
+            if (!CompatibilityGate.ActionsAllowed)   // observe-only on an unrecognized game build (P0-3)
+                return;
+
             if (IsAllocationRunning)
                 return;
 
@@ -147,58 +162,134 @@ namespace NGUAdvisor.AllocationProfiles
                 long originalInput = Main.Character.energyMagicPanel.energyMagicInput;
                 IsAllocationRunning = true;
 
-                if (Settings.ManageNGUDiff && Main.Character.buttons.ngu.interactable)
-                    _wrapper.ngus.Swap();
+                // P0 (allocation-tick blackout): each step is fault-isolated. A throw in one Swap()/
+                // allocate used to abort every LATER step for this tick — energy/magic/gear/diggers
+                // silently stopped while the HUD still read "active". Now a failing step is logged
+                // (throttled per step) and the rest still run; the input-restore is itself a step, so
+                // it happens even when an earlier step faulted.
+                RunStep("NGU difficulty", () =>
+                {
+                    if (Settings.ManageNGUDiff && Main.Character.buttons.ngu.interactable)
+                        _wrapper.ngus.Swap();
+                });
                 // ADVISOR OWNERSHIP (user-reported: every advisor reload re-applied the PROFILE's
                 // wandoos breakpoint, and the OS change WIPES wandoos levels — hours of progress
                 // gone). Systems the advisor owns are exempt from profile re-application; the
                 // advisor's own logic re-establishes them from live state instead.
-                if (Settings.ManageWandoos && !Settings.AdvisorWandoosOS && Main.Character.buttons.wandoos.interactable)
-                    _wrapper.wandoos.Swap();
-                if (Settings.ManageGear && !Settings.AutoProfile && Main.Character.buttons.inventory.interactable)
-                    _wrapper.gear.Swap();
-                if (Settings.ManageWishes && !preventMagicAllocation)
+                RunStep("Wandoos OS", () =>
+                {
+                    if (Settings.ManageWandoos && !Settings.AdvisorWandoosOS && Main.Character.buttons.wandoos.interactable)
+                        _wrapper.wandoos.Swap();
+                });
+                RunStep("Gear", () =>
+                {
+                    if (Settings.ManageGear && !Settings.AutoProfile && Main.Character.buttons.inventory.interactable)
+                        _wrapper.gear.Swap();
+                });
+                RunStep("Wishes (reclaim + allocate)", () =>
+                {
+                    if (Settings.ManageWishes && !preventMagicAllocation)
+                    {
+                        if (Settings.ManageEnergy)
+                            _character.removeMostEnergy();
+                        if (Settings.ManageMagic)
+                            _character.removeMostMagic();
+                        if (Settings.ManageR3)
+                            _character.removeAllRes3();
+                        WishManager.Allocate();
+                    }
+                });
+                RunStep("Energy", () =>
                 {
                     if (Settings.ManageEnergy)
-                        _character.removeMostEnergy();
-                    if (Settings.ManageMagic)
-                        _character.removeMostMagic();
+                        _wrapper.energy.Swap();
+                });
+                RunStep("Magic", () =>
+                {
+                    if (Settings.ManageMagic && !preventMagicAllocation)
+                        _wrapper.magic.Swap();
+                });
+                RunStep("R3", () =>
+                {
                     if (Settings.ManageR3)
-                        _character.removeAllRes3();
-                    WishManager.Allocate();
-                }
-                if (Settings.ManageEnergy)
-                    _wrapper.energy.Swap();
-                if (Settings.ManageMagic && !preventMagicAllocation)
-                    _wrapper.magic.Swap();
-                if (Settings.ManageR3)
-                    _wrapper.r3.Swap();
-                if (Settings.ManageWishes && !preventMagicAllocation)
+                        _wrapper.r3.Swap();
+                });
+                RunStep("Wishes (spare resources)", () =>
                 {
-                    // Allocating to wishes again because there can be spare resources
-                    WishManager.Allocate(true);
-                    WishManager.UpdateWishMenu();
-                }
-                if (Settings.ManageConsumables)
-                    _wrapper.consumables.Swap();
-                if (Settings.ManageBeards && !Settings.AdvisorBeards && Main.Character.buttons.beards.interactable)
-                    _wrapper.beards.Swap();
-                if (Settings.ManageDiggers && !Settings.AdvisorDiggers && Main.Character.buttons.diggers.interactable)
+                    if (Settings.ManageWishes && !preventMagicAllocation)
+                    {
+                        // Allocating to wishes again because there can be spare resources
+                        WishManager.Allocate(true);
+                        WishManager.UpdateWishMenu();
+                    }
+                });
+                RunStep("Consumables", () =>
                 {
-                    _wrapper.diggers.Swap();
-                    DiggerManager.RecapDiggers();
-                }
+                    if (Settings.ManageConsumables)
+                        _wrapper.consumables.Swap();
+                });
+                RunStep("Beards", () =>
+                {
+                    if (Settings.ManageBeards && !Settings.AdvisorBeards && Main.Character.buttons.beards.interactable)
+                        _wrapper.beards.Swap();
+                });
+                RunStep("Diggers", () =>
+                {
+                    if (Settings.ManageDiggers && !Settings.AdvisorDiggers && Main.Character.buttons.diggers.interactable)
+                    {
+                        _wrapper.diggers.Swap();
+                        DiggerManager.RecapDiggers();
+                    }
+                });
 
-                Main.Character.energyMagicPanel.energyRequested.text = originalInput.ToString(CultureInfo.InvariantCulture);
-                Main.Character.energyMagicPanel.validateInput();
+                RunStep("Restore energy/magic input", () =>
+                {
+                    Main.Character.energyMagicPanel.energyRequested.text = originalInput.ToString(CultureInfo.InvariantCulture);
+                    Main.Character.energyMagicPanel.validateInput();
+                });
             }
             catch (Exception e)
             {
-                LogDebug($"Error while allocating: {e}");
+                LogDebug($"Unexpected error in allocation loop: {e}");
             }
             finally
             {
                 IsAllocationRunning = false;
+            }
+        }
+
+        // ---- per-step fault containment (audit P0: allocation-tick blackout) ----
+        // Runs one allocation step isolated: a throw is caught, logged once, then throttled so a
+        // persistently-failing step can't flood the log every tick, and the remaining steps still run.
+        // Clears quietly on the first non-throwing run — it does NOT claim recovery (a step whose
+        // feature is toggled off is a no-op that also "succeeds"). Mirrors Managers.AdvisorApply's
+        // Fault pattern, kept local here to avoid disturbing that file.
+        private sealed class StepFault { public int Count; public DateTime LastReport; }
+        private static readonly Dictionary<string, StepFault> _stepFaults = new Dictionary<string, StepFault>();
+        private static readonly TimeSpan StepReportEvery = TimeSpan.FromMinutes(10);
+
+        private static void RunStep(string name, Action step)
+        {
+            try
+            {
+                step();
+                _stepFaults.Remove(name);
+            }
+            catch (Exception e)
+            {
+                if (!_stepFaults.TryGetValue(name, out var f))
+                {
+                    _stepFaults[name] = new StepFault { Count = 1, LastReport = DateTime.UtcNow };
+                    Log($"Allocation step '{name}' failed (continuing with the rest) - {e.GetType().Name}: {e.Message}");
+                    LogDebug($"Allocation step '{name}' failed:\n{e}");
+                    return;
+                }
+                f.Count++;
+                if (DateTime.UtcNow - f.LastReport >= StepReportEvery)
+                {
+                    Log($"Allocation step '{name}' still failing - {f.Count} time(s) - {e.GetType().Name}: {e.Message}");
+                    f.LastReport = DateTime.UtcNow;
+                }
             }
         }
 

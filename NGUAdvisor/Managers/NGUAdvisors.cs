@@ -185,6 +185,11 @@ namespace NGUAdvisor.Managers
 
                 string Fmt(List<Entry> l) => l.Count == 0 ? "-"
                     : string.Join(", ", l.Take(3).Select(x => $"{x.Name} ×{Math.Min(x.Rating, 9.99):0.00}/hr").ToArray());
+                // NOTE: Summary rounds to two decimals, so lanes reading an identical "×1.17/hr" only
+                // proves they agree within ~0.85%. That is not enough to tell a converged tie from a
+                // Build() bug — to re-check, log Level/LphPerUnit/Rating per lane at full precision
+                // (F6) and compare the INPUTS: they differed 233x/1680x while Rating held to 0.04%,
+                // which is what proved convergence real. See [[ngu-marathon-convergence]].
                 p.Summary = $"E: {Fmt(p.Energy)} · M: {Fmt(p.Magic)}";
                 p.Known = p.Energy.Count > 0 || p.Magic.Count > 0;
             }
@@ -232,10 +237,29 @@ namespace NGUAdvisor.Managers
             list.Where(x => !targets.Contains(x.Id) && x.Rating > 1.0001)
                 .OrderByDescending(x => x.Rating).Select(x => x.Id).ToArray();
 
-        // Equal-share prune to a stable hot set: each pass splits the pool over the keepers and
-        // drops anyone under 1.05x/hr AT THAT SHARE — survivors' shares grow, so the loop is
-        // monotone and terminates. Prune-only by design (re-admitting on the larger share would
-        // oscillate). Nothing hot: deepen the top two by rating.
+        // Equal-share prune: each pass splits the pool over the keepers and drops anyone under
+        // 1.05x/hr AT THAT SHARE — survivors' shares grow, so the loop is monotone and terminates.
+        // Prune-only by design (re-admitting on the larger share would oscillate). Nothing hot:
+        // deepen the top two by rating.
+        //
+        // WHAT ACTUALLY HAPPENS AT SCALE (measured in-game 2026-07-16, Normal, ~5.5M NGU levels):
+        // the prune is a PREDICATE, so it assumes lanes differ enough that some clear the bar at the
+        // shared rate. They don't — the allocator drives every lane to EQUAL MARGINAL VALUE and then
+        // sits there. Rating-1 is proportional to pool/(divider x level^2), so equal ratings across
+        // lanes IS the optimality condition for maximising the product of NGU bonuses. Measured: a
+        // 233x spread in level and a 1680x spread in lph/u collapsed to a 0.04% spread in Rating
+        // (E 1.173377..1.173839, M 1.169690..1.169916). Everything is tied.
+        //
+        // At a tie the predicate drops the WHOLE set in one step -> hot.Count == 0 -> the "nothing hot"
+        // fallback is the ONLY branch that ever runs at this scale, and Take(2) is a magic number for
+        // an edge case that became the primary path. Ratio at a share of pool/N is ~1 + 0.174/N, so
+        // 1.05 needs N <= 3: unreachable for any set of 4+. This does NOT misallocate — at a tie the
+        // members are interchangeable, and the CAPNGU surplus absorbers feed the rest to their
+        // per-tick cap regardless — so the pick is harmless, just arbitrary.
+        //
+        // It is NOT dead everywhere: a lower NGU level track (Evil retracks levels) spreads the
+        // ratings again and the designed prune wakes up. Both paths must stay correct — see
+        // [[ngu-marathon-convergence]].
         private static int[] Pick(Character c, List<Entry> list, bool magic, double pool)
         {
             if (list.Count == 0) return new int[0];
@@ -263,7 +287,57 @@ namespace NGUAdvisor.Managers
                 }
                 keep = hot;
             }
-            return keep.OrderByDescending(x => x.Rating).Select(x => x.Id).ToArray();
+
+            var fresh = keep.OrderByDescending(x => x.Rating).Select(x => x.Id).ToArray();
+            var incumbent = magic ? _incumbentMagic : _incumbentEnergy;
+            var final = Stabilize(list, fresh, incumbent);
+            if (magic) _incumbentMagic = final; else _incumbentEnergy = final;
+            return final;
+        }
+
+        // Tie hysteresis. At convergence the ranking is decided on the 5th-6th decimal of Rating —
+        // pure jitter from levels ticking up between the 30s Compute refreshes — so a plain sort
+        // reshuffled the hot set every single refresh. That churned the emitted profile, re-parsed
+        // every breakpoint object behind it, and buried the overlay log, all to swap between lanes
+        // that are interchangeable anyway. Keep the incumbent while it is still statistically tied
+        // with the fresh pick; a lane that genuinely pulls ahead by more than the tolerance still
+        // takes over on the next refresh.
+        //
+        // Deliberately NOT a "ratings within X%" sort comparer: that predicate is not transitive, and
+        // List.Sort throws on an inconsistent comparer. This compares the two candidate SETS instead.
+        private const double TieTolerance = 0.005;   // 0.5% relative — >10x the measured 0.04% spread
+
+        private static int[] _incumbentEnergy = new int[0];
+        private static int[] _incumbentMagic = new int[0];
+
+        private static int[] Stabilize(List<Entry> all, int[] fresh, int[] incumbent)
+        {
+            try
+            {
+                if (incumbent.Length == 0 || incumbent.Length != fresh.Length) return fresh;
+                double RatingOf(int id)
+                {
+                    foreach (var e in all) if (e.Id == id) return e.Rating;
+                    return double.NaN;   // incumbent is no longer a live candidate
+                }
+                double worstInc = double.MaxValue, worstFresh = double.MaxValue;
+                foreach (var id in incumbent)
+                {
+                    double r = RatingOf(id);
+                    if (double.IsNaN(r)) return fresh;
+                    if (r < worstInc) worstInc = r;
+                }
+                foreach (var id in fresh)
+                {
+                    double r = RatingOf(id);
+                    if (double.IsNaN(r)) return fresh;
+                    if (r < worstFresh) worstFresh = r;
+                }
+                // fresh is the top-N, so worstFresh >= worstInc always; keep the incumbent unless the
+                // fresh pick is better by more than the tolerance.
+                return worstInc >= worstFresh * (1.0 - TieTolerance) ? incumbent : fresh;
+            }
+            catch { return fresh; }
         }
     }
 }

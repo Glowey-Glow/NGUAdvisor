@@ -24,6 +24,19 @@ namespace NGUAdvisor.Managers
             public bool Affordable;
         }
 
+        // Full-plan view for the companion Perks & Quirks page (NextPerk/NextQuirk give only the single
+        // next buy). Each step carries per-step status so the UI can render the whole ordered plan.
+        public struct PlanStep
+        {
+            public int Id;
+            public string Name;
+            public long CurLevel;
+            public long Target;
+            public long Cost;
+            public int MinChapter;
+            public string State;   // "done" | "current" | "queued" | "chapter" | "diff"
+        }
+
         private struct Step
         {
             public string Match;    // matched against live name list
@@ -233,6 +246,41 @@ namespace NGUAdvisor.Managers
             return b;
         }
 
+        // The whole ITOPOD perk plan with per-step status, for the P&Q page. "current" = the step
+        // NextPerk() would buy now; "chapter"/"diff" = queued but gated; "done" = at/above target.
+        public static List<PlanStep> PerkPlanView()
+        {
+            var outp = new List<PlanStep>();
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return outp;
+                var ipc = c.adventureController.itopod;
+                var levels = c.adventure.itopod.perkLevel;
+                if (ipc == null || levels == null) return outp;
+                int chapter = Chapter();
+                var diff = c.settings.rebirthDifficulty;
+                bool currentSet = false;
+                foreach (var step in PerkPlan)
+                {
+                    int id = FindByName(ipc.perkName, step.Match, "perk");
+                    if (id < 0 || id >= levels.Count || id >= ipc.maxLevel.Count) continue;
+                    long max = ipc.maxLevel[id] > 0 ? ipc.maxLevel[id] : long.MaxValue;
+                    long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
+                    var ps = new PlanStep { Id = id, Name = ipc.perkName[id]?.Trim(), CurLevel = levels[id], Target = target, MinChapter = step.MinChapter };
+                    try { ps.Cost = ipc.perkCost(id); } catch { }
+                    if (levels[id] >= target) ps.State = "done";
+                    else if (chapter < step.MinChapter) ps.State = "chapter";
+                    else if (id < ipc.perkDifficultyReq.Count && ipc.perkDifficultyReq[id] > diff) ps.State = "diff";
+                    else if (!currentSet) { ps.State = "current"; currentSet = true; }
+                    else ps.State = "queued";
+                    outp.Add(ps);
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"SpendPlanner perk view: {e.Message}"); }
+            return outp;
+        }
+
         // The first perk buy the guide still has QUEUED but which is gated by chapter or difficulty
         // — what banked PP is FOR (mirrors NextQuirkPlanned; user-reported: NextPerk()=unknown
         // surfaced as "plan complete" while later-chapter steps were still queued).
@@ -330,6 +378,40 @@ namespace NGUAdvisor.Managers
             }
             catch (Exception e) { Main.LogDebug($"SpendPlanner quirks: {e.Message}"); }
             return b;
+        }
+
+        // The whole Beast quirk plan with per-step status, for the P&Q page (mirror of PerkPlanView).
+        public static List<PlanStep> QuirkPlanView()
+        {
+            var outp = new List<PlanStep>();
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return outp;
+                var qc = c.beastQuestPerkController;
+                var levels = c.beastQuest.quirkLevel;
+                if (qc == null || levels == null) return outp;
+                int chapter = Chapter();
+                var diff = c.settings.rebirthDifficulty;
+                bool currentSet = false;
+                foreach (var step in QuirkPlan)
+                {
+                    int id = FindByName(qc.quirkName, step.Match, "quirk");
+                    if (id < 0 || id >= levels.Count || id >= qc.maxLevel.Count) continue;
+                    long max = qc.maxLevel[id] > 0 ? qc.maxLevel[id] : long.MaxValue;
+                    long target = step.Target > 0 ? Math.Min(step.Target, max) : max;
+                    var ps = new PlanStep { Id = id, Name = qc.quirkName[id]?.Trim(), CurLevel = levels[id], Target = target, MinChapter = step.MinChapter };
+                    try { ps.Cost = qc.quirkCost(id); } catch { }
+                    if (levels[id] >= target) ps.State = "done";
+                    else if (chapter < step.MinChapter) ps.State = "chapter";
+                    else if (id < qc.quirkDifficultyReq.Count && qc.quirkDifficultyReq[id] > diff) ps.State = "diff";
+                    else if (!currentSet) { ps.State = "current"; currentSet = true; }
+                    else ps.State = "queued";
+                    outp.Add(ps);
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"SpendPlanner quirk view: {e.Message}"); }
+            return outp;
         }
 
         public struct PlannedBuy

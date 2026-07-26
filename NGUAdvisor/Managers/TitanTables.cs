@@ -5,6 +5,14 @@ namespace NGUAdvisor.Managers
     // OptimizationAdvisor consumes them via its local TitanAk/TitanGuide aliases.
     public static class TitanTables
     {
+        // Titan abbreviations (0-based index), relocated from the retired WinForms TitansPanel — consumed by
+        // AtHourPlanner + the UiBridge titan snapshot node.
+        public static readonly string[] Abbrev =
+        {
+            "GRB", "GCT", "Jake", "UUG", "Walderp", "Beast", "Nerd",
+            "Godmother", "Exile", "Hungers", "Lobster", "Amalg", "Tippi", "Traitor"
+        };
+
         // Autokill attack/defense/HP-REGEN requirements per titan index (0-based) and version (1-4),
         // extracted from the game's autokillTitan{N}V{V}Achieved methods (reference/decomp-full/
         // AdventureController.cs). Regen (third column, 0 = no check) is a REAL gate from T4 up —

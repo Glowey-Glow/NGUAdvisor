@@ -588,6 +588,9 @@ namespace NGUAdvisor.Managers
             return new string[0];
         }
 
+        // Latch for the ritual-funding transition log below (null = not yet evaluated this load).
+        private static bool? _lastBloodMatters;
+
         public static string[] AutoTokens(ResourceType type)
         {
             if (type == ResourceType.R3) return new[] { "ALLHACK" };
@@ -597,6 +600,24 @@ namespace NGUAdvisor.Managers
             var ngus = ChapterNgus(type);
             var list = new List<string>();
             string seg = string.IsNullOrEmpty(Segment) ? "NGU MARATHON" : Segment;
+
+            // Rituals cost magic that would otherwise be NGU growth, so run them ONLY while blood is
+            // ACTUALLY being converted into something: a sink the blood advisor has routed on
+            // (number/loot/gold) or an Iron Pill worth pursuing. When the routing is idle AND the pill
+            // isn't worth it, drop rituals so that magic feeds the current segment instead of pooling
+            // blood that never gets cast.
+            //
+            // BloodPlanner owns this answer. This used to read the live auto-spell toggles directly,
+            // which made the profile depend on an OUTPUT of ApplyBlood (60s-throttled) — the two
+            // advisors talking through mutated game state. BloodMatters() returns the routing INTENT
+            // when the advisor owns blood, and falls back to the live toggles when it doesn't (manual /
+            // AutoSpellSwap), so every quadrant of advisor-on/off answers from one place.
+            bool rituals = !e && BloodPlanner.BloodMatters();
+            if (!e && _lastBloodMatters != rituals)
+            {
+                _lastBloodMatters = rituals;
+                Main.Log($"Overlay: rituals {(rituals ? "ON — BR-30 in the magic profile (blood has a live sink)" : "OFF — no live blood consumer (magic stays on NGUs)")}");
+            }
 
             switch (seg)
             {
@@ -646,40 +667,74 @@ namespace NGUAdvisor.Managers
                     list.Add("CAPTM:5");
                     list.Add("CAPWAN:60");
                     foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    // SELF-LIMITING LANES BEFORE THE ABSORBERS (rituals, AT, the aug pair). Each one
+                    // takes only what it actually NEEDS, never the pool: BR caps every ritual at
+                    // capValue (CalculateMaxAllocation) and stops once they are fed; CAPALLAT and
+                    // CAPBESTAUG both size by the formula/ceil(formula/MaxAllocation) divisor
+                    // (CalculateATCap / CalculateAugCap), and CAPALLAT additionally waterfills across
+                    // its slots (GroupShare — "a slot never gets more than its need"). So putting them
+                    // first costs the absorbers below only the real demand, and they still mop up the
+                    // genuine remainder — the 4.7B-idle fix is untouched.
+                    //
+                    // Ordering them AFTER the absorbers starved all three to exactly zero. An absorber
+                    // is CAP-with-no-percent: MaxAllocation = min(cur, idle) = everything left, and
+                    // unlike AT/augs an NGU lane's cap is large enough to actually drink it (that is
+                    // the whole point of the 2026-07-11 change). Downstream lanes then saw idle 0.
+                    // BR and CAPBESTAUG return false when they allocate nothing, so PerformSwap DROPPED
+                    // them from the retry list without a word; CAPALLAT returns true and silently
+                    // no-opped. Blood income was zero for the whole marathon (rebirthPower frozen) and
+                    // AT/augs were fed nothing — while TM/AT/RECOVERY, which emit no absorbers, kept
+                    // working, which is what made all of it look intermittent rather than broken.
+                    //
+                    // The old "value order" comment here (warm NGU lanes > AT > augs) described an
+                    // intent the allocator could not deliver: an absorber that takes everything leaves
+                    // nothing to order, so those two tokens were dead code.
+                    if (rituals) list.Add("BR-30");
+                    // BOUNDED SPLIT (user pick 2026-07-16). Unbounded, AT/augs take their full need
+                    // here and the warm lanes get only what's left; bounded, both get a defined slice.
+                    // Hot lanes are unaffected either way — they allocate above this and CAP tokens are
+                    // out of their equal-share divisor (PerformSwap counts only !IsCap) — so the slice
+                    // is carved from the SURPLUS the hot lanes physically cannot drink, not from the
+                    // growth the marathon is for.
+                    //
+                    // PERCENT SEMANTICS, because they differ per token and the difference is a trap:
+                    //   CAPALLAT:10  -> ALLAT expands to FIVE AdvancedTrainingBPs and each one carries
+                    //                   the percent, so this is 10% of curEnergy PER SLOT, not 10% for
+                    //                   the group. In practice only Power/Toughness are hungry (the AT
+                    //                   purpose caps hold the other three near zero cost), so it lands
+                    //                   around 20% total. A flat :20 here would have meant 20% EACH —
+                    //                   up to the whole pool.
+                    //   CAPBESTAUG:10 -> one BestAug BP, so 10% is a true total.
+                    // Percent is of cur, not idle. Both still self-limit to actual need (CalculateATCap
+                    // / CalculateAugCap) and to whatever is idle when they run, so these are ceilings on
+                    // the tail rather than budgets they always claim. Tune here.
+                    if (e) { list.Add("CAPALLAT:10"); list.Add("CAPBESTAUG:10"); }
                     // SURPLUS ABSORBERS (user 2026-07-11: 4.7B of a 5.4B pool sat idle once the
                     // hot lanes took their caps — the game hard-caps each NGU at ONE level per
                     // tick, decomp NGUController.updateNGU resets progress to 0 on level-up, so
                     // hot lanes physically cannot drink more). Every absorber is CAP-type: out of
-                    // the equal-share divisor, fed strictly from what the hot lanes leave behind.
-                    // Value order: warm NGU lanes (any growth beats idle), AT (costs only energy),
-                    // then the aug pair last (aug levels also drain gold).
+                    // the equal-share divisor, fed strictly from what everything above leaves behind.
                     foreach (var t in ChapterNgusSurplus(type)) if (!list.Contains(t)) list.Add(t);
-                    if (e) { list.Add("CAPALLAT"); list.Add("CAPBESTAUG"); }
                     break;
             }
 
             // Rituals cost magic that would otherwise be NGU growth, so run them ONLY while blood is
-            // ACTUALLY being converted into something: an auto-spell the advisor has routed on
+            // ACTUALLY being converted into something: a sink the blood advisor has routed on
             // (number/loot/gold) or an Iron Pill worth pursuing. When the routing is idle AND the pill
             // isn't worth it, drop rituals so that magic feeds the current segment (e.g. the marathon's
             // NGUs) instead of pooling blood that never gets cast. Applies to EVERY segment now — this
             // was NGU-MARATHON-only, which left TM/AT/recovery pooling unconditionally.
+            //
+            // BloodPlanner owns this answer. This used to read the live auto-spell toggles directly,
+            // which made the profile depend on an OUTPUT of ApplyBlood (60s-throttled) — the two
+            // advisors talking through mutated game state. BloodMatters() returns the routing INTENT
+            // when the advisor owns blood, and falls back to the live toggles when it doesn't (manual /
+            // AutoSpellSwap), so every quadrant of advisor-on/off answers from one place.
             // (Caveat: the gold-spell "want" reads live blood/sec, so a cold-start gold-starve can't
-            // bootstrap rituals from zero — a pre-existing limit; revisit with potential income if it bites.)
-            if (!e)
-            {
-                bool bloodMatters = true;
-                try
-                {
-                    var bm = Main.Character.bloodMagic;
-                    bool spellLive = bm.rebirthAutoSpell || bm.lootAutoSpell || bm.goldAutoSpell;
-                    bool pillWorth = Main.Settings != null && Main.Settings.CastBloodSpells
-                        && BloodPlanner.PillWorthPursuing();
-                    bloodMatters = spellLive || pillWorth;
-                }
-                catch { bloodMatters = true; }   // fail-safe: keep rituals if the state read throws
-                if (bloodMatters) list.Add("BR-30");
-            }
+            // bootstrap rituals from zero — a pre-existing limit; NUMBER no longer has it, since it is
+            // the default sink and needs no income to become eligible.)
+            // Segments other than the marathon emit no surplus absorbers, so appending is safe there.
+            if (rituals && !list.Contains("BR-30")) list.Add("BR-30");
             return list.ToArray();
         }
 
@@ -694,7 +749,12 @@ namespace NGUAdvisor.Managers
             if (list.Count > 0 && (!_lastGenKey.TryGetValue(type, out var last) || last != key))
             {
                 _lastGenKey[type] = key;
-                Record($"{type} → auto profile", AutoStatus());
+                // Print the TOKENS, not just the status. This line fires precisely when the allocation
+                // changes, and it used to report only segment/phase/TM/number — telling you THAT the
+                // profile changed while never saying what it became. The allocation was unauditable
+                // from the log: the same blind spot that let BR-30 sit starved behind the absorbers,
+                // and that hid AT/augs getting nothing. The token order IS the allocation.
+                Record($"{type} → auto profile", $"{AutoStatus()} · {string.Join(" → ", tokens)}");
             }
             return list;
         }

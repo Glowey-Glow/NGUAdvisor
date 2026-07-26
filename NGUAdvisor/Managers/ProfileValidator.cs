@@ -16,6 +16,9 @@ namespace NGUAdvisor.Managers
     // it instead of guessing. Zero game/Unity dependencies so it is unit-testable in isolation.
     public static class ProfileValidator
     {
+        // P0 (M2): reject a pathologically large profile up front. Real profiles are a few KB.
+        private const int MaxProfileChars = 4000000;
+
         public struct Result
         {
             public bool Ok;
@@ -30,6 +33,9 @@ namespace NGUAdvisor.Managers
         {
             if (json == null)
                 return Fail(json, 0, "Profile is empty.");
+
+            if (json.Length > MaxProfileChars)
+                return Fail(json, 0, $"Profile is too large ({json.Length:N0} characters; limit {MaxProfileChars:N0}).");
 
             var p = new Parser(json);
             p.SkipWhitespace();
@@ -79,6 +85,13 @@ namespace NGUAdvisor.Managers
             private readonly string _s;
             public int Pos;
 
+            // P0 (M2): recursion-depth guard. ParseObject/ParseArray recurse through ParseValue; an
+            // unbounded nesting (e.g. "[[[[..." from a crafted/corrupt profile) would overflow the
+            // call stack — an UNCATCHABLE crash. Real profiles nest a handful of levels; 200 is far
+            // beyond any legitimate document but well under the stack limit.
+            private int _depth;
+            private const int MaxDepth = 200;
+
             public Parser(string s)
             {
                 _s = s;
@@ -106,28 +119,41 @@ namespace NGUAdvisor.Managers
             public bool ParseValue(out Result err)
             {
                 err = Result.Success;
-                SkipWhitespace();
-                if (Eof)
+
+                // Bracket the recursive descent: _depth reflects current nesting (breadth is unaffected
+                // because siblings increment then decrement in turn via the finally).
+                if (++_depth > MaxDepth)
                 {
-                    err = Err("Expected a value but reached the end of the profile.");
+                    err = Err($"Profile nesting is too deep (limit {MaxDepth}); likely a malformed or malicious profile.");
+                    _depth--;
                     return false;
                 }
-
-                var c = Cur;
-                switch (c)
+                try
                 {
-                    case '{': return ParseObject(out err);
-                    case '[': return ParseArray(out err);
-                    case '"': return ParseString(out err);
-                    case 't':
-                    case 'f': return ParseKeyword(out err);
-                    case 'n': return ParseKeyword(out err);
-                    default:
-                        if (c == '-' || (c >= '0' && c <= '9'))
-                            return ParseNumber(out err);
-                        err = Err($"Unexpected character '{Describe(c)}' where a value was expected.");
+                    SkipWhitespace();
+                    if (Eof)
+                    {
+                        err = Err("Expected a value but reached the end of the profile.");
                         return false;
+                    }
+
+                    var c = Cur;
+                    switch (c)
+                    {
+                        case '{': return ParseObject(out err);
+                        case '[': return ParseArray(out err);
+                        case '"': return ParseString(out err);
+                        case 't':
+                        case 'f': return ParseKeyword(out err);
+                        case 'n': return ParseKeyword(out err);
+                        default:
+                            if (c == '-' || (c >= '0' && c <= '9'))
+                                return ParseNumber(out err);
+                            err = Err($"Unexpected character '{Describe(c)}' where a value was expected.");
+                            return false;
+                    }
                 }
+                finally { _depth--; }
             }
 
             private bool ParseObject(out Result err)

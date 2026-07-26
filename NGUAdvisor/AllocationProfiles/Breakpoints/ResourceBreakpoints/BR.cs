@@ -10,7 +10,27 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         protected override bool TargetMet() => false;
 
-        public override bool Allocate() => CastRituals(Index) > 0;
+        // Latch: log only on transition, since this runs on every allocation pass.
+        private static bool? _lastFunded;
+
+        public override bool Allocate()
+        {
+            long allocated = CastRituals(Index);
+            bool funded = allocated > 0;
+            // BR is the one lane that can sit in the profile and still silently receive NOTHING: it is
+            // non-CAP (an equal share of *idle* magic), so anything CAP-with-no-percent ahead of it in
+            // the list drinks the pool first — and PerformSwap then DROPS any priority that allocates
+            // zero, so it vanishes for the rest of the pass without a word. That is invisible from the
+            // token list alone, which is why blood income read as "on" while rebirthPower sat frozen.
+            if (_lastFunded != funded)
+            {
+                _lastFunded = funded;
+                Main.Log(funded
+                    ? $"BR-{Index}: rituals funded with {allocated:N0} magic"
+                    : $"BR-{Index}: allocated NOTHING (share {MaxAllocation:N0}, idle magic {_character.magic.idleMagic:N0}) — rituals get no magic, blood income is zero");
+            }
+            return funded;
+        }
 
         // The run's planned end, read from the LIVE profile (as BestAug/BloodPlanner/WandoosAdvisor do).
         // The old `RebirthTime` property was never populated: ParseBreakpointArray took a rebirthTime

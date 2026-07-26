@@ -23,7 +23,7 @@ namespace NGUAdvisor.Managers
 
         private static readonly string[] DiggerNames =
             { "Drops", "Wandoos", "Stats", "Adv", "E-NGU", "M-NGU", "E-Beard", "M-Beard", "PP", "Daycare", "Blood", "EXP" };
-        private static readonly string[] BeardNames =
+        public static readonly string[] BeardNames =
             { "Stats", "Drops", "Number", "NGU", "Wandoos", "Adv", "Golden" };
         private static readonly string[] WandoosOsNames = { "98", "MEH", "XL" };
 
@@ -79,24 +79,32 @@ namespace NGUAdvisor.Managers
             {
                 try
                 {
-                    int idx = NextTitanIndex();
-                    if (idx >= 0 && TryAkRequirement(idx, out var reqA, out var reqD, out var reqR))
+                    // Follow the KILL LADDER, not the AK gate: NextObjective() stages the target as
+                    // first-kill -> idle-stat farm -> auto-kill (user-reported: it showed "T7 AK" for a
+                    // titan never even killed). The staging design already exists; surface its Stage here.
+                    var to = NextObjective();
+                    if (to.Known)
                     {
                         double atk = c.totalAdvAttack(), def = c.totalAdvDefense();
                         double rgn = 0;
                         try { rgn = c.totalAdvHPRegen(); } catch { }
+                        double reqA = to.ReqAttack, reqD = to.ReqDefense, reqR = to.ReqRegen;
+                        string label = $"Titan {to.Index + 1} v{to.Version} {to.Stage}";
                         if (atk >= reqA && def >= reqD && (reqR <= 0 || rgn >= reqR))
-                            list.Add(new Rec { System = "Power", Text = $"Titan {idx + 1} autokill ready", Optimal = true });
+                            list.Add(new Rec { System = "Power", Text = $"{label} ready", Optimal = true });
                         else
                         {
-                            double pct = Math.Min(atk / reqA, def / reqD);
+                            // Guard req==0 (defensive vs future titan-table edits) so % can't go NaN/Inf.
+                            double pct = 1.0;
+                            if (reqA > 0) pct = Math.Min(pct, atk / reqA);
+                            if (reqD > 0) pct = Math.Min(pct, def / reqD);
                             if (reqR > 0) pct = Math.Min(pct, rgn / reqR);
                             pct *= 100.0;
                             string regenPart = reqR > 0 && rgn < reqR ? $" / {Fmt(rgn)} of {Fmt(reqR)} regen" : "";
                             list.Add(new Rec
                             {
                                 System = "Power",
-                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for Titan {idx + 1} AK ({pct:0}%)",
+                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for {label} ({pct:0}%)",
                                 Severity = pct >= 80 ? 1 : 2
                             });
                         }
@@ -488,8 +496,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 int ceiling = BossUnlockCeiling();
-                int boss = Math.Max(0, c.bossID - 1);
-                if (ceiling > 0 && boss >= ceiling)
+                if (BossScale.IsPastBossCeiling(c.effectiveBossID(), ceiling))
                     list.Add(new Rec
                     {
                         System = "Boss push",
@@ -777,7 +784,7 @@ namespace NGUAdvisor.Managers
                 // left to beat, so stats are the bottleneck to progress. Reuses the same ceiling signal
                 // the EXP-promote uses. ceiling0 == true means the climb is DONE (farming).
                 bool ceiling0 = false;
-                try { ceiling0 = c.bossID - 1 >= BossUnlockCeiling(); } catch { }
+                try { ceiling0 = BossScale.IsPastBossCeiling(c.effectiveBossID(), BossUnlockCeiling()); } catch { }
 
                 // HYBRID membership (user rule): when a MANUAL profile names diggers for this phase, THAT
                 // list is the candidate pool — the advisor adds no fill-every-slot filler on top of it. It
@@ -963,7 +970,10 @@ namespace NGUAdvisor.Managers
         private static string Mode(ProgressionAnalyzer.Progression prog)
         {
             if (prog.Activity != null && prog.Activity.StartsWith("Challenge")) return "challenge";
-            if (prog.NextGoal != null && prog.NextGoal.IndexOf("Titan", StringComparison.OrdinalIgnoreCase) >= 0) return "push";
+            // Push = actively chasing a titan kill. Goals use "T#" shorthand (e.g. "B125 -> kill T7"),
+            // so match a T followed by a digit as well as the literal word "Titan" (Sadistic goal).
+            if (prog.NextGoal != null && (prog.NextGoal.IndexOf("Titan", StringComparison.OrdinalIgnoreCase) >= 0
+                || System.Text.RegularExpressions.Regex.IsMatch(prog.NextGoal, "T\\d"))) return "push";
             return "farm";
         }
 

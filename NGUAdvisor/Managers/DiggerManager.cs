@@ -271,17 +271,15 @@ namespace NGUAdvisor.Managers
                 Diggers[id].curLevel = curLevel;
             else
             {
-                var num1 = (long)Math.Floor(Math.Log(cap / _dc.baseGPSDrain[id], _dc.gpsGrowthRate[id]) + 1L);
-                if (num1 < curLevel)
-                    num1 = curLevel;
-                if (num1 > Diggers[id].maxLevel)
-                    num1 = Diggers[id].maxLevel;
-                Diggers[id].curLevel = num1;
-                // Levels only — membership belongs to EquipDiggers / ReconcileAdvisorDiggers. The two
-                // activateDigger arms that lived here were unreachable (RecapDiggers only ever calls this
-                // for already-active diggers, whose level is >= 1, so num1 >= 1), and reachable or not they
-                // toggled ActiveDiggers from inside RecapDiggers' foreach over that same live list — an
-                // enumerator-invalidating InvalidOperationException waiting to happen.
+                // Level number is pure math (game auto-level formula), extracted + headless-tested in
+                // DiggerMath.MaxAffordableLevel (audit M5). Structurally identical to the old inline
+                // floor(log)+clamps; only the arithmetic moved.
+                Diggers[id].curLevel = DiggerMath.MaxAffordableLevel(
+                    cap, _dc.baseGPSDrain[id], _dc.gpsGrowthRate[id], _dc.drain(id, 1, true),
+                    curLevel, Diggers[id].maxLevel);
+                // Levels only — membership belongs to EquipDiggers / ReconcileAdvisorDiggers. The
+                // overshoot revert stays here: it reads the whole active set's live drain, which is
+                // game-coupled and not part of the pure per-digger formula.
                 if (_character.grossGoldPerSecond() < _dc.totalGPSDrain())
                     Diggers[id].curLevel = curLevel;
             }

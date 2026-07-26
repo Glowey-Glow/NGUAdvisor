@@ -315,7 +315,7 @@ namespace NGUAdvisor.Managers
 
         private static string TitanName(int i, int v)
         {
-            string name = i >= 0 && i < TitansPanel.Abbrev.Length ? TitansPanel.Abbrev[i] : $"T{i + 1}";
+            string name = i >= 0 && i < TitanTables.Abbrev.Length ? TitanTables.Abbrev[i] : $"T{i + 1}";
             return OptimizationAdvisor.AkVersionCount(i) > 1 ? $"{name} v{v}" : name;
         }
 

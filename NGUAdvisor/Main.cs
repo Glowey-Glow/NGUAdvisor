@@ -34,13 +34,11 @@ namespace NGUAdvisor
         private static CustomAllocation _profile;
         public static CustomAllocation Profile => _profile;
         private float _timeLeft = 10.0f;
-        private int _lastProgress = -1;
         private static GUIStyle _overlayStyle;
         private static float _overlayStyleScale = -1f;
-        public static SettingsForm settingsForm;
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
-        public const string Version = "1.2.1";
+        public const string Version = "2.0.0";
         // Build stamp, derived automatically from the hot-reload assembly identity (NGUAdvisor.r<yyMMddHHmmss>,
         // the unique per-compile name that already exists for Mono byte-load dedup). Replaces the old
         // hand-bumped codename — every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
@@ -81,13 +79,14 @@ namespace NGUAdvisor
         // Unity/WinForms objects (doing so hard-crashes the game). Instead they set these flags, which the
         // main-thread Update() drains. See the deferred handling in Update().
         private static volatile bool _reloadAllocationPending;
-        private static volatile bool _reloadProfilesPending;
         private static volatile bool _reloadSettingsPending;
 
         // MAIN-THREAD RULE: WinForms handlers (profile Switch/Apply buttons etc.) must NEVER call
         // LoadAllocation directly — allocation work touches Unity objects and hard-crashes off the
         // Unity thread (user-reported: dashboard Switch crash). They request; Update() drains.
         public static void RequestAllocationReload() => _reloadAllocationPending = true;
+        // Same deferral for a full config re-read (settings + form + allocation), mirroring ConfigWatcher.
+        public static void RequestSettingsReload() => _reloadSettingsPending = true;
 
         public static FileSystemWatcher ConfigWatcher;
         public static FileSystemWatcher AllocationWatcher;
@@ -182,14 +181,15 @@ namespace NGUAdvisor
             Try(() => CancelInvoke("QuickStuff"));
             Try(() => CancelInvoke("SetResnipe"));
             Try(() => CancelInvoke("ShowBoostProgress"));
-
-            Try(() => settingsForm.Close());
-            Try(() => settingsForm.Dispose());
-            Try(ProfileEditorForm.CloseEditor);
+            Try(() => CancelInvoke("UiBridgeTick"));
 
             Try(() => ConfigWatcher.Dispose());
             Try(() => AllocationWatcher.Dispose());
             Try(() => ZoneWatcher.Dispose());
+
+            // Dispose the UI bridge before the writers close: it pokes its own pipe so the accept
+            // thread unblocks (Mono can't interrupt a native WaitForConnection) and joins it.
+            Try(() => { if (_uiBridge != null) _uiBridge.Dispose(); _uiBridge = null; });
 
             Try(() => LootWriter.Close());
             Try(() => CombatWriter.Close());
@@ -283,8 +283,6 @@ namespace NGUAdvisor
                     Log($"Created default settings");
                 }
 
-                settingsForm = new SettingsForm();
-
                 Settings.SetSaveDisabled(true);
 
                 if (string.IsNullOrEmpty(Settings.AllocationFile))
@@ -293,7 +291,6 @@ namespace NGUAdvisor
                 Settings.SetSaveDisabled(false);
 
                 LoadAllocation();
-                LoadAllocationProfiles();
 
                 ZoneWatcher = new FileSystemWatcher
                 {
@@ -339,23 +336,29 @@ namespace NGUAdvisor
                 // These fire on background threads; defer the actual work (which reloads allocations and
                 // touches Unity/WinForms) to the main thread via flags drained in Update().
                 AllocationWatcher.Changed += (sender, args) => { _reloadAllocationPending = true; };
-                AllocationWatcher.Created += (sender, args) => { _reloadProfilesPending = true; };
-                AllocationWatcher.Deleted += (sender, args) => { _reloadProfilesPending = true; };
-                AllocationWatcher.Renamed += (sender, args) => { _reloadProfilesPending = true; };
 
                 Settings.SaveSettings();
                 Settings.LoadSettings();
 
                 ZoneStatHelper.CreateOverrides(_dir);
 
-                settingsForm.UpdateFromSettings(Settings);
-                settingsForm.Show();
+                // Fail-closed game-version gate (P0-3): if the game build changed out from under a
+                // previous baseline, hold automation in observe-only (a patch can silently move the
+                // values we read). Reads/HUD stay live; see CompatibilityGate.
+                Managers.CompatibilityGate.Initialize(_dir);
 
                 InvokeRepeating("AutomationRoutine", 0.0f, 10.0f);
                 InvokeRepeating("MonitorLog", 0.0f, 1f);
                 InvokeRepeating("QuickStuff", 0.0f, .5f);
                 InvokeRepeating("ShowBoostProgress", 0.0f, 60.0f);
                 InvokeRepeating("SetResnipe", 0f, 1f);
+
+                // Out-of-process modern UI (M1): start the headless snapshot publisher and push ~1/s
+                // on the Unity main thread. The companion WebView2 host renders it read-only.
+                _uiBridge = new UiBridge();
+                _uiBridge.Start();
+                InvokeRepeating("UiBridgeTick", 1f, 1f);
+                MaybeLaunchCompanion();
             }
             catch (Exception e)
             {
@@ -365,14 +368,67 @@ namespace NGUAdvisor
             }
         }
 
-        // Settings saves used to rebuild the ENTIRE legacy form synchronously — with the advisor
-        // writing settings constantly, that ran heavy list refreshes mid-click (and during Start,
-        // BEFORE the form ever showed: a throw there = no GUI at all). Saves now only request;
-        // Update() coalesces bursts and refreshes at most once a second, guarded.
-        private static volatile bool _updateFormPending;
-        private static float _formUpdateCooldown;
+        // Auto-launch the out-of-process companion UI (gated by a setting, single-instance, best-effort).
+        private void MaybeLaunchCompanion()
+        {
+            if (Settings == null || !Settings.LaunchCompanion) return;   // opt-in gate; F1 bypasses it via LaunchCompanionNow
+            LaunchCompanionNow();
+        }
 
-        public static void UpdateForm(SavedSettings newSettings) => _updateFormPending = true;
+        // Launch the companion window unconditionally (the F1 hotkey path — an explicit user request, so it
+        // skips the LaunchCompanion opt-in gate). Single-instance + best-effort, same as auto-launch.
+        private void LaunchCompanionNow()
+        {
+            try
+            {
+                // Already running? The companion holds a named single-instance mutex.
+                try { using (System.Threading.Mutex.OpenExisting("NGUAdvisorCompanionSingleton")) { LogDebug("Companion already running; skip auto-launch."); return; } }
+                catch { /* not running -> launch */ }
+                var exe = FindCompanionExe();
+                if (exe == null) { LogDebug("Companion exe not found; skip auto-launch."); return; }
+                // UseShellExecute=true matches the injector's existing proven Process.Start pattern in the Mono domain.
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = exe,
+                    // Pass the game's PID so the companion exits when NGU closes (lifecycle fix): the
+                    // advisor runs in-process, so our PID IS the game's.
+                    Arguments = System.Diagnostics.Process.GetCurrentProcess().Id.ToString(),
+                    WorkingDirectory = Path.GetDirectoryName(exe),
+                    UseShellExecute = true
+                });
+                Log("Auto-launched companion UI.");
+            }
+            catch (Exception e) { LogDebug("Companion launch failed: " + e.Message); }
+        }
+
+        // The companion ships in <injectorDir>\companion\; the injector dir is in injector-path.txt.
+        private string FindCompanionExe()
+        {
+            try
+            {
+                var pathFile = Path.Combine(_dir, "injector-path.txt");
+                if (!File.Exists(pathFile)) return null;
+                var dir = (File.ReadAllText(pathFile) ?? "").Trim();
+                if (dir.Length == 0) return null;
+                var cand = Path.Combine(dir, "companion", "NGUAdvisorCompanion.exe");
+                return File.Exists(cand) ? cand : null;
+            }
+            catch { return null; }
+        }
+
+        // Publishes an advisor-state snapshot to the out-of-process UI once a second (main thread).
+        private void UiBridgeTick()
+        {
+            try { if (_uiBridge != null) _uiBridge.Publish(_timeLeft); }
+            catch (Exception e) { LogDebug("UiBridge tick: " + e.Message); }
+        }
+
+        // Out-of-process modern UI bridge (M1): headless snapshot publisher over named pipe "NGUAdvisorUI".
+        private UiBridge _uiBridge;
+
+        // Retained no-op: the legacy WinForms form is gone, but SavedSettings still calls this on save.
+        // The companion re-reads state from the snapshot stream, so nothing needs to happen here.
+        public static void UpdateForm(SavedSettings newSettings) { }
 
         public void Update()
         {
@@ -381,14 +437,8 @@ namespace NGUAdvisor
             if (_reloadSettingsPending)
             {
                 _reloadSettingsPending = false;
-                try { Settings.LoadSettings(); settingsForm.UpdateFromSettings(Settings); LoadAllocation(); }
+                try { Settings.LoadSettings(); LoadAllocation(); }
                 catch (Exception e) { LogDebug($"Deferred settings reload failed: {e.Message}"); }
-            }
-            if (_reloadProfilesPending)
-            {
-                _reloadProfilesPending = false;
-                try { LoadAllocationProfiles(); }
-                catch (Exception e) { LogDebug($"Deferred profile-list reload failed: {e.Message}"); }
             }
             if (_reloadAllocationPending)
             {
@@ -397,34 +447,13 @@ namespace NGUAdvisor
                 catch (Exception e) { LogDebug($"Deferred allocation reload failed: {e.Message}"); }
             }
 
-            _formUpdateCooldown -= Time.deltaTime;
-            if (_updateFormPending && _formUpdateCooldown <= 0)
-            {
-                _updateFormPending = false;
-                _formUpdateCooldown = 1f;
-                try { settingsForm.UpdateFromSettings(Settings); }
-                catch (Exception e) { LogDebug($"Deferred form update failed: {e.Message}"); }
-            }
+            // Apply any commands the out-of-process UI sent (drained on the main thread, per-command guarded).
+            if (_uiBridge != null) _uiBridge.DrainCommands();
 
-            // Refresh the live status strip in the settings window (main thread; throttled + guarded).
-            settingsForm.UpdateStatus();
-
-            _timeLeft -= Time.deltaTime;
-
-            int progress = (int)Math.Floor(_timeLeft / 10 * 100);
-            if (progress != _lastProgress)
-            {
-                _lastProgress = progress;
-                settingsForm.UpdateProgressBar(progress);
-            }
+            _timeLeft -= Time.deltaTime;   // consumed by OnGUI + UiBridgeTick
 
             if (Input.GetKeyDown(KeyCode.F1))
-            {
-                if (!settingsForm.Visible)
-                    settingsForm.Show();
-
-                settingsForm.BringToFront();
-            }
+                LaunchCompanionNow();   // open the companion window (relaunches it if it was closed)
 
             if (Input.GetKeyDown(KeyCode.F2))
                 Settings.GlobalEnabled = !Settings.GlobalEnabled;
@@ -437,9 +466,6 @@ namespace NGUAdvisor
 
             if (Input.GetKeyDown(KeyCode.F5))
                 DumpEquipped();
-
-            if (Input.GetKeyDown(KeyCode.F9))
-                ProfileEditorForm.ShowEditor(_profilesDir, Settings.AllocationFile);
 
             if (Input.GetKeyDown(KeyCode.F10))
                 Managers.GearOptimizerDiagnostic.Run();
@@ -725,7 +751,7 @@ namespace NGUAdvisor
         {
             try
             {
-                if (!Settings.GlobalEnabled)
+                if (!Settings.GlobalEnabled || !Managers.CompatibilityGate.ActionsAllowed)
                     return;
 
                 var needsAllocation = false;
@@ -864,7 +890,7 @@ namespace NGUAdvisor
         {
             try
             {
-                if (!Settings.GlobalEnabled)
+                if (!Settings.GlobalEnabled || !Managers.CompatibilityGate.ActionsAllowed)
                 {
                     _timeLeft = 10f;
                     return;
@@ -1106,7 +1132,6 @@ namespace NGUAdvisor
                     }
                 }
 
-                settingsForm.UpdateTitanVersions();
             }
             catch (Exception e)
             {
@@ -1129,12 +1154,6 @@ namespace NGUAdvisor
             }
         }
 
-        private static void LoadAllocationProfiles()
-        {
-            string[] files = Directory.GetFiles(_profilesDir);
-            settingsForm.UpdateProfileList(files.Select(Path.GetFileNameWithoutExtension).ToArray(), Settings.AllocationFile);
-        }
-
         private void SnipeZone()
         {
             try
@@ -1144,7 +1163,7 @@ namespace NGUAdvisor
                 CombatHelpers.IsCurrentlyAdventuring = false;
                 CombatHelpers.IsCurrentlyFightingTitan = false;
 
-                if (!Settings.GlobalEnabled)
+                if (!Settings.GlobalEnabled || !Managers.CompatibilityGate.ActionsAllowed)
                     return;
 
                 if (!Character.buttons.adventure.interactable)
@@ -1347,7 +1366,10 @@ namespace NGUAdvisor
                 _overlayStyleScale = scale;
             }
             var style = _overlayStyle;
-            GUI.Label(new Rect(offset, 0 * offset, width, height), $"Automation - {(Settings.GlobalEnabled ? "Active" : "Inactive")}", style);
+            var autoState = !Managers.CompatibilityGate.ActionsAllowed
+                ? "OBSERVE-ONLY (game build changed - see log)"
+                : (Settings.GlobalEnabled ? "Active" : "Inactive");
+            GUI.Label(new Rect(offset, 0 * offset, width * 2f, height), $"Automation - {autoState}", style);
             GUI.Label(new Rect(offset, 1 * offset, width, height), $"Next Loop - {_timeLeft:00.0}s", style);
             GUI.Label(new Rect(offset, 2 * offset, width, height), $"Profile - {Settings.AllocationFile}", style);
             GUI.Label(new Rect(offset, 3 * offset, width, height), $"Action - {LockManager.GetLockTypeName()}", style);
@@ -1463,42 +1485,27 @@ namespace NGUAdvisor
 
         public void SetResnipe()
         {
+            // Trigger PRIORITY is the pure decision in Managers.SnipeTrigger.Decide (audit M5); the live
+            // reads, the static baseline/last-armed state, and the latch side effects stay here.
             bool advisor = Settings.AdvisorGold;
-            string trigger = null;
-            int newZone = -1;
+            bool armNewZone = advisor || Settings.SnipeOnNewZone || Settings.GoldCBlockMode;
+            var best = armNewZone ? ZoneStatHelper.GetBestZone() : null;   // computed only when armed, as before
+            bool allowTimer = !advisor && Settings.SnipeOnTimer && Settings.ResnipeTime > 0;   // timer is manual-only
+            bool timerHit = allowTimer && Math.Abs(Character.rebirthTime.totalseconds - Settings.ResnipeTime) < 1;
 
-            // New zone fightable: previously CBlock-only — now a first-class trigger everywhere.
-            if (advisor || Settings.SnipeOnNewZone || Settings.GoldCBlockMode)
+            var r = Managers.SnipeTrigger.Decide(armNewZone, best != null, best?.Zone ?? -1,
+                _furthestZone, _lastNewZoneTrigger, Settings.GoldSnipeComplete, allowTimer, timerHit);
+
+            if (r.SeedBaseline)
+                _furthestZone = best.Zone;
+
+            if (r.Trigger != null && Settings.GoldSnipeComplete)
             {
-                var best = ZoneStatHelper.GetBestZone();
-                // Reload seeding: the baseline is a static and comes back unknown (-1) after an
-                // advisor reload. With the snipe already complete, adopt the current best zone
-                // silently instead of firing — genuinely new unlocks still trigger from here on.
-                if (best != null && _furthestZone < 0 && Settings.GoldSnipeComplete)
-                    _furthestZone = best.Zone;
-                // > _lastNewZoneTrigger: one arm per zone. Fightability here reflects the equipped
-                // (P/T) gear — if the gold loadout then can't clear the zone, the snipe ratchet
-                // drops back and this would re-fire every second, swapping gear forever.
-                else if (best != null && _furthestZone >= 0 && best.Zone > _furthestZone
-                    && best.Zone > _lastNewZoneTrigger)
-                {
-                    trigger = "new zone fightable";
-                    newZone = best.Zone;
-                }
-            }
-
-            // Timer: manual-only (advisor is event-driven); fires once at ResnipeTime into the run.
-            if (trigger == null && !advisor && Settings.SnipeOnTimer && Settings.ResnipeTime > 0
-                && Math.Abs(Character.rebirthTime.totalseconds - Settings.ResnipeTime) < 1)
-                trigger = "timer";
-
-            if (trigger != null && Settings.GoldSnipeComplete)
-            {
-                if (newZone >= 0)
-                    _lastNewZoneTrigger = newZone;
+                if (r.NewZone >= 0)
+                    _lastNewZoneTrigger = r.NewZone;
                 Settings.GoldSnipeComplete = false;
-                LastSnipeTrigger = trigger;
-                Log($"Re-snipe: {trigger}");
+                LastSnipeTrigger = r.Trigger;
+                Log($"Re-snipe: {r.Trigger}");
             }
         }
 

@@ -132,11 +132,29 @@ namespace NGUAdvisor.Managers
             _focusTime = DateTime.UtcNow;
             try
             {
-                string objName = chapter <= 4 ? "Power" : "NGUs";
+                // Score against the ACTIVE gear objective — the one the equip logic actually optimises
+                // for — so this gap agrees with what's equipped and with the Re-optimize-now button.
+                // Scoring a fixed objective (NGUs) while gear is equipped for a different one (e.g. Power
+                // on a titan push) reported a phantom "+N%" gap (user-reported: says +11% while the
+                // loadout already agrees). Fall back to the chapter default when no objective is active.
+                // Match the equip logic EXACTLY — same objective AND same forceTopRespawn flag — so the
+                // rec can never advertise a gap the advisor won't act on. forceTopRespawn deliberately
+                // trades objective score for a respawn item; scoring the pure objective (forceRespawn=
+                // false, the old default here) reported that trade as a phantom "+N%" that the equip /
+                // Re-optimize-now path correctly calls "already optimal" (the persistent +11% NGUs). And
+                // when no gear objective is active, the advisor isn't managing gear — advertise no gap.
+                string objName = null; bool forceRespawn = false;
+                try
+                {
+                    objName = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+                    forceRespawn = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn;
+                }
+                catch { }
+                if (string.IsNullOrEmpty(objName)) { _focus = ""; return _focus; }
                 var obj = GearOptimizer.FindObjective(objName);
                 if (obj == null) { _focus = ""; return _focus; }
                 double cur = GearOptimizer.CurrentScore(obj);
-                double opt = GearOptimizer.Optimize(obj).Score;
+                double opt = GearOptimizer.Optimize(obj, forceRespawn).Score;
                 if (cur > 0 && opt > cur)
                 {
                     double pct = (opt / cur - 1.0) * 100.0;

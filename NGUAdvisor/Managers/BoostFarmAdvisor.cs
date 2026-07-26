@@ -57,7 +57,7 @@ namespace NGUAdvisor.Managers
             // NOTE: this materially changes Evil boost-farm vs ITOPOD recommendations — validate in-game.
             new ZoneBoost { Zone = 20, Rolls = new[] { new[] { 200.0, 0.00055, 0.1 }, new[] { 500.0, 0.00055, 0.1 } }, Rooted = true },
             new ZoneBoost { Zone = 21, Rolls = new[] { new[] { 200.0, 0.00012, 0.1 }, new[] { 500.0, 0.00012, 0.1 } }, Rooted = true },
-            new ZoneBoost { Zone = 22, Rolls = new[] { new[] { 500.0, 0.0001, 0.08 }, new[] { 1000.0, 0.0001, 0.08 } }, Rooted = true },
+            new ZoneBoost { Zone = 22, Rolls = new[] { new[] { 500.0, 0.0001, 0.08 }, new[] { 1000.0, 0.0001, 0.06 } }, Rooted = true },
             new ZoneBoost { Zone = 24, Rolls = new[] { new[] { 1000.0, 5E-05, 0.07 }, new[] { 2000.0, 5E-05, 0.07 } }, Rooted = true },
             new ZoneBoost { Zone = 25, Rolls = new[] { new[] { 1000.0, 3E-05, 0.08 }, new[] { 2000.0, 3E-05, 0.08 } }, Rooted = true },
             new ZoneBoost { Zone = 27, Rolls = new[] { new[] { 1000.0, 2.2E-05, 0.09 }, new[] { 2000.0, 2.2E-05, 0.09 } }, Rooted = true },
@@ -86,6 +86,8 @@ namespace NGUAdvisor.Managers
             public double BestRate;       // boost-value per kill
             public double ItopodRate;
             public string Text;
+            public int CurrentZone;       // where the user is adventuring right now (>=1000 = ITOPOD)
+            public bool Compliant;        // already farming the recommended zone
         }
 
         // Farm Best Boost demand gate: boosts only pay while something consumes them — equipped or
@@ -144,7 +146,8 @@ namespace NGUAdvisor.Managers
                     try
                     {
                         // Unlocked = boss requirement met (ZoneHelpers.ZoneUnlocks, indexed by zone).
-                        if (z.Zone >= ZoneHelpers.ZoneUnlocks.Length || c.bossID <= ZoneHelpers.ZoneUnlocks[z.Zone]) continue;
+                        // Gate is single-sourced + headless-tested in BossScale (audit M5).
+                        if (!BossScale.IsZoneUnlocked(c.effectiveBossID(), z.Zone, ZoneHelpers.ZoneUnlocks)) continue;
                         if (ZoneStatHelper.UserOverrides != null && ZoneStatHelper.UserOverrides.TryGetValue(z.Zone, out var st))
                         {
                             if (st.OPower > 0 && attack < st.OPower) continue;   // not one-shottable idle
@@ -188,6 +191,13 @@ namespace NGUAdvisor.Managers
                     v.BestRate = v.ItopodRate;
                     v.Text = $"Best boost farm: ITOPOD (~{v.ItopodRate:0.##} boost-value/kill beats every one-shottable zone)";
                 }
+
+                // Compliance: is the user already adventuring in the recommended zone? ITOPOD is any
+                // floor (adventure.zone >= 1000); a named boost zone must match exactly.
+                int curZone = int.MinValue;
+                try { curZone = c.adventure.zone; } catch { }
+                v.CurrentZone = curZone;
+                v.Compliant = (v.BestZone == -1000) ? (curZone >= 1000) : (curZone == v.BestZone);
                 return v;
             }
             catch (Exception e) { Main.LogDebug($"BoostFarmAdvisor: {e.Message}"); return v; }

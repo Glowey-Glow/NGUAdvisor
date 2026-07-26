@@ -64,16 +64,48 @@ namespace NGUAdvisor.Managers
         // 24HR-completions>=3 as the CBlock2-done proxy.
         private static void Pools(Character c, out double pe, out double pm)
         {
-            pe = PoolE; pm = PoolM;
+            // Difficulty/phase EXP split, single-sourced + headless-tested in ExpRatio (audit M5). This
+            // method does the game-coupled reads; ExpRatio holds the pure ratio matrix.
+            bool isEvil = false, t7Killed = false, magicNgusCapped = false, normalMagicSkew = false;
             try
             {
+                var diff = c.settings.rebirthDifficulty;
+                isEvil = diff == difficulty.evil;
+
                 int t6v = 1;
                 try { t6v = ZoneHelpers.TitanVersion(5); } catch { }
+                int t7v = 0;
+                try { t7v = ZoneHelpers.TitanVersion(6); } catch { }
+                t7Killed = t7v >= 1;                      // "post-T7" once Titan 7 has been killed (v1)
+
+                // Evil ch.5 gate: energy-only begins only once the Ygg (magic NGU 0) and EXP (magic NGU 1)
+                // magic NGUs can be consistently capped — proxied by both reaching a positive target on the
+                // active NGU track (the advisor's own TargetMet rule). Before that, keep buying magic.
+                try { magicNgusCapped = MagicNguAtTarget(c, 0) && MagicNguAtTarget(c, 1); } catch { }
+
                 bool cblock2Done = false;
                 try { cblock2Done = c.challenges.hour24Challenge.curCompletions >= 3; } catch { }
-                if ((t6v >= 2 || cblock2Done) && t6v < 4) { pe = 0.4; pm = 0.6; }
+
+                // Normal-only magic skew (guide D4: post-CBlock2 / T6v2, before T6v4). Guarded to Normal so
+                // it can't leak onto Evil/Sadistic; Evil follows its own rule above.
+                normalMagicSkew = diff == difficulty.normal && (t6v >= 2 || cblock2Done) && t6v < 4;
             }
             catch { }
+            ExpRatio.Split(isEvil, t7Killed, magicNgusCapped, normalMagicSkew, out pe, out pm);
+            // Manual override (companion "Set ratio"): user-set energy share of the EXP pool.
+            try { var mset = Main.Settings; if (mset != null && mset.ExpManualRatio) { pe = Math.Max(0, Math.Min(100, mset.ExpEnergyShare)) / 100.0; pm = 1.0 - pe; } } catch { }
+        }
+
+        // A magic NGU is "capped" (bar consistently fillable) when it has reached a positive target on the
+        // active NGU level track — mirrors NGUBP.TargetMet, minus the target<0 "no target" case (which must
+        // NOT read as capped, or energy-only would start with no magic NGU goal set).
+        private static bool MagicNguAtTarget(Character c, int idx)
+        {
+            // Guide ch.5 means the NORMAL-track Ygg/EXP caps ("Normal NGU Ygg/EXP"): read the normal
+            // target/level even on Evil. The Evil NGU caps are far off and are NOT the trigger
+            // (user-confirmed: "we are not close to Evil NGU cap").
+            var s = c.NGU.magicSkills[idx];
+            return s.target > 0 && s.level >= s.target;
         }
         private const double ShP = 750.0 / 1710, ShC = 640.0 / 1710, ShB = 320.0 / 1710;
 

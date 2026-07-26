@@ -11,6 +11,9 @@ namespace NGUAdvisor.Managers
         private static readonly CardsController _cc = _character.cardsController;
         private static readonly IDictionary<cardBonus, float> _cardValues = new Dictionary<cardBonus, float>();
         public static readonly string[] sortList;
+        // Bonus-type names (enum order, minus "none") — the CardRarities/CardCosts arrays are indexed by
+        // (int)bonusType - 1, so this is the row label set for the companion's card-filter grid.
+        public static readonly string[] bonusTypeNames;
         public static readonly int[] costList = new int[]
             { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35 };
 
@@ -43,6 +46,7 @@ namespace NGUAdvisor.Managers
 
                 var temp = new List<string>();
                 string[] cardBonusTypes = typeof(cardBonus).GetEnumNames().Where(x => x != "none").ToArray();
+                bonusTypeNames = cardBonusTypes;
                 var cardSortOptions = new List<string> { "RARITY", "TIER", "COST", "PROTECTED", "CHANGE", "VALUE", "NORMALVALUE" };
                 foreach (string sortOption in cardSortOptions)
                 {

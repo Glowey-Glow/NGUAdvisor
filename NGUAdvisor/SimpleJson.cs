@@ -133,6 +133,14 @@ namespace SimpleJSON
 
     public abstract partial class JSONNode
     {
+        // P0 (M2): serializing recurses one call frame per nesting level (see the JSONArray/JSONObject
+        // WriteToStringBuilder overrides). A pathologically deep node graph — e.g. built from a crafted
+        // profile — would overflow the call stack, an UNCATCHABLE crash of the whole process. The
+        // container writers bump this depth and stop recursing (emit null) past the cap. Real profiles
+        // nest a handful of levels; 256 is far beyond any legitimate document.
+        internal const int MaxSerializeDepth = 256;
+        [System.ThreadStatic] internal static int SerializeDepth;
+
         #region Enumerators
         public struct Enumerator
         {
@@ -804,24 +812,30 @@ namespace SimpleJSON
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append('[');
-            int count = m_List.Count;
-            if (inline)
-                aMode = JSONTextMode.Compact;
-            for (int i = 0; i < count; i++)
+            if (SerializeDepth >= MaxSerializeDepth) { aSB.Append("null"); return; }   // P0 (M2): guard stack
+            SerializeDepth++;
+            try
             {
-                if (i > 0)
-                    aSB.Append(',');
-                if (aMode == JSONTextMode.Indent)
-                    aSB.AppendLine();
+                aSB.Append('[');
+                int count = m_List.Count;
+                if (inline)
+                    aMode = JSONTextMode.Compact;
+                for (int i = 0; i < count; i++)
+                {
+                    if (i > 0)
+                        aSB.Append(',');
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.AppendLine();
 
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.Append(' ', aIndent + aIndentInc);
+                    m_List[i].WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                }
                 if (aMode == JSONTextMode.Indent)
-                    aSB.Append(' ', aIndent + aIndentInc);
-                m_List[i].WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                    aSB.AppendLine().Append(' ', aIndent);
+                aSB.Append(']');
             }
-            if (aMode == JSONTextMode.Indent)
-                aSB.AppendLine().Append(' ', aIndent);
-            aSB.Append(']');
+            finally { SerializeDepth--; }
         }
     }
     // End of JSONArray
@@ -946,29 +960,35 @@ namespace SimpleJSON
 
         internal override void WriteToStringBuilder(StringBuilder aSB, int aIndent, int aIndentInc, JSONTextMode aMode)
         {
-            aSB.Append('{');
-            bool first = true;
-            if (inline)
-                aMode = JSONTextMode.Compact;
-            foreach (var k in m_Dict)
+            if (SerializeDepth >= MaxSerializeDepth) { aSB.Append("null"); return; }   // P0 (M2): guard stack
+            SerializeDepth++;
+            try
             {
-                if (!first)
-                    aSB.Append(',');
-                first = false;
+                aSB.Append('{');
+                bool first = true;
+                if (inline)
+                    aMode = JSONTextMode.Compact;
+                foreach (var k in m_Dict)
+                {
+                    if (!first)
+                        aSB.Append(',');
+                    first = false;
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.AppendLine();
+                    if (aMode == JSONTextMode.Indent)
+                        aSB.Append(' ', aIndent + aIndentInc);
+                    aSB.Append('\"').Append(Escape(k.Key)).Append('\"');
+                    if (aMode == JSONTextMode.Compact)
+                        aSB.Append(':');
+                    else
+                        aSB.Append(" : ");
+                    k.Value.WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                }
                 if (aMode == JSONTextMode.Indent)
-                    aSB.AppendLine();
-                if (aMode == JSONTextMode.Indent)
-                    aSB.Append(' ', aIndent + aIndentInc);
-                aSB.Append('\"').Append(Escape(k.Key)).Append('\"');
-                if (aMode == JSONTextMode.Compact)
-                    aSB.Append(':');
-                else
-                    aSB.Append(" : ");
-                k.Value.WriteToStringBuilder(aSB, aIndent + aIndentInc, aIndentInc, aMode);
+                    aSB.AppendLine().Append(' ', aIndent);
+                aSB.Append('}');
             }
-            if (aMode == JSONTextMode.Indent)
-                aSB.AppendLine().Append(' ', aIndent);
-            aSB.Append('}');
+            finally { SerializeDepth--; }
         }
 
     }
