@@ -14,12 +14,31 @@ namespace NGUAdvisorLauncher
             try
             {
                 string dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-                string smi = Path.Combine(dir, "injector", "smi.exe");
+                string injector = Path.Combine(dir, "injector");
+                string smi = Path.Combine(injector, "smi.exe");
                 if (!File.Exists(smi))
                 {
                     Console.Error.WriteLine("Could not find injector\\smi.exe next to this launcher.");
                     Console.Error.WriteLine("Run it from the extracted NGU Advisor folder.");
                     return Fail();
+                }
+
+                // The advisor is byte-loaded by smi, so Assembly.Location is empty in-game — write it our
+                // injector path so it can find injector\companion\NGUAdvisorCompanion.exe (auto-launch + F1).
+                // "Run NGU Advisor.bat" writes the same file; keep the two in sync.
+                try
+                {
+                    string low = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "AppData", "LocalLow", "NGUAdvisor");
+                    Directory.CreateDirectory(low);
+                    File.WriteAllText(Path.Combine(low, "injector-path.txt"), injector);
+                }
+                catch (Exception e)
+                {
+                    // Non-fatal: the advisor still injects, only the companion auto-launch/F1 is lost.
+                    Console.Error.WriteLine("Warning: could not write injector-path.txt (" + e.Message +
+                                            ") - the companion window may not open.");
                 }
 
                 var psi = new ProcessStartInfo(smi,
