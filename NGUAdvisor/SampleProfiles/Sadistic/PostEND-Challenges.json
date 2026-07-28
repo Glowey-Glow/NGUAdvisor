@@ -38,12 +38,12 @@
 	"Gear Note 4": "Lock Duck-t Tape and the Max Ascended Looty as the first two items in every gear set so we don't have to worry about EMPC",
     "Gear": [
       {
-        "Time": { 0 }, 
+        "Time": 0, 
         "ID": [ 366, 514,   507, 470, 509, 510,   501, 505,   382, 386, 351, 247,   474,   479, 478, 477, 512, 513, 428, 429, 475, 467 ],
         "GO Notes": "9mm Beretta + Power0AugmentationEBars1Power"
       },
       {
-        "Time": { 5 }, 
+        "Time": 5, 
         "ID": [ 366, 514,   507, 470, 509, 411,   501, 505,   382, 386, 351, 247,   466, 421, 383,   479, 478, 477, 512, 513, 428, 429 ],
         "GO Notes": "9mm Beretta/Fuzzy Boots + Power0AugmentationWandoos3Power"
       }

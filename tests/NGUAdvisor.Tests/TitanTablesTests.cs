@@ -92,6 +92,60 @@ namespace NGUAdvisor.Tests
                     $"T{t + 1} v1 atk must exceed T{t} v1 atk");
         }
 
+        // --------------------------------------------------------------- version counts (UiBridge `ak[].vmax`)
+        // TWO INDEPENDENT SOURCES describe how many versions a titan has: the Ak table's row count, and
+        // ZoneHelpers.IsVersionedTitan's `index >= 5 && index <= 11`. UiBridge publishes the first as `vmax`
+        // while `v` comes from ZoneHelpers.TitanVersion, which is gated on the second — so a disagreement
+        // would ship a chip reading e.g. "v1 of 1" for a titan the game happily advances to v2.
+        //
+        // ZoneHelpers pulls in Unity and cannot be linked into this assembly, so the predicate is MIRRORED
+        // here as a literal copy. That is the point: this test fails if either side moves independently.
+        private static bool IsVersionedTitan(int titanIndex) => titanIndex >= 5 && titanIndex <= 11;
+
+        [Fact]
+        public void VersionCount_matches_Ak_row_count_for_every_titan()
+        {
+            for (int t = 0; t < TitanTables.Ak.Length; t++)
+                Assert.Equal(TitanTables.Ak[t].Length, TitanTables.VersionCount(t));
+        }
+
+        [Fact]
+        public void VersionCount_agrees_with_the_IsVersionedTitan_predicate()
+        {
+            for (int t = 0; t < TitanTables.Ak.Length; t++)
+            {
+                int vmax = TitanTables.VersionCount(t);
+                if (IsVersionedTitan(t))
+                    Assert.True(vmax > 1, $"T{t + 1} is a versioned titan but the Ak table gives it {vmax} version(s)");
+                else
+                    Assert.True(vmax == 1, $"T{t + 1} is unversioned but the Ak table gives it {vmax} versions");
+            }
+        }
+
+        [Fact]
+        public void VersionCount_never_reports_zero_even_off_the_table()
+        {
+            // Tippi (12) and Traitor (13) have no Ak row at all, and the UI would divide by this.
+            Assert.Equal(1, TitanTables.VersionCount(12));
+            Assert.Equal(1, TitanTables.VersionCount(13));
+            Assert.Equal(1, TitanTables.VersionCount(-1));
+            Assert.Equal(1, TitanTables.VersionCount(int.MaxValue));
+        }
+
+        [Fact]
+        public void Every_version_from_1_to_vmax_has_a_readable_Ak_row()
+        {
+            // `vmax` is only useful to the UI if every version it advertises actually resolves to a row —
+            // otherwise "v2 of 4" could still degrade to state "unknown".
+            for (int t = 0; t < TitanTables.Ak.Length; t++)
+            {
+                int vmax = TitanTables.VersionCount(t);
+                for (int v = 1; v <= vmax; v++)
+                    Assert.NotNull(TitanTables.AkRow(t, v));
+                Assert.Null(TitanTables.AkRow(t, vmax + 1));
+            }
+        }
+
         [Fact]
         public void Guide_manual_requirements_increase_across_versions()
         {

@@ -13,10 +13,39 @@ namespace NGUAdvisorCompanion;
 /// </summary>
 public static class ProfileService
 {
+    // C10 (counter-audit): every profile command arrives on its own bare Task.Run (MainForm.TryHandleLocal),
+    // and every public method here is a read-modify-write against ONE file. With nothing serialising them,
+    // two commands in flight interleave: both read the same bytes, both write, and the second erases the
+    // first. Measured on the real code before this gate existed: 40/40 simultaneous deletes lost one of the
+    // two (the loser hitting a Windows sharing violation, because File.ReadAllText/File.WriteAllText are
+    // mutually exclusive), and 4/6 staggered deletes lost one SILENTLY - both calls returned a fresh
+    // timelines message and the row was simply not on disk.
+    //
+    // The gate lives here rather than in MainForm because ProfileService owns the file and must hold the
+    // invariant for EVERY caller, present and future (MainForm is not the only one - the test project links
+    // this file directly). Monitor, not SemaphoreSlim: the critical section is short (~1 ms on a real
+    // profile; 37 ms on a synthetic 4000-breakpoint one) and entirely synchronous, there is no await to
+    // suspend across, and every caller is already off the UI thread inside Task.Run - so nothing the UI
+    // thread does can block on this.
+    //
+    // In-process only, by design: nothing else writes these files (the injector's AllocationWatcher only
+    // reads them), so a cross-process Mutex would buy nothing. A hand-edit in the profile folder while the
+    // editor is open remains possible - that is C3's residual window, not this one.
+    private static readonly object _fileGate = new object();
+
     private static string PathFor(string dir, string name) => Path.Combine(dir, name + ".json");
 
     /// <summary>Build the display-ready timelines message ({type:"timelines", profile, systems:{...}}).</summary>
     public static string BuildTimelinesJson(string dir, string name)
+    {
+        // Reads are gated too: a bare read that lands mid-write throws a sharing violation, which is exactly
+        // how the Timeline Editor's "load" used to fail while another command was saving.
+        lock (_fileGate) { return BuildTimelinesJsonCore(dir, name); }
+    }
+
+    // Caller MUST hold _fileGate. Split out so SaveAndReload can re-read without depending on Monitor
+    // reentrancy (which would silently become a deadlock if this ever moved to SemaphoreSlim).
+    private static string BuildTimelinesJsonCore(string dir, string name)
     {
         var model = ProfileModel.Load(File.ReadAllText(PathFor(dir, name)));
         var sys = new JSONObject();
@@ -39,35 +68,62 @@ public static class ProfileService
         return root.ToString();
     }
 
+    // The profile stores COMPLETION ORDINALS ("BASIC-1".."BASIC-5"), the Challenges page shows friendly
+    // "x N" rows. BreakpointEditor.GroupChallenges does the collapse (one row per contiguous run, target =
+    // the run's highest ordinal); this just serialises a row. Every row carries:
+    //   code/label       - the challenge
+    //   target (+count)  - the friendly "x N"; `count` is the legacy alias, same value
+    //   from             - lowest ordinal in the run (> 1 => the run starts partway in)
+    //   ordinals         - the exact ordinals, so nothing about the row is lossy
+    //   entry            - the token to send back in setChallenges to leave the row EXACTLY as it is
+    //   cap              - the challenge's completion ceiling
+    //   single/partial   - shape flags (from == target / from > 1)
+    //   suspect + repair - present only for the old editor's damage shape (a lone ordinal above 1); the UI
+    //                      must confirm against live completions before offering `repair`, since chained
+    //                      C-block profiles author that shape on purpose.
+    // Live progress is NOT read here (this process has no game): the UI already receives
+    // state.challengeState.queued[{code,cur,max}] and merges it — done = min(cur,target),
+    // "will run" = ordinals where ordinal > cur, met = cur >= target, stuck = cur + 1 < from.
     private static JSONArray ChallengeList(List<string> entries)
     {
         var arr = new JSONArray();
-        if (entries != null)
-            foreach (var e in entries)
-                if (BreakpointEditor.TryParseChallenge(e, out var it))
-                {
-                    var o = new JSONObject();
-                    o["code"] = it.Code;
-                    o["count"] = it.Count;
-                    string label = it.Code;
-                    foreach (var info in SystemCatalog.Challenges)
-                        if (info.Code == it.Code) { label = info.Label; break; }
-                    o["label"] = label;
-                    arr.Add(o);
-                }
+        foreach (var g in BreakpointEditor.GroupChallenges(entries))
+        {
+            var o = new JSONObject();
+            o["code"] = g.Code;
+            o["label"] = g.Label;
+            o["from"] = g.From;
+            o["target"] = g.Target;
+            o["count"] = g.Target;             // legacy alias of target (pre-fix field name)
+            o["cap"] = g.Cap;
+            o["entry"] = g.Entry;
+            var ordinals = new JSONArray();
+            foreach (var n in g.Ordinals) ordinals.Add(n);
+            o["ordinals"] = ordinals;
+            o["single"] = g.Single;
+            o["partial"] = g.Partial;
+            if (g.Suspect) { o["suspect"] = true; o["repair"] = g.Repair; }
+            arr.Add(o);
+        }
         return arr;
     }
 
     /// <summary>
-    /// Write the profile's challenge rotation (flat "CODE-count" list). Canonicalized by BreakpointEditor
-    /// (valid codes, clamped counts, deduped); companion-local write like the timeline editor.
+    /// Write the profile's challenge rotation. `entries` is the EDITOR's vocabulary — "CODE-N"/"CODE*N" for a
+    /// friendly target (expanded to the full CODE-1..CODE-N ordinal range the runtime actually matches on) and
+    /// "CODE-A..B" for an untouched/advanced row, which is what each row's `entry` field is. Canonicalized by
+    /// BreakpointEditor (valid codes, clamped ordinals, deduped on CODE+ORDINAL); companion-local write like
+    /// the timeline editor.
     /// </summary>
     public static string SetChallenges(string dir, string name, string[] entries)
     {
-        var path = PathFor(dir, name);
-        var model = ProfileModel.Load(File.ReadAllText(path));
-        model.Challenges = BreakpointEditor.CanonChallenges(entries);
-        return SaveAndReload(dir, name, path, model);
+        lock (_fileGate)
+        {
+            var path = PathFor(dir, name);
+            var model = ProfileModel.Load(File.ReadAllText(path));
+            model.Challenges = BreakpointEditor.CanonChallenges(entries);
+            return SaveAndReload(dir, name, path, model);
+        }
     }
 
     /// <summary>
@@ -78,11 +134,14 @@ public static class ProfileService
     public static string EditBreakpointTime(string dir, string name, string systemKey, int index, int sec)
     {
         if (sec < 0) sec = 0;
-        var path = PathFor(dir, name);
-        var model = ProfileModel.Load(File.ReadAllText(path));
-        if (!model.SetTimeSeconds(systemKey, index, sec))
-            throw new System.Exception("No breakpoint " + systemKey + "[" + index + "]");
-        return SaveAndReload(dir, name, path, model);
+        lock (_fileGate)
+        {
+            var path = PathFor(dir, name);
+            var model = ProfileModel.Load(File.ReadAllText(path));
+            if (!model.SetTimeSeconds(systemKey, index, sec))
+                throw new System.Exception("No breakpoint " + systemKey + "[" + index + "]");
+            return SaveAndReload(dir, name, path, model);
+        }
     }
 
     /// <summary>
@@ -95,15 +154,18 @@ public static class ProfileService
                                        string payload, string challenge, string target)
     {
         if (sec < 0) sec = 0;
-        var path = PathFor(dir, name);
-        var model = ProfileModel.Load(File.ReadAllText(path));
-        int index = model.AddBreakpoint(systemKey, sec);
-        if (index < 0)
-            throw new System.Exception("Unknown system '" + systemKey + "'.");
-        var r = BreakpointEditor.Apply(model, systemKey, index, sec, payload, challenge, target);
-        if (!r.Ok)
-            throw new System.Exception(r.Error);
-        return SaveAndReload(dir, name, path, model);
+        lock (_fileGate)
+        {
+            var path = PathFor(dir, name);
+            var model = ProfileModel.Load(File.ReadAllText(path));
+            int index = model.AddBreakpoint(systemKey, sec);
+            if (index < 0)
+                throw new System.Exception("Unknown system '" + systemKey + "'.");
+            var r = BreakpointEditor.Apply(model, systemKey, index, sec, payload, challenge, target);
+            if (!r.Ok)
+                throw new System.Exception(r.Error);
+            return SaveAndReload(dir, name, path, model);
+        }
     }
 
     /// <summary>
@@ -114,15 +176,19 @@ public static class ProfileService
                                         string payload, string challenge, string target)
     {
         if (sec < 0) sec = 0;
-        var path = PathFor(dir, name);
-        var model = ProfileModel.Load(File.ReadAllText(path));
-        var r = BreakpointEditor.Apply(model, systemKey, index, sec, payload, challenge, target);
-        if (!r.Ok)
-            throw new System.Exception(r.Error);
-        return SaveAndReload(dir, name, path, model);
+        lock (_fileGate)
+        {
+            var path = PathFor(dir, name);
+            var model = ProfileModel.Load(File.ReadAllText(path));
+            var r = BreakpointEditor.Apply(model, systemKey, index, sec, payload, challenge, target);
+            if (!r.Ok)
+                throw new System.Exception(r.Error);
+            return SaveAndReload(dir, name, path, model);
+        }
     }
 
     // Serialize, structural-validate, write in place, then re-read from disk to confirm the round-trip.
+    // Caller MUST hold _fileGate (every call site is inside a lock (_fileGate) block).
     private static string SaveAndReload(string dir, string name, string path, ProfileModel model)
     {
         var json = model.ToJson();
@@ -130,7 +196,7 @@ public static class ProfileService
         if (!v.Ok)
             throw new System.Exception("Refusing to save invalid profile (" + v.Line + ":" + v.Col + " " + v.Message + ")");
         File.WriteAllText(path, json);
-        return BuildTimelinesJson(dir, name);
+        return BuildTimelinesJsonCore(dir, name);
     }
 
     /// <summary>
@@ -140,11 +206,14 @@ public static class ProfileService
     /// </summary>
     public static string DeleteBreakpoint(string dir, string name, string systemKey, int index)
     {
-        var path = PathFor(dir, name);
-        var model = ProfileModel.Load(File.ReadAllText(path));
-        if (!model.RemoveBreakpoint(systemKey, index))
-            throw new System.Exception("No breakpoint " + systemKey + "[" + index + "]");
-        return SaveAndReload(dir, name, path, model);
+        lock (_fileGate)
+        {
+            var path = PathFor(dir, name);
+            var model = ProfileModel.Load(File.ReadAllText(path));
+            if (!model.RemoveBreakpoint(systemKey, index))
+                throw new System.Exception("No breakpoint " + systemKey + "[" + index + "]");
+            return SaveAndReload(dir, name, path, model);
+        }
     }
 
     // A display row: sec + human `summary` (labels) + `payload` (the canonical editable text the editor

@@ -52,7 +52,7 @@
       {
         "Time": 0,
         "Priorities": [ "CAPHACK-1" ]
-      }
+      },
       {
         "Time": { "h": 1 },
         "Priorities": [ ]
@@ -158,7 +158,7 @@
     "Rebirth": [
 	  {
 	    "Type": "Time",
-	    "Time": { "h": 24 },
+	    "Time": { "h": 24 }
 	  }
 	],
     "Rebirth_bak2": [

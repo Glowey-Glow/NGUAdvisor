@@ -54,7 +54,7 @@
       },
       {
         "Time": { "m": 30 },
-	    "Priorities": [ "RIT-7" }
+	    "Priorities": [ "RIT-7" ]
       },
       {
         "Time": { "h": 1 },

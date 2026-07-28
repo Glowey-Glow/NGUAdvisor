@@ -1,7 +1,7 @@
 {
   "Breakpoints": {
 	"Advisor" : "DISABLE gear switching on titans as swapping every hour will severely hamper hack speed due to recovering R3 Cap",
-	"Yggdrasil": "Set minimum fruit level for swap to 8 or 12 as swapping every hour will severely hamper hack speed due to recovering R3 Cap"
+	"Yggdrasil": "Set minimum fruit level for swap to 8 or 12 as swapping every hour will severely hamper hack speed due to recovering R3 Cap",
     "Energy": [
       {
         "Time": 0,

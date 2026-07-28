@@ -5,7 +5,6 @@
       {
         "Time": 0,
         "Priorities": [ "CAPALLBT", "TM", "WAN", "AUG-8" ],
-        "PrioritiesX": [ "CAPALLBT", "TM", "WAN", "BESTAUG" ],
         "PrioritiesX": [ "CAPALLBT", "TM", "WAN" ],
         "Comment": "AUG commands do not seem to work well at low levels, as it will reserve idle energy it cannot use. Best way to improve AUG is to manually trigger it or use AUG-X and set target levels (if the target is capped the energy will be freed)."
       }
@@ -13,8 +12,8 @@
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "TM", "WAN" ]
-        "PrioritiesX": [ "BR" ]
+        "Priorities": [ "TM", "WAN" ],
+        "PrioritiesX": [ "BR" ],
         "Comment": "BR commands do not seem to work well at low levels. Best way to improve BR is to manually trigger it or make a BR breakpoint with no other priorities."
       }
     ],

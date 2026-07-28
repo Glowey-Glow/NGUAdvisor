@@ -1,6 +1,9 @@
 {
   "Breakpoints": {
-	"Advisor" : "Allocation Tab - Spaghetti/Counterfeit % to 0; Adventure Tab - Turn on Combat (Target: Cave of Many Things, Idle Mode, Allow Fallthrough -> Select ITOPOD after unlocking boss 30); Gold Tab - Turn on CBlock Mode",
+    "Advisor": "Allocation Tab - Spaghetti/Counterfeit % to 0; Adventure Tab - Turn on Combat (Target: Cave of Many Things, Idle Mode, Allow Fallthrough -> Select ITOPOD after unlocking boss 30); Gold Tab - Turn on CBlock Mode",
+    "Block": "Mini-CBlock leg for No Rebirth 1. Chapter 3 lists the block as 'No Rebirth 1, Blind 1, No Time Machine 1' plus the 100 Level Challenges and a 24H; 2.1 takes the 100LCs, 2.2 the NoTM, 2.4 the Blind and the 24H, and this leg takes the No Rebirth. Expect it to take a while, potentially 12+ hours.",
+    "RebirthNotes": "Number 100, the same plan the other three C-Miniblock2.x legs use. The rebirth plan is what ENGAGES the challenge - a scheduled rebirth is redirected into the first eligible entry - so a profile with no rebirth plan never starts its own challenge. Once No Rebirth is running the game blocks rebirth by itself (BaseRebirth.RebirthAvailable checks noRebirthChallenge.inChallenge), so the target cannot cut the run short; it just fires the next rebirth after the challenge ends.",
+    "CommentForNORB": "Make sure to EAT the Yggdrasil Power fruit.",
     "Energy": [
       {
         "Time": 0,
@@ -46,14 +49,19 @@
         "Comment": "Wandoos and Stats"
       }
     ],
-	"Beards": [
-	  {
-		"Time": 0,
-		"List": [ 0, 4 ],
-		"Comment": "Stats and Wandoos"
-	  }  
-	],
-    "RebirthTime": -1,
-	"Challenges": [ ]
+    "Beards": [
+      {
+        "Time": 0,
+        "List": [ 0, 4 ],
+        "Comment": "Stats and Wandoos"
+      }
+    ],
+    "Rebirth": [
+      {
+        "Type": "Number",
+        "Target": 100
+      }
+    ],
+    "Challenges": [ "NORB-1" ]
   }
 }

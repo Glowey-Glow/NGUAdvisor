@@ -58,7 +58,7 @@
       },
       {
         "Time": { "m": 30 },
-	    "Priorities": [ "CAPWAN", "BR", "CAPTM", "ALLNGU" }
+	    "Priorities": [ "CAPWAN", "BR", "CAPTM", "ALLNGU" ]
       },
       {
         "Time": { "h": 2 },

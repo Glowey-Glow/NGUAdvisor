@@ -28,7 +28,7 @@
         "Time": 0,
         "ID": [ 241, 237, 238, 239, 240,   445, 243, 242, 444,   195, 218, 446,   189, 161 ],
         "Default-NGU4TM3Wan": [ 241, 237, 238, 239, 240,   445, 243, 242, 444,   195, 218, 446,   189, 161 ],
-        "NOTM-Gold3Wan3AT": [ 241, 164, 232, 233, 240,   192, 142, 136,   189, 161, 218,   138, 446 ]
+        "NOTM-Gold3Wan3AT": [ 241, 164, 232, 233, 240,   192, 142, 136,   189, 161, 218,   138, 446 ],
         "Comment": "Maximize TM & Wandoos, maximize gold drop accessories for NOTM"
       }
     ],
@@ -56,7 +56,7 @@
     "Rebirth": [
 	  {
 	    "Type": "Number",
-	    "Target": 1000,
+	    "Target": 1000
 	  }
 	],
 	"Challenges": [ 

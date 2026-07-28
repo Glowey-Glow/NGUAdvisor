@@ -75,14 +75,11 @@
 	  },
 	  {
 	    "Type": "Time",
-	    "Time": { "m": 32 },
+	    "Time": { "m": 32 }
 	  }
 	],
-	"Challenges": [ 
-	  "LSC-3", "LSC-4", "LSC-5", "LSC-6", "LSC-7", "LSC-8", "LSC-9", "LSC-10",
-	  "LSC-11", "LSC-12", "LSC-13", "LSC-14", "LSC-15", "LSC-16", "LSC-17", "LSC-18", "LSC-19", "LSC-20",
-				
-	  "BLIND-8", "BLIND-9", "BLIND-10",		
+	"Challenges": [
+	  "BLIND-8", "BLIND-9", "BLIND-10",
 	  "NONGU-8", "NONGU-9", "NONGU-10",		
 	  "TC-6", "TC-7",
 		

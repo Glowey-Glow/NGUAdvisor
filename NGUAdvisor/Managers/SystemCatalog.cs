@@ -71,11 +71,16 @@ namespace NGUAdvisor.Managers
         public class ChallengeInfo
         {
             public readonly string Code, Label;
-            public readonly int Cap;   // max completion count (from observed profile usage)
+            public readonly int Cap;   // highest completion ordinal the game allows (== maxCompletions)
             public ChallengeInfo(string code, string label, int cap) { Code = code; Label = label; Cap = cap; }
         }
 
-        // Challenge codes (from BaseRebirth.ParseChallenges) with a max count. Entries are "CODE-count".
+        // Challenge codes (from BaseRebirth.ParseChallenges) with their completion cap. Profile entries are
+        // "CODE-<ordinal>", where the number is a 1-BASED COMPLETION ORDINAL, NOT a count: BaseRebirth engages
+        // an entry only when ordinal == currentCompletions() + 1, so a five-run Basic rotation is written
+        // ["BASIC-1","BASIC-2","BASIC-3","BASIC-4","BASIC-5"] and ["BASIC-5"] would sit idle until four Basic
+        // completions had been earned by hand. Cap is the ceiling on that ordinal (game maxCompletions is
+        // authoritative; this table is the headless fallback — see BreakpointEditor.ChallengeCap).
         // Labels carry no "Challenge" suffix — every UI that shows them is already in a challenge context.
         public static readonly IReadOnlyList<ChallengeInfo> Challenges = new List<ChallengeInfo>
         {

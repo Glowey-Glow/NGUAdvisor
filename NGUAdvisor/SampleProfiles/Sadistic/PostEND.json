@@ -47,7 +47,7 @@
     ],
     "Gear": [
       {
-        "Time": { 0 }, 
+        "Time": 0, 
         "ID": [ 366, 514,   507, 470, 509, 510,   501, 505,   382, 386, 351, 247,   474,   479, 478, 477, 512, 513, 428, 429, 475, 467 ],
         "GO Notes": "9mm Beretta + Power0AugmentationEBars1Power"
       },
@@ -89,7 +89,7 @@
     "Consumables": [
 	  {
         "Time": 0,
-        "Items": [ "EPOT-B", "MPOT-B", "R3POT-B" ]
+        "Items": [ "EPOT-B", "MPOT-B", "R3POT-B" ],
         "ItemsNoWish": [ "EPOT-B", "MPOT-B" ]
 	  }
     ],

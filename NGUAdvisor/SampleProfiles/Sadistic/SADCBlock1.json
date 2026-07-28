@@ -19,7 +19,7 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "CAPHACK-1:10" ]
+        "Priorities": [ "CAPHACK-1:10" ],
         "PrioritiesDefault": [ "CAPHACK-1:10" ]
       }
     ],

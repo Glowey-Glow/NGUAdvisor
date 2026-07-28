@@ -87,18 +87,53 @@ namespace NGUAdvisor.Tests
         [Fact]
         public void SetChallenges_writes_canonical_rotation_and_reloads()
         {
-            // 24HR kept at 3; LSC 99 clamped to its cap (20); the profile gains a Challenges array.
+            // Editor targets: "24HR x 3" and "LSC x 99". Each expands to the full 1..N ordinal range the
+            // runtime matches on (BaseRebirth wants ordinal == currentCompletions()+1), LSC clamped to its
+            // cap (20); the profile gains a Challenges array. Read back, they collapse to two friendly rows.
             var msg = ProfileService.SetChallenges(_dir, Name, new[] { "24HR-3", "LSC-99" });
             var chal = JSON.Parse(msg)["challenges"].AsArray;
             Assert.Equal(2, chal.Count);
             Assert.Equal("24HR", chal[0]["code"].Value);
             Assert.Equal(3, chal[0]["count"].AsInt);
+            Assert.Equal(3, chal[0]["target"].AsInt);
+            Assert.Equal(1, chal[0]["from"].AsInt);
+            Assert.Equal(3, chal[0]["ordinals"].AsArray.Count);
+            Assert.Equal("24HR-1..3", chal[0]["entry"].Value);
             Assert.Equal("LSC", chal[1]["code"].Value);
             Assert.Equal(20, chal[1]["count"].AsInt);        // clamped
             var disk = OnDisk();
             Assert.Contains("Challenges", disk);
+            Assert.Contains("24HR-1", disk);                 // the whole range is on disk, not just the target
+            Assert.Contains("24HR-3", disk);
             Assert.Contains("LSC-20", disk);
             Assert.Contains("FutureSystem", disk);           // passthrough survived
+        }
+
+        // THE DATA-LOSS REGRESSION, end to end on a real file: open the shipped CBlock3.1-E100LC rotation in
+        // the Challenges page and save it back untouched. The old editor deduped on CODE and left ["100LC-1"],
+        // silently reducing a working five-challenge rotation to one.
+        [Fact]
+        public void Opening_and_saving_a_five_challenge_rotation_changes_nothing_on_disk()
+        {
+            var shipped = new[] { "100LC-1", "100LC-2", "100LC-3", "100LC-4", "100LC-5" };
+            ProfileService.SetChallenges(_dir, Name, new[] { "100LC-1..5" });
+            var before = OnDisk();
+            foreach (var e in shipped) Assert.Contains("\"" + e + "\"", before);
+
+            // What the page displays: ONE row, "100 Level x 5".
+            var chal = JSON.Parse(ProfileService.BuildTimelinesJson(_dir, Name))["challenges"].AsArray;
+            Assert.Equal(1, chal.Count);
+            Assert.Equal(5, chal[0]["target"].AsInt);
+            Assert.Equal("100LC-1..5", chal[0]["entry"].Value);
+            Assert.False(chal[0]["suspect"].AsBool);
+
+            // Save it back exactly as displayed -> the file is byte-identical.
+            ProfileService.SetChallenges(_dir, Name, new[] { chal[0]["entry"].Value });
+            Assert.Equal(before, OnDisk());
+
+            // And the legacy "count" write ("100LC-5") now expands instead of truncating.
+            ProfileService.SetChallenges(_dir, Name, new[] { "100LC-5" });
+            Assert.Equal(before, OnDisk());
         }
 
         [Fact]

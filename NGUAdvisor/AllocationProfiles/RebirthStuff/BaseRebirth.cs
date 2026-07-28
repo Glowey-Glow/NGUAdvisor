@@ -71,7 +71,12 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
                 return null;
             }
 
-            public bool ChallengeValid() => index <= maxCompletions && index == curCompletions() + 1;
+            // STATELESS — recomputed from live completions on every rebirth, nothing remembers that this
+            // entry already fired. Any "do N more" spelling is therefore impossible here: an entry that
+            // stayed true after firing would fire again, so eligibility must key on a specific ordinal.
+            // The rule lives in BreakpointEditor beside the challenge-format contract so the headless
+            // rotation tests exercise the same code the game does.
+            public bool ChallengeValid() => BreakpointEditor.ChallengeEligible(index, curCompletions(), maxCompletions);
 
             public bool Engage()
             {

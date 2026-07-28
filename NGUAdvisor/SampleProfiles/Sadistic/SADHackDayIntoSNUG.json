@@ -27,7 +27,7 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPTM:10", "CAPALLNGU", "CAPWAN", "BR" ],
+        "Priorities": [ "CAPTM:10", "CAPALLNGU", "CAPWAN", "BR" ]
       },
       {
         "Time": { "h": 24, "m": 30 },

@@ -423,6 +423,15 @@ namespace NGUAdvisor
         // Publishes an advisor-state snapshot to the out-of-process UI once a second (main thread).
         private void UiBridgeTick()
         {
+            // GrowthTracker sampled off the WinForms status pump (SettingsForm), which the 2.0.0 companion
+            // migration deleted — taking the tracker's ONLY feeder with it. _samples stayed empty, so
+            // GrowthTracker.Rate() bailed on "< 2 samples" and every growth chip published rate 0 /
+            // ready:false. This tick is the pump's successor (main thread, once a second) and Tick()
+            // self-throttles to one sample a minute, so it restores the original cadence exactly.
+            // Kept outside the _uiBridge null-check, in its own try, so history builds regardless.
+            try { GrowthTracker.Tick(); }
+            catch (Exception e) { LogDebug("GrowthTracker tick: " + e.Message); }
+
             try { if (_uiBridge != null) _uiBridge.Publish(_timeLeft); }
             catch (Exception e) { LogDebug("UiBridge tick: " + e.Message); }
         }

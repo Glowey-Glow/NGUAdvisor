@@ -1,7 +1,7 @@
 {
   "Breakpoints": {
 	"Advisor" : "Make sure to set the titan's gear to the HACK loadout (or disable gear swapping), we don't want the R3 cap to tank and recover every 60 minutes",
-	"Yggdrasil": "Set minimum fruit level for swap to 8 or 12 as swapping every hour will severely hamper hack speed due to recovering R3 Cap"
+	"Yggdrasil": "Set minimum fruit level for swap to 8 or 12 as swapping every hour will severely hamper hack speed due to recovering R3 Cap",
     "Energy": [
       {
         "Time": 0,
@@ -30,7 +30,7 @@
         "Time": { "h": 1, "m": 30 },
         "ID": [ 326, 312,   322, 342, 317, 348,   332, 388, 350, 331, 327, 295, 450, 351, 276, 328, 297, 451, 320 ],
         "Comment": "Hacks"
-      },
+      }
     ],
     "Wandoos": [
       {

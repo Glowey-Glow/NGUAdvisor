@@ -31,8 +31,10 @@
     <!-- The companion's ACTUAL Timeline-Editor write path (load->mutate->validate->write-in-place->re-read),
          so the end-to-end round-trip is exercised headlessly against a real temp profile file. -->
     <Compile Include="..\..\NGUAdvisorCompanion\ProfileService.cs" Link="Linked\ProfileService.cs" />
+    <Compile Include="..\..\NGUAdvisorCompanion\PipeClient.cs" Link="Linked\PipeClient.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\NumberFormatter.cs" Link="Linked\NumberFormatter.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\TitanTables.cs" Link="Linked\TitanTables.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\CampaignTables.cs" Link="Linked\CampaignTables.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BossScale.cs" Link="Linked\BossScale.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\DiggerMath.cs" Link="Linked\DiggerMath.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\WandoosMath.cs" Link="Linked\WandoosMath.cs" />

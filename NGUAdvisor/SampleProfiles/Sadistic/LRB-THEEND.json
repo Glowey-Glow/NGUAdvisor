@@ -20,7 +20,7 @@
       },
       {
         "Time": { "h": 144 },
-        "Priorities": [ "CAPALLNGU:50" ],
+        "Priorities": [ "CAPALLNGU:50" ]
       },
       {
         "Time": { "h": 206 },
@@ -50,7 +50,7 @@
       },
       {
         "Time": { "h": 144 },
-		"Priorities": [ "BR:5", "CAPALLNGU:50" ],
+		"Priorities": [ "BR:5", "CAPALLNGU:50" ]
       },
       {
         "Time": { "h": 206 },
@@ -104,8 +104,8 @@
         "(AKTitan) Use BBNGU set + Choffice Hat + Replace Respawn with 3 Drop Chance": [ 511, 468,   469, 497, 463, 464,   501, 505,   431, 389, 364,   458,   474,   512, 428, 502,   504, 478, 513, 475, 467, 430 ],
         "(Gold) CDGold7Power": [ 514, 511,   469, 470, 463, 510,   501, 505,   137, 91, 256,   478, 431, 329, 389, 358, 350, 313,   477, 512, 513, 428 ],
 		"(Questing) QuestDropRespawn5NGUAndwishes": [ 415, 468,   469, 497, 463, 464,   501, 505,   466, 385, 257, 314, 170, 293, 329, 236,   136, 118, 171, 379, 446,   428 ],
-		"(Ygg) YggYield": [ 508,   501, 505,   475, 429, 193, 275, 306, 264, 383, 321 ]
-        "(Max Pow) Power": [ 514, 511,   507, 470, 509, 510,   501, 505,   478, 477, 512, 513, 428, 429, 475, 467, 474, 504, 466, 427, 426, 458 ],
+		"(Ygg) YggYield": [ 508,   501, 505,   475, 429, 193, 275, 306, 264, 383, 321 ],
+        "(Max Pow) Power": [ 514, 511,   507, 470, 509, 510,   501, 505,   478, 477, 512, 513, 428, 429, 475, 467, 474, 504, 466, 427, 426, 458 ]
       }
     ],
     "Wandoos": [
@@ -142,7 +142,7 @@
       {
         "Time": { "m": 1365 },
         "Items": [ "MAYO" ],
-		"Note": "Ygg will harvest every 1368 minutes (22h48m) with max quirks"
+		"Note": "Ygg will harvest every 1368 minutes (22h48m) with max quirks",
 		"Note2": "So to get one mayo covering two ygg harvest do each mayo use at 1368*1, 1368*3, 1368*5, 1368*7...etc (take a few minutes off to make sure mayo is running before its time for ygg to harvest)"
       },
       {

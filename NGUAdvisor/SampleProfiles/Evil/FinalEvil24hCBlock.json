@@ -19,7 +19,7 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "CAPHACK-1:10" ]
+        "Priorities": [ "CAPHACK-1:10" ],
         "PrioritiesDefault": [ "CAPHACK-1:10" ]
       }
     ],
@@ -73,9 +73,9 @@
 	  },
 	  {
 	    "Type": "Time",
-	    "Time": { "m": 32 },
+	    "Time": { "m": 32 }
 	  }
 	],
-	"Challenges": [ "24HR-9", "24HR-10" ]
+	"Challenges": [ "24HR-8", "24HR-9", "24HR-10" ]
   }
 }

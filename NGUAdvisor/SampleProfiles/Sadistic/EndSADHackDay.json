@@ -13,7 +13,7 @@
 	  },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN:10", "CAPALLNGU" ],
 		"Comment": "All R3 is dedicated to Hacks, no reason to put any into wishes"
       },
       {
