@@ -203,7 +203,11 @@ namespace NGUAdvisor
         {
             try
             {
-                _dir = Path.Combine(Environment.ExpandEnvironmentVariables("%userprofile%/AppData/LocalLow"), "NGUAdvisor");
+                // GetFullPath canonicalises the separators: the literal below uses forward slashes, so without
+                // it every path derived from _dir is mixed (C:\Users\x/AppData/LocalLow\NGUAdvisor). File APIs
+                // don't care, but anything we hand to the shell does — explorer.exe /select just opens the
+                // Desktop when given one.
+                _dir = Path.GetFullPath(Path.Combine(Environment.ExpandEnvironmentVariables("%userprofile%/AppData/LocalLow"), "NGUAdvisor"));
                 if (!Directory.Exists(_dir))
                     Directory.CreateDirectory(_dir);
 
@@ -466,6 +470,14 @@ namespace NGUAdvisor
 
             if (Input.GetKeyDown(KeyCode.F5))
                 DumpEquipped();
+
+            // F9 kept its old meaning — "open the profile editor" — now that the editor lives in the
+            // companion: open the window if it is closed, then ask the page to show the Profile Editor.
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                LaunchCompanionNow();
+                if (_uiBridge != null) _uiBridge.RequestView("profileEditor");
+            }
 
             if (Input.GetKeyDown(KeyCode.F10))
                 Managers.GearOptimizerDiagnostic.Run();

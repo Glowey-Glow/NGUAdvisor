@@ -2,6 +2,21 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Profile Editor** — every breakpoint in the active profile in one place, grouped by system
+  (Energy/Magic/R3, Gear, Diggers, Beards, Wandoos, NGU difficulty, Consumables, Rebirth). Reachable from
+  the nav, from **Profiles → Edit**, and from **F9** in-game.
+- **Profiles → Open Profile Folder** — opens the profiles folder in Explorer with the active profile
+  selected.
+
+### Fixed
+
+- **F9** works again. It opened the old WinForms profile editor, which 2.0.0 removed; it now opens the
+  Profile Editor in the companion, launching the companion first if it is closed.
+
 ## [2.0.1] - 2026-07-26
 
 A fix release for 2.0.0. Settings and profiles are unchanged — extract over your old copy, or into a new

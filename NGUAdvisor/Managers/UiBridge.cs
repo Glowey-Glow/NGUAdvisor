@@ -65,6 +65,13 @@ namespace NGUAdvisor.Managers
         private readonly LinkedList<JSONObject> _feed = new LinkedList<JSONObject>();
         private int _lastActivitySeq = int.MinValue;
         private string[] _profilesCache;                 // profile names, refreshed ~every 5s (avoid per-tick disk)
+        // One-shot "show this view" request from an in-game hotkey (F9 -> Profile Editor). Snapshots repeat
+        // every second, so the page acts on a CHANGE of `seq`; the node also expires (NavTtlSnaps) so a
+        // companion that opens minutes later doesn't jump to a view the user asked for long ago.
+        private string _navView;
+        private long _navSeq;
+        private long _navUntilSeq;
+        private const int NavTtlSnaps = 15;              // ~15 s at one snapshot/second
         private JSONObject _macguffinsCache;             // static macguffin id->name map (FavoredMacguffin dropdown); built once
         private JSONObject _zonesCache;                  // static non-titan zone id->name map (SnipeZone / GearHuntZone dropdowns); built once
         private JSONObject _advEnemiesCache;             // static adventure enemy spriteId->name map (blacklist picker); built once
@@ -386,6 +393,20 @@ namespace NGUAdvisor.Managers
             catch (Exception e) { try { Main.LogDebug("UiBridge snapshot build failed: " + e); } catch { } return; }
             _latest = json;
             try { _signal.Set(); } catch { }
+        }
+
+        /// <summary>
+        /// Ask the companion page to show a view (the F9 hotkey opens the Profile Editor). Main thread only —
+        /// it is called from Main.Update and read while the snapshot is built on the same thread.
+        /// The request rides the normal snapshot; it expires after <see cref="NavTtlSnaps"/> snapshots so a
+        /// companion launched by the same keypress still catches it, but a later one is not yanked around.
+        /// </summary>
+        public void RequestView(string view)
+        {
+            if (string.IsNullOrEmpty(view)) return;
+            _navView = view;
+            _navSeq++;
+            _navUntilSeq = _seq + NavTtlSnaps;
         }
 
         // ------------------------------------------------------------- background pipe pump
@@ -1484,6 +1505,16 @@ namespace NGUAdvisor.Managers
                     p["launchCompanion"] = settings.LaunchCompanion;
                 }
                 root["profiles"] = p;
+            });
+
+            // --- nav: pending in-game view request (F9), emitted only while fresh ---
+            Safe("nav", () =>
+            {
+                if (_navView == null || _seq > _navUntilSeq) return;
+                var n = new JSONObject();
+                n["view"] = _navView;
+                n["seq"] = (double)_navSeq;
+                root["nav"] = n;
             });
 
             return root.ToString();   // compact — no newlines, so line-framing stays intact

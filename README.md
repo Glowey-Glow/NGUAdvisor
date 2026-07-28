@@ -107,8 +107,9 @@ Which titans the advisor may target, and the combat mode. The readout follows th
 
 ![Challenges](docs/screenshots/challenges.png)
 
-The challenge rotation queued in the active profile (each entry a challenge + target completions), plus live
-challenge progress.
+The challenge rotation queued in the active profile, plus live challenge progress. Each row is a challenge and
+the completion it runs *up to* — the profile itself stores one entry per run, as a 1-based completion ordinal
+(`"BASIC-1" … "BASIC-5"` for five Basic runs), which is what the advisor matches against your completion count.
 
 ## Resources
 
@@ -277,14 +278,25 @@ companion on game load, digger GPS cap, **Unload**).
 
 ### Profiles
 
-Switch the active profile live, toggle auto-profile (the advisor generates allocation), and open the
-profiles folder.
+Switch the active profile live and toggle auto-profile (the advisor generates allocation). Under **Profile
+files**, **Edit** opens the Profile Editor and **Open Profile Folder** shows the profile `.json` files in
+Explorer, with the active one selected.
+
+### Profile Editor
+
+Every breakpoint in the active profile, one system at a time — Energy, Magic, R3, Gear, Diggers, Beards,
+Wandoos OS, NGU difficulty, Consumables and Rebirth. Add, edit and delete breakpoints; each change is
+validated, written to the profile file, and picked up by the advisor without a restart.
+
+The editor always follows the **active** profile, so switch profiles on the Profiles page first. Press
+**F9** in the game window to jump straight here (it opens the companion first if it is closed).
 
 # Profiles & allocation
 
 A profile (`profiles/<name>.json`) is a set of **breakpoints** grouped by lane. Every breakpoint has a
 **`Time`** (rebirth time) and a payload; the advisor applies the latest breakpoint whose time has passed.
-Edit them in the companion's timeline editors or in the JSON directly.
+Edit them in the [Profile Editor](#profile-editor) (all lanes in one place, **F9**), in each system view's
+timeline editor, or in the JSON directly.
 [Sample profiles](https://github.com/Glowey-Glow/NGUAdvisor/tree/main/SampleProfiles) ship with the release.
 
 **Time** is seconds (`86400`) or an object: `{ "h": 1, "m": 30, "s": 20 }`.
@@ -365,6 +377,10 @@ Simple: `"RebirthTime": 86400` (rebirth at that many seconds; `-1` = never). Or 
 **Challenges** — rebirth into challenges with `"Challenges": ["BASIC-1", "TC-1"]` (code + 1-based number):
 `BASIC`, `NOAUG`, `24HR`, `100LC`, `NOEC`, `TC`, `NORB`, `LSC`, `BLIND`, `NONGU`, `NOTM`.
 
+The number is the *completion ordinal*, not a count — an entry runs only when it would earn exactly that
+completion. So five Basic runs is `["BASIC-1", "BASIC-2", "BASIC-3", "BASIC-4", "BASIC-5"]`; `["BASIC-5"]` on
+its own does nothing until four Basic completions already exist. Order matters: the first eligible entry wins.
+
 ## Consumables
 
 `"Consumables": [ { "Time": 0, "Items": ["EPOT-B", "MPOT-B:5"] } ]` — add `:N` for a count (beta potions and
@@ -400,3 +416,4 @@ defaults are on the [Default Zone Stats wiki](https://github.com/Glowey-Glow/NGU
 | **F5** | Dump equipped gear IDs to the log (for `Gear` breakpoints). |
 | **F7** | Quickload the F3 save. |
 | **F8** | Toggle the Quick Loadout / Diggers / Beards temp-swap. |
+| **F9** | Open the [Profile Editor](#profile-editor) in the companion (opens the companion first if closed). |

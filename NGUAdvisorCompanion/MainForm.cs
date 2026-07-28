@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -182,6 +183,12 @@ public sealed class MainForm : Form
                 case "loadLog":
                     LoadLog(GetStr(root, "dir"), GetStr(root, "type"));
                     return true;
+                case "openProfileFolder":
+                    OpenProfileFolder(GetStr(root, "dir"), GetStr(root, "name"));
+                    return true;
+                case "focusWindow":
+                    FocusWindow();
+                    return true;
                 default:
                     return false;
             }
@@ -317,6 +324,61 @@ public sealed class MainForm : Form
             }
             PostToWeb(payload);
         });
+    }
+
+    // Open the profiles folder in Explorer, selecting the named profile's file when it exists. Companion-local
+    // (the injector has no business shelling out for a UI affordance). Outcome is posted back so the page can
+    // show a message instead of the click appearing to do nothing.
+    private void OpenProfileFolder(string dir, string name)
+    {
+        string error = null;
+        try
+        {
+            if (string.IsNullOrEmpty(dir)) error = "No profile folder is known yet.";
+            else if (!Directory.Exists(dir)) error = "Profile folder not found: " + dir;
+            else
+            {
+                // MUST normalise first. The advisor builds its data dir from "%userprofile%/AppData/LocalLow",
+                // so the path it reports mixes separators (C:\Users\x/AppData/LocalLow\NGUAdvisor\profiles).
+                // Every file API tolerates that, but explorer.exe's /select does NOT — it silently gives up and
+                // opens the Desktop instead. GetFullPath canonicalises the separators.
+                dir = Path.GetFullPath(dir);
+                string file = null;
+                if (!string.IsNullOrEmpty(name) && name.IndexOf('/') < 0 && name.IndexOf('\\') < 0 && !name.Contains(".."))
+                {
+                    var cand = Path.Combine(dir, name + ".json");
+                    if (File.Exists(cand)) file = cand;
+                }
+                // /select needs explorer.exe directly; a bare folder opens through the shell.
+                var psi = file != null
+                    ? new ProcessStartInfo("explorer.exe", "/select,\"" + file + "\"")
+                    : new ProcessStartInfo(dir) { UseShellExecute = true };
+                Process.Start(psi);
+            }
+        }
+        catch (Exception ex) { error = ex.Message; }
+        PostToWeb(JsonSerializer.Serialize(new { type = "profileFolder", ok = error == null, error }));
+    }
+
+    // Bring the companion forward when an in-game hotkey asks for a view (F9). Windows may refuse to steal
+    // focus from the foreground game, in which case the taskbar button flashes instead — still a signal.
+    private void FocusWindow()
+    {
+        if (IsDisposed) return;
+        try
+        {
+            BeginInvoke(() =>
+            {
+                try
+                {
+                    if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+                    Activate();
+                    BringToFront();
+                }
+                catch { }
+            });
+        }
+        catch { }
     }
 
     private void PostToWeb(string json)

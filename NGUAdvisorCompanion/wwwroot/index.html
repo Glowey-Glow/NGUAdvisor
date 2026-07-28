@@ -244,6 +244,16 @@
   .seg-btn { font-family: var(--mono); font-size: 11px; letter-spacing: .05em; color: var(--muted); background: none; border: 0; padding: 6px 13px; cursor: pointer; }
   .seg-btn.active { color: var(--text); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent); }
   .seg-btn:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+  /* Profile Editor system tabs. Deliberately NOT .seg-btn: that class belongs to the ADVISOR/MANUAL
+     decisions control, whose delegated handler would hijack these clicks (same reason as .dseg-btn).
+     A wrapping pill row rather than a .seg strip, because ten systems overflow one line. */
+  .pe-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+  .pe-tab { font-family: var(--mono); font-size: 11px; letter-spacing: .05em; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  .pe-tab:hover { color: var(--text); border-color: var(--accent); }
+  .pe-tab.active { color: var(--text); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent); border-color: var(--accent); }
+  .pe-tab:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
+  .pe-tab .pe-count { color: var(--faint); }
+  .pe-tab.active .pe-count { color: var(--muted); }
   .switch { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--muted); cursor: pointer; user-select: none; }
   .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
   .switch .sw { width: 34px; height: 19px; border-radius: 100px; background: var(--ground-2); border: 1px solid var(--border); position: relative; transition: background .15s, border-color .15s; }
@@ -448,7 +458,7 @@
   .fill { box-shadow: none; transition: width .8s cubic-bezier(.2,.7,.2,1); }
   /* accent pops */
   .navitem.active { background: linear-gradient(135deg, rgba(124,92,255,.30), rgba(34,211,238,.12)); box-shadow: inset 2px 0 0 var(--accent-dim); }
-  .seg-btn.active { background: linear-gradient(135deg, rgba(124,92,255,.30), rgba(34,211,238,.14)); box-shadow: inset 0 -2px 0 var(--accent); color: var(--text); }
+  .seg-btn.active, .pe-tab.active { background: linear-gradient(135deg, rgba(124,92,255,.30), rgba(34,211,238,.14)); box-shadow: inset 0 -2px 0 var(--accent); color: var(--text); }
   .pill.on { color:#04160c; background: linear-gradient(135deg,#4ee79a,#22c07a); border-color: transparent; box-shadow: none; }
   .chip.evil { color: var(--crit); background: var(--crit-bg); border-color: color-mix(in srgb, var(--crit) 40%, var(--border)); box-shadow: none; }
   /* NEW STANDARD: semantic state carries a shape/label, not colour alone (colourblind-safe). */
@@ -574,6 +584,7 @@
       <button class="navitem" data-view="rebirth"><span class="ni-dot" aria-hidden="true"></span>Rebirth</button>
       <button class="navitem" data-view="settings"><span class="ni-dot" aria-hidden="true"></span>Settings</button>
       <button class="navitem" data-view="profiles"><span class="ni-dot" aria-hidden="true"></span>Profiles</button>
+      <button class="navitem" data-view="profileEditor"><span class="ni-dot" aria-hidden="true"></span>Profile Editor</button>
     </div>
   </nav>
 
@@ -713,6 +724,28 @@
             </div>
             <button class="btn tl-add" type="button">+ Add breakpoint</button>
           </div>
+        </div>
+      </section>
+
+      <!-- ===== PROFILE EDITOR (the pre-2.0 F9 editor, rebuilt here; F9 still opens it) =====
+           Every breakpoint system of the active profile in one place, one tab at a time. The rows are
+           produced by the same tlBlockHtml the System Views use, so Add / Edit / Delete are the existing
+           delegated handlers — this view adds no write path of its own. -->
+      <section class="view" id="view-profileEditor">
+        <div class="sysview-head">
+          <div class="sh-title"><h2>Profile Editor</h2></div>
+          <div class="sh-controls">
+            <button class="btn js-openfolder" id="peOpenFolder" type="button">Open profile folder</button>
+          </div>
+        </div>
+        <div class="readout ok">
+          <div class="rhead"><span class="lbl">Editing profile</span><span class="badge ok" id="peProfile">—</span></div>
+          <div class="rec">Every breakpoint in the active profile, grouped by system. Edits save straight to the profile file and the advisor picks them up.</div>
+          <div class="why">The editor follows the active profile — switch profiles on the Profiles page. <b>F9</b> in-game opens this view.</div>
+        </div>
+        <div class="manual">
+          <div class="pe-tabs" id="peTabs" role="tablist" aria-label="Profile systems"></div>
+          <div id="peBody"><div class="mh"><span class="hint">Loading the active profile…</span></div></div>
         </div>
       </section>
 
@@ -1257,9 +1290,11 @@
     // ---- navigation ----
     var crumbGrp = document.getElementById("crumb-grp");
     var crumbTitle = document.getElementById("crumb-title");
-    var groupOf = { overview:"Dashboard", titans:"Progression", resources:"Resources", boosts:"Gear", gold:"Economy" };
+    var groupOf = { overview:"Dashboard", titans:"Progression", resources:"Resources", boosts:"Gear", gold:"Economy",
+                    profileEditor:"Profile & Setup" };
     Object.keys(VIEWS).forEach(function(k){ groupOf[k] = VIEWS[k].grp; });
-    var titleOf = { overview:"Overview", titans:"Titans", resources:"Energy / Magic / R3", boosts:"Boosts", gold:"Gold" };
+    var titleOf = { overview:"Overview", titans:"Titans", resources:"Energy / Magic / R3", boosts:"Boosts", gold:"Gold",
+                    profileEditor:"Profile Editor" };
     Object.keys(VIEWS).forEach(function(k){ titleOf[k] = VIEWS[k].title; });
 
     function show(key){
@@ -1742,10 +1777,12 @@
     });
   }
 
-  var _profBuilt=false, _tlKey=null, _tlDir=null, _tlName=null;
+  var _profBuilt=false, _tlKey=null, _tlDir=null, _tlName=null, _profDir=null, _profActive=null;
   function renderProfiles(s){
     var view = $("view-profiles"); if(!view) return;
     var prof = s.profiles||{}, list = prof.list||[];
+    if(prof.dir) _profDir = prof.dir;      // kept even with no active profile, so "Open Profile Folder" still works
+    if(prof.active) _profActive = prof.active;
     // request the active profile's timelines from the companion when it (or its dir) changes
     var tlKey=(prof.dir||"")+"|"+(prof.active||"");
     if(prof.dir && prof.active && tlKey!==_tlKey){ _tlKey=tlKey; _tlDir=prof.dir; _tlName=prof.active; window.__ngu.send({cmd:"loadTimelines", dir:prof.dir, name:prof.active}); }
@@ -1764,6 +1801,13 @@
           '<div class="field"><label>Auto-launch this UI on game load</label>'+
             '<label class="switch" style="margin-top:2px"><input type="checkbox" role="switch" id="launchCompanionToggle"><span class="sw" aria-hidden="true"></span><span id="launchCompanionLabel">ON</span></label>'+
           '</div>'+
+        '</div>'+
+        // Edit rides the existing [data-view] router; Open folder is a companion-local shell call.
+        '<div class="seclabel"><span class="eyebrow">Profile files</span></div>'+
+        '<div class="actionrow" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">'+
+          '<button class="btn" type="button" data-view="profileEditor">Edit</button>'+
+          '<button class="btn js-openfolder" type="button">Open Profile Folder</button>'+
+          '<span class="hint" style="color:var(--faint);font-size:11.5px">Edit opens the Profile Editor (also <b>F9</b> in-game); the folder holds the profile <span class="mut">.json</span> files.</span>'+
         '</div>';
       _profBuilt=true; sel=$("profileSelect");
     } else if(sel.options.length !== list.length){
@@ -1824,6 +1868,36 @@
       if(keys.some(function(k){ return TIMELINES[k]; })) renderTimelineInto(view, keys);
     });
     try{ renderChallenges(tl); }catch(e){}
+    try{ renderProfileEditor(); }catch(e){}
+  }
+
+  // --- Profile Editor: the pre-2.0 F9 editor, rebuilt as a view. Every breakpoint system of the ACTIVE
+  //     profile behind a tab strip (the old editor's tabs). Rows come from tlBlockHtml, so Add / Edit /
+  //     Delete are the same delegated handlers the System Views use — no second write path. ---
+  var PE_SYSTEMS = ["energy","magic","r3","gear","diggers","beards","wandoos","ngudiff","consumables","rebirth"];
+  var _peTab = PE_SYSTEMS[0];
+  function renderProfileEditor(){
+    var tabs=$("peTabs"), body=$("peBody"); if(!tabs || !body) return;
+    var badge=$("peProfile"); if(badge) badge.textContent = _tlName || "—";
+    if(!TIMELINES || !Object.keys(TIMELINES).length){
+      tabs.innerHTML = "";
+      body.innerHTML = '<div class="mh"><span class="hint">No profile loaded yet.</span></div>';
+      return;
+    }
+    if(PE_SYSTEMS.indexOf(_peTab) < 0) _peTab = PE_SYSTEMS[0];
+    tabs.innerHTML = PE_SYSTEMS.map(function(k){
+      var n = (TIMELINES[k]||[]).length, on = (k===_peTab);
+      return '<button class="pe-tab'+(on?" active":"")+'" type="button" role="tab" data-petab="'+esc(k)+'" '+
+        'aria-selected="'+(on?"true":"false")+'">'+esc(SYS_TITLE[k]||k)+' <span class="pe-count">'+n+'</span></button>';
+    }).join("");
+    body.innerHTML = tlBlockHtml(_peTab, TIMELINES[_peTab], false);
+  }
+
+  // Programmatic navigation. show() lives in the design-layer IIFE and is not reachable here, so we click
+  // the nav item and let that block's delegated [data-view] router do the work (same route as a user click).
+  function gotoView(key){
+    var n = document.querySelector('.navitem[data-view="'+key+'"]');
+    if(n) n.click();
   }
 
   // --- Challenge rotation editor (finalize slice 3): profile "Challenges" array of {code,count}, edited via
@@ -2173,7 +2247,7 @@
     });
   }
 
-  var _seen=false;
+  var _seen=false, _lastNavSeq=null;
   // transient action-result toast; window-scoped so the [data-action] handler (a separate IIFE) can also fire it.
   window.showToast = function(msg){
     var t=document.getElementById("toast"); if(!t || !msg) return;
@@ -2186,6 +2260,13 @@
     if(s.notice) window.showToast(s.notice);   // one-shot outcome of a button action (advisor emits once, then clears)
     if(s.type==="status"){ document.title = s.connected ? "NGU Advisor" : "NGU Advisor — connecting…"; return; }
     if(s.type==="timelines"){ try{ renderTimelines(s); }catch(e){} return; }
+    if(s.type==="profileFolder"){ if(!s.ok && window.showToast) window.showToast("Couldn't open the profile folder: "+(s.error||"unknown error")); return; }
+    // In-game view request (F9 -> Profile Editor). The injector repeats it for a few seconds and stamps a
+    // seq, so we act on a CHANGE — a companion launched by that same keypress still catches the first one.
+    if(s.nav && s.nav.view && s.nav.seq !== _lastNavSeq){
+      _lastNavSeq = s.nav.seq;
+      try{ gotoView(s.nav.view); window.__ngu.send({cmd:"focusWindow"}); }catch(e){}
+    }
     // Log drawer: the injector sends its log dir; the companion reads the selected file (window-scoped so
     // the drawer script block, a separate IIFE, shares reqLog/_logDir with this one).
     if(s.type==="log"){ var lt=document.getElementById("logtext"); if(lt){ lt.textContent = s.text || "(empty)"; lt.scrollTop = lt.scrollHeight; } return; }
@@ -2379,6 +2460,22 @@
       var idx = +row.getAttribute("data-idx");
       if(!window.confirm("Delete this breakpoint?")) return;
       if(_tlDir && _tlName) window.__ngu.send({cmd:"deleteBreakpoint", dir:_tlDir, name:_tlName, system:sys, index:idx});
+    });
+
+    // Profile Editor: switch the system tab (re-renders from the already-loaded TIMELINES, no round trip).
+    document.addEventListener("click", function(e){
+      var t = e.target.closest ? e.target.closest("[data-petab]") : null; if(!t) return;
+      _peTab = t.getAttribute("data-petab");
+      renderProfileEditor();
+    });
+
+    // "Open Profile Folder" (Profiles view + Profile Editor head) — companion-local: it shells out to
+    // Explorer and selects the active profile's .json. The outcome comes back as a profileFolder message.
+    document.addEventListener("click", function(e){
+      var b = e.target.closest ? e.target.closest(".js-openfolder") : null; if(!b) return;
+      var dir = _profDir || _tlDir;
+      if(!dir){ if(window.showToast) window.showToast("The advisor hasn't reported its profile folder yet."); return; }
+      window.__ngu.send({cmd:"openProfileFolder", dir:dir, name:_profActive || _tlName || ""});
     });
 
     // Action buttons (M-actions): [data-action] -> doAction command (e.g. gold "Snipe now"). Fire-and-forget
