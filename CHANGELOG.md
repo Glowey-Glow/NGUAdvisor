@@ -11,11 +11,35 @@ All notable changes to NGU Advisor are documented in this file.
   the nav, from **Profiles → Edit**, and from **F9** in-game.
 - **Profiles → Open Profile Folder** — opens the profiles folder in Explorer with the active profile
   selected.
+- **Challenge campaign** — the CBlock spine as a first-class view: which block you are on, what each one
+  runs, and a chain-health report naming any ordinal no profile can reach.
+- **Seventeen campaign profiles** ship and auto-install alongside the goal presets.
+- **Titan auto-kill chips** show the version being killed, the respawn countdown, and whether a titan is
+  riddle-locked; Walderp shows the hunt (`N of 4 found`) and where he is hiding, with **Locate**.
+
+### Changed
+
+- **Dark only.** The light theme is retired; the UI commits to the dark token set.
+- **F11** dumps equipped gear IDs. It was F5, which is now reserved for development builds.
 
 ### Fixed
 
 - **F9** works again. It opened the old WinForms profile editor, which 2.0.0 removed; it now opens the
   Profile Editor in the companion, launching the companion first if it is closed.
+- **Challenge rotations no longer collapse.** The number after a challenge code is a 1-based completion
+  *ordinal*, not a count — the advisor engages an entry only when it would earn exactly that completion.
+  The editor treated it as a count and deduped by code, so a five-run Basic rotation written
+  `BASIC-1 … BASIC-5` was rewritten to a single entry that sits idle until four Basic completions already
+  exist, stranding every later ordinal behind it.
+- **Growth rates** report again. Their only sampler was the WinForms status pump 2.0.0 removed, so every
+  growth figure had been publishing zero.
+- **Gold loadouts no longer stick on.** The advisor could target a titan whose clue riddle is unsolved.
+  That titan never spawns, so "spawning soon" stayed true forever and the gold set stayed equipped.
+- The titan spawn version no longer drops below the version being chased when it is already auto-killable,
+  which had been undoing a manual selection on every pass.
+- **Wandoos OS advice** accounts for Advanced Training levels earned inside the projection window, and
+  projects at the share of the cap the profile actually gives Wandoos rather than the whole cap.
+- The companion window remembers its size and position, and no longer leaks a GDI icon handle on launch.
 
 ## [2.0.1] - 2026-07-26
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -17,7 +18,15 @@ public sealed class MainForm : Form
     private readonly WebView2 _web = new();
     private readonly PipeClient _pipe = new("NGUAdvisorUI");
     private volatile bool _webReady;
-    private volatile string _latestLine;   // last snapshot, flushed once the page is ready
+    private volatile string _latestLine;     // last snapshot, flushed once the page is ready
+    private volatile string _latestStatus;   // A4: last connection-status payload, flushed once the page is ready
+    private string _pendingLine;             // A6: newest snapshot awaiting the UI thread (Interlocked, not volatile)
+    private int _drainPosted;                // A6: 0/1 — a coalescing drain is already queued on the UI thread
+
+    // J4: GetHicon hands out an unmanaged GDI icon handle that Icon.FromHandle does NOT take ownership of.
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr handle);
 
     public MainForm()
     {
@@ -30,14 +39,21 @@ public sealed class MainForm : Form
             if (s != null)
             {
                 using var bmp = new System.Drawing.Bitmap(s);
-                Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon());
+                // Clone into an icon that owns its own copy, then destroy the raw handle. Assigning the
+                // FromHandle icon directly and destroying afterwards would leave the form holding a dead
+                // handle; not destroying at all is the leak (J4).
+                var hIcon = bmp.GetHicon();
+                try
+                {
+                    using var tmp = System.Drawing.Icon.FromHandle(hIcon);
+                    Icon = (System.Drawing.Icon)tmp.Clone();
+                }
+                finally { DestroyIcon(hIcon); }
             }
         }
         catch { /* icon is cosmetic */ }
-        Width = 1280;
-        Height = 860;
         MinimumSize = new Size(900, 600);
-        StartPosition = FormStartPosition.CenterScreen;
+        RestoreGeometry();                                  // J3 — sets size/position (defaults if none saved)
 
         _web.Dock = DockStyle.Fill;
         Controls.Add(_web);
@@ -45,8 +61,160 @@ public sealed class MainForm : Form
         _pipe.LineReceived += OnPipeLine;
         _pipe.ConnectionChanged += OnConnectionChanged;
 
-        Load += async (_, _) => await InitWebAsync();
+        Load += async (_, _) => { EnsureOnScreen(); await InitWebAsync(); };
+        FormClosing += (_, _) => SaveGeometry();            // J3 — before the handle goes away
         FormClosed += (_, _) => _pipe.Dispose();
+
+        // J3, and this is the part that makes it actually work: the COMMON shutdown is the game exiting,
+        // which Program.WatchGame turns into Environment.Exit(0) — that never raises FormClosing. Saving on
+        // FormClosing alone would silently lose the geometry on the dominant path. So persist as soon as the
+        // user finishes a drag/resize (WM_EXITSIZEMOVE) or changes window state; by the time the game exits
+        // the file is already current. Writes are trivial and only happen when the user actually moved it.
+        ResizeEnd += (_, _) => SaveGeometry();
+        Resize += (_, _) =>
+        {
+            if (WindowState == _lastState) return;
+            _lastState = WindowState;
+            SaveGeometry();
+        };
+        _lastState = WindowState;
+    }
+
+    private FormWindowState _lastState;
+
+    // ---- window geometry (J3) ----
+
+    // User-local, and deliberately NOT in the game or injector directories (same rule as the WebView2
+    // user-data folder). LocalAppData rather than %TEMP% so Disk Cleanup / Storage Sense can't wipe it.
+    private static string GeometryPath()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
+        return Path.Combine(root, "NGUAdvisorCompanion", "window.json");
+    }
+
+    private sealed class Geometry
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int W { get; set; }
+        public int H { get; set; }
+        public bool Max { get; set; }
+    }
+
+    private void RestoreGeometry()
+    {
+        // Defaults first: they stand whenever there is nothing saved, or anything at all goes wrong below.
+        Width = 1280;
+        Height = 860;
+        StartPosition = FormStartPosition.CenterScreen;
+        try
+        {
+            var path = GeometryPath();
+            if (!File.Exists(path)) return;
+            var g = JsonSerializer.Deserialize<Geometry>(File.ReadAllText(path));
+            if (g == null || g.W <= 0 || g.H <= 0) return;
+
+            StartPosition = FormStartPosition.Manual;
+            Bounds = ClampToWorkAreas(new Rectangle(g.X, g.Y, g.W, g.H), WorkAreas(), MinimumSize);
+            // A saved Minimized state is deliberately NOT restored as minimized: the injector auto-launches
+            // this window, and one that starts minimized reads as "the companion failed to open".
+            if (g.Max) WindowState = FormWindowState.Maximized;
+        }
+        catch { /* missing/garbage state file — keep the defaults */ }
+    }
+
+    private void SaveGeometry()
+    {
+        try
+        {
+            // RestoreBounds is the normal-state rectangle while maximized or minimized. Persisting Bounds
+            // instead would bring the window back screen-sized but not maximized.
+            var r = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            if (r.Width <= 0 || r.Height <= 0) return;
+            var g = new Geometry
+            {
+                X = r.X, Y = r.Y, W = r.Width, H = r.Height,
+                Max = WindowState == FormWindowState.Maximized,
+            };
+            var path = GeometryPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            // Write-then-replace. Environment.Exit can kill this process mid-call on the game-exit path, and
+            // a half-written window.json would restore garbage; a replace can only ever leave the old file.
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(g));
+            File.Move(tmp, path, true);
+        }
+        catch { /* geometry is a convenience — it must never fail or delay a close */ }
+    }
+
+    // Primary display FIRST: ClampToWorkAreas treats workAreas[0] as the fallback when the saved rectangle
+    // overlaps no display at all.
+    private static Rectangle[] WorkAreas()
+    {
+        var screens = Screen.AllScreens;
+        var areas = new List<Rectangle>(screens.Length);
+        foreach (var s in screens) if (s.Primary) areas.Add(s.WorkingArea);
+        foreach (var s in screens) if (!s.Primary) areas.Add(s.WorkingArea);
+        return areas.ToArray();
+    }
+
+    /// <summary>
+    /// Pull a saved rectangle back onto a real desktop. The monitor it was saved on may have been unplugged,
+    /// rearranged or resized; without this the window restores to coordinates no display covers and is
+    /// invisible with no way to get it back. <paramref name="workAreas"/> must have the primary display first.
+    /// </summary>
+    internal static Rectangle ClampToWorkAreas(Rectangle want, Rectangle[] workAreas, Size min)
+    {
+        if (workAreas == null || workAreas.Length == 0) return want;   // headless/no displays: nothing to do
+        if (want.Width < min.Width) want.Width = min.Width;
+        if (want.Height < min.Height) want.Height = min.Height;
+
+        // Already entirely on the desktop? Leave it exactly where the user put it. Work areas never overlap,
+        // so the intersections sum cleanly — which means a window deliberately STRADDLING two monitors is
+        // recognised as fully visible and is not snapped onto one of them.
+        long covered = 0;
+        foreach (var wa in workAreas)
+        {
+            var seen = Rectangle.Intersect(wa, want);
+            covered += (long)seen.Width * seen.Height;
+        }
+        if (covered == (long)want.Width * want.Height) return want;
+
+        // Host it on the display it overlaps most; overlapping none (monitor gone) falls back to the primary.
+        var host = workAreas[0];
+        long bestArea = 0;
+        foreach (var wa in workAreas)
+        {
+            var hit = Rectangle.Intersect(wa, want);
+            long area = (long)hit.Width * hit.Height;
+            if (area > bestArea) { bestArea = area; host = wa; }
+        }
+
+        // Shrink to fit, THEN slide inside. Sliding first would leave an oversized window hanging off the
+        // far edge with no pass left to correct it.
+        if (want.Width > host.Width) want.Width = host.Width;
+        if (want.Height > host.Height) want.Height = host.Height;
+        if (want.Right > host.Right) want.X = host.Right - want.Width;
+        if (want.Bottom > host.Bottom) want.Y = host.Bottom - want.Height;
+        if (want.X < host.X) want.X = host.X;
+        if (want.Y < host.Y) want.Y = host.Y;
+        return want;
+    }
+
+    // Belt and braces once the handle exists: if a DPI rescale or a display change between construction and
+    // show has left the window off every desktop, put it back. Cheap insurance against shipping an invisible
+    // window, which is the only way J3 can actually hurt.
+    private void EnsureOnScreen()
+    {
+        try
+        {
+            if (WindowState != FormWindowState.Normal) return;
+            var areas = WorkAreas();
+            foreach (var wa in areas) if (wa.IntersectsWith(Bounds)) return;
+            Bounds = ClampToWorkAreas(Bounds, areas, MinimumSize);
+        }
+        catch { }
     }
 
     private async Task InitWebAsync()
@@ -72,8 +240,20 @@ public sealed class MainForm : Form
             core.NavigationCompleted += (_, _) =>
             {
                 _webReady = true;
+                // A4: flush the buffered connection state BEFORE the snapshot. A connected:true that landed
+                // while the page was still parsing used to be discarded and never re-sent; now that the page
+                // starts in an explicit "connecting" state that would strand it on a spinner forever.
+                var status = _latestStatus;
+                if (status != null) { try { core.PostWebMessageAsJson(status); } catch { } }
                 var buffered = _latestLine;
                 if (buffered != null) { try { core.PostWebMessageAsJson(buffered); } catch { } }
+            };
+            // Quick win #20: mirror the page's <title> into the window/taskbar caption. The page only rewrites
+            // its title on pipe transitions, so this is an EXTRA taskbar-visible signal — it does NOT cover A1
+            // (an advisor that stalls with the pipe still up changes nothing here).
+            core.DocumentTitleChanged += (_, _) =>
+            {
+                try { var t = core.DocumentTitle; if (!string.IsNullOrWhiteSpace(t)) Text = t; } catch { }
             };
             core.Settings.AreDefaultContextMenusEnabled = false;
 #if !DEBUG
@@ -94,33 +274,48 @@ public sealed class MainForm : Form
 
     // ---- injector -> page ----
 
+    // A6 — newest-wins, mirroring the producer. UiBridge.Publish swaps a single _latest ref rather than
+    // queueing, so the injector always transmits the newest snapshot; the consumer used to do the opposite and
+    // gave every line its own BeginInvoke. A UI thread that fell behind then rendered a BACKLOG of stale
+    // frames one at a time, each looking current. Here a late drain always renders the newest line and the
+    // intermediate ones are dropped — which is exactly what a 1 Hz full-state snapshot stream wants.
     private void OnPipeLine(string line)
     {
-        if (IsDisposed) return;
+        if (line == null || IsDisposed) return;
+        Interlocked.Exchange(ref _pendingLine, line);
+        // At most one drain in flight. The drain clears this flag FIRST (before taking the pending line), so
+        // a line arriving mid-drain always causes a fresh post instead of being stranded until the next tick.
+        if (Interlocked.Exchange(ref _drainPosted, 1) != 0) return;
         try
         {
             BeginInvoke(() =>
             {
-                _latestLine = line;                        // buffer even before the page is ready
+                Interlocked.Exchange(ref _drainPosted, 0);
+                var newest = Interlocked.Exchange(ref _pendingLine, null);
+                if (newest == null) return;                // a racing drain already took it
+                _latestLine = newest;                      // still the first-frame buffer for NavigationCompleted
                 var core = _web.CoreWebView2;
                 if (core == null || !_webReady) return;
-                try { core.PostWebMessageAsJson(line); }   // line is compact JSON from the injector
+                try { core.PostWebMessageAsJson(newest); } // line is compact JSON from the injector
                 catch { /* malformed line — skip it, keep the stream alive */ }
             });
         }
-        catch { /* form closing mid-post */ }
+        catch { Interlocked.Exchange(ref _drainPosted, 0); /* form closing mid-post */ }
     }
 
     private void OnConnectionChanged(bool connected)
     {
-        if (!_webReady || IsDisposed) return;
+        if (IsDisposed) return;
         var payload = "{\"type\":\"status\",\"connected\":" + (connected ? "true" : "false") + "}";
+        // A4: buffer it the way _latestLine already is. The old `if (!_webReady) return` dropped any
+        // transition that arrived before NavigationCompleted and nothing ever re-sent it.
+        _latestStatus = payload;
         try
         {
             BeginInvoke(() =>
             {
                 var core = _web.CoreWebView2;
-                if (core == null) return;
+                if (core == null || !_webReady) return;    // NavigationCompleted will flush _latestStatus
                 try { core.PostWebMessageAsJson(payload); } catch { }
             });
         }

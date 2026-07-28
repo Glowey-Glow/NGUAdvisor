@@ -348,7 +348,7 @@ Indexes are 0-based and follow the in-game order (e.g. NGU 0 is the first NGU, a
 
 | Lane | Field | Notes |
 |---|---|---|
-| **Gear** | `"ID": [ … ]` | equipment item IDs (dump yours with **F5**, or from Gear Optimizer). |
+| **Gear** | `"ID": [ … ]` | equipment item IDs (dump yours with **F11**, or from Gear Optimizer). |
 | **Beards** | `"List": [ … ]` | 0-indexed (Fu Manchu 0 … Golden 6). |
 | **Diggers** | `"List": [ … ]` | 0-indexed (Drop-chance 0 … EXP 11). |
 | **Wandoos** | `"OS": n` | 0 = Wandoos 98, 1 = MEH, 2 = XL. |
@@ -413,7 +413,7 @@ defaults are on the [Default Zone Stats wiki](https://github.com/Glowey-Glow/NGU
 | **F1** | Open the companion window (relaunches it if closed). |
 | **F2** | Globally disable / enable all automation. |
 | **F3** | Quicksave — dumps a save + `ngusav.es` JSON (for Gear Optimizer) to the NGUAdvisor folder. |
-| **F5** | Dump equipped gear IDs to the log (for `Gear` breakpoints). |
 | **F7** | Quickload the F3 save. |
 | **F8** | Toggle the Quick Loadout / Diggers / Beards temp-swap. |
 | **F9** | Open the [Profile Editor](#profile-editor) in the companion (opens the companion first if closed). |
+| **F11** | Dump equipped gear IDs to the log (for `Gear` breakpoints). Was **F5** before 2.1. |

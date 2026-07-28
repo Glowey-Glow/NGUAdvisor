@@ -88,6 +88,14 @@ namespace NGUAdvisor
         // Same deferral for a full config re-read (settings + form + allocation), mirroring ConfigWatcher.
         public static void RequestSettingsReload() => _reloadSettingsPending = true;
 
+        // Payload hot reload is a DEVELOPMENT-BUILD capability: it needs NGUAdvisorBootstrap, which
+        // byte-loads NGUAdvisor.dll and is the only thing that can replace it live. This release injects
+        // the advisor directly and ships no bootstrap, so there is nothing to reload into. Present, and
+        // saying so plainly, because the shared companion page offers the button — a command that silently
+        // did nothing would read as a hang.
+        public static void RequestHotReload() =>
+            Log("Hot reload is not available in this release — restart the game to load a new build.");
+
         public static FileSystemWatcher ConfigWatcher;
         public static FileSystemWatcher AllocationWatcher;
         public static FileSystemWatcher ZoneWatcher;
@@ -477,8 +485,15 @@ namespace NGUAdvisor
             if (Input.GetKeyDown(KeyCode.F7))
                 QuickLoad();
 
-            if (Input.GetKeyDown(KeyCode.F5))
-                DumpEquipped();
+            // F5 is deliberately UNBOUND here. On the development build it hot-reloads the payload DLL,
+            // which only works when the session was started through NGUAdvisorBootstrap — an assembly this
+            // release does not ship. Binding it to anything else would put the same key on two different
+            // jobs across the two builds, so the gear dump moved to F11 and matches dev.
+            //
+            // The companion's Settings view still carries a Hot Reload button, because the page is shared
+            // verbatim with the development build (one 500 KB file; divergence there is expensive). The
+            // command below answers it honestly rather than doing nothing, which is also what the dev build
+            // does when it is started without the bootstrap.
 
             // F9 kept its old meaning — "open the profile editor" — now that the editor lives in the
             // companion: open the window if it is closed, then ask the page to show the Profile Editor.
@@ -543,10 +558,10 @@ namespace NGUAdvisor
                 _tempSwapped = !_tempSwapped;
             }
 
-            // F11 reserved for testing
+            // F11 = dump currently-equipped item ids, for authoring Gear breakpoints. Moved off F5 so the
+            // key matches the development build, where F5 is the payload hot reload.
             if (Input.GetKeyDown(KeyCode.F11))
-            {
-            }
+                DumpEquipped();
         }
 
         public void LateUpdate() => SnipeZone();

@@ -77,7 +77,21 @@ namespace NGUAdvisor.Managers
         private JSONObject _advEnemiesCache;             // static adventure enemy spriteId->name map (blacklist picker); built once
         private JSONArray _gearObjectivesCache;          // static gear-objective name list (loadout Advisor dropdowns); built once
         private JSONArray _transformMetaCache;           // transform-chain {name, step} descriptors (grid labels); refreshed ~every 5s
+        private JSONArray _titanAkCache;                 // per-titan autokill readiness chips; refreshed ~every 5s (reflection-heavy)
+
+        // The respawn-clock reader stamped onto that cache EVERY tick (see the `titanAk` node). Cached so the
+        // per-tick call doesn't allocate a delegate for nothing, but bound LAZILY inside Publish rather than
+        // in a static initializer: ZoneHelpers captures `Main.Character` into a static readonly field of its
+        // own, so nothing here may risk forcing that class's initializer to run at an earlier moment than it
+        // already does. By the time Publish runs, the game is up.
+        private Func<int, float?> _titanSpawnReader;
         private JSONObject _cardMetaCache;               // static card meta (bonus types / rarities / costs / sort vocab); built once
+        private JSONObject _itemNamesCache;              // gear id->name map for the ids the snapshot references; rebuilt only when that id SET changes
+        private string _itemNamesSig;                    // the id set _itemNamesCache was built from ("94,110,116,...")
+        private bool _itemNamesComplete;                 // false while any id failed to resolve (item table not up yet) -> periodic retry
+        private JSONObject _campaignCache;               // CBlock campaign node; rebuilt ~every 5s (parses profile JSON)
+        private List<CampaignTables.Supply> _campaignSupplyCache;  // parsed campaign profiles; re-read only when the files change
+        private string _campaignFileSig;                 // "<path>|<ticks>|<len>;..." the supply cache was parsed from
 
         // Bridge-sampled sparkline rings: one growth-rate value per publish, per metric.
         private readonly Dictionary<string, Queue<double>> _spark = new Dictionary<string, Queue<double>>();
@@ -324,14 +338,70 @@ namespace NGUAdvisor.Managers
         private static Dictionary<string, Action> BuildActions()
         {
             var d = new Dictionary<string, Action>(StringComparer.Ordinal);
-            // "Refresh" — identical to the Reload button.
+            // "Refresh" — identical to the Reload button. Re-reads SETTINGS from disk (not the DLL).
             d["reloadAdvisor"] = () => Main.RequestSettingsReload();
+            // "Hot Reload Advisor" — swaps the payload DLL itself (the old F5 / "Reload Advisor" button).
+            // Deliberately separate from reloadAdvisor above. Only requests: Main.Update performs the
+            // teardown at the top of the next frame, because doing it here would dispose this very
+            // UiBridge while DrainCommands is still iterating its queue.
+            d["hotReloadAdvisor"] = () => Main.RequestHotReload();
             // "Snipe Now" — arm a gold snipe by clearing the completion latch (mirrors GoldSnipeNow_Click).
             d["snipeNow"] = () => { if (Main.Settings != null) Main.Settings.GoldSnipeComplete = false; };
             // "Re-optimize gear now" — force an immediate optimize+equip of the active objective's best set
             // (main thread) and stash the human-readable outcome for the next snapshot's `notice` toast.
             d["refreshGear"] = () => { _notice = AdvisorApply.ForceGearReoptimize(); };
+            // "Locate" on the Walderp chip — jumps the GAME to the menu he is hiding in. Strictly
+            // player-initiated: never fired on a timer, and it does NOT click him. He relocates every 180s,
+            // so acting on our own would risk yanking the screen toward a target that has already moved.
+            d["locateWalderp"] = () => { _notice = LocateWalderp(); };
             return d;
+        }
+
+        // Jump the game to the menu Walderp is currently hiding in. Runs on the Unity main thread (every
+        // Action does), so touching the menu swapper is safe. Every failure path returns a sentence for the
+        // toast rather than doing nothing -- a button that silently no-ops is the worst outcome here, because
+        // the player cannot tell "he moved" from "the advisor is broken".
+        private static string LocateWalderp()
+        {
+            try
+            {
+                var c = Main.Character;
+                if (c == null) return "Can't reach the game right now.";
+                var adv = c.adventure;
+                if (adv == null) return "Can't read your adventure state right now.";
+
+                // Same condition the game uses to freeze boss5Spawn (AdventureController.cs:724).
+                if (adv.waldoDefeats <= adv.waldoFinds)
+                    return "Walderp isn't hiding right now — nothing to locate.";
+
+                var u = c.waldoUnlocker;
+                if (u == null) return "Walderp is hiding, but the game isn't exposing where.";
+
+                int menu = u.currentMenu;
+                // -1 is ROUTINE, not an error: the game clears it during his 180s fade, and again for the
+                // first 180s after any launch. Say so, rather than implying something is wrong.
+                if (menu < 0)
+                    return "Walderp is hiding, but he hasn't settled on a menu yet. Try again shortly.";
+
+                var swapper = u.menuSwapper;
+                if (swapper == null) return "Walderp is in a menu, but the game won't let us switch to it.";
+
+                bool troll = false;
+                try { troll = c.challenges.trollMenuSwap; } catch { }
+
+                swapper.swapMenu(menu);
+
+                // Under TROLL CHALLENGE, swapMenu re-randomises the destination 75% of the time, so the jump
+                // usually lands somewhere else. Tell the player that instead of letting it look like a bug.
+                if (troll)
+                    return "Tried to jump to Walderp — the troll challenge scrambles menu swaps, so you may have landed elsewhere.";
+                return "Jumped to where Walderp is hiding. Look for a faint image and click it.";
+            }
+            catch (Exception e)
+            {
+                Main.LogDebug("LocateWalderp: " + e.Message);
+                return "Couldn't jump to Walderp's menu.";
+            }
         }
 
         // ---------------------------------------------------------------- lifecycle
@@ -654,6 +724,15 @@ namespace NGUAdvisor.Managers
                     Main.Log("UI command: reload requested");
                     break;
 
+                // Payload hot reload — NOT the same thing as reloadAdvisor above (that one re-reads
+                // settings from disk). This tears the running advisor down and byte-loads the DLL again,
+                // exactly like F5. Accepted both as a top-level cmd and as a doAction (see the Actions
+                // table) so either shape the companion sends works.
+                case "hotReloadAdvisor":
+                    Main.RequestHotReload();                    // performed at the top of the next Update, not here
+                    Main.Log("UI command: hot reload requested (payload DLL)");
+                    break;
+
                 case "doAction":
                 {
                     string action = obj["action"].Value;
@@ -783,6 +862,15 @@ namespace NGUAdvisor.Managers
             return arr;
         }
 
+        // Append a gear-id list into the accumulator behind the `itemNames` map. Null-tolerant; the caller
+        // sorts + dedupes. Ids are NOT range-filtered here — SavedSettings already validates on assign, and
+        // an out-of-range straggler resolves to a graceful "Item {id}" rather than being silently dropped.
+        private static void CollectIds(List<int> into, int[] src)
+        {
+            if (src == null) return;
+            foreach (var id in src) into.Add(id);
+        }
+
         // Assign a gear-id int[] to a named list setting (boost lists + the 7 loadout modes). Returns false
         // for an unknown key. Used by both setSettingList and setLoadoutFromGear.
         private static bool AssignGearList(SavedSettings s, string key, int[] arr)
@@ -874,10 +962,15 @@ namespace NGUAdvisor.Managers
             Safe("action", () => root["action"] = LockManager.GetLockTypeName());
 
             // --- stage / progression ---
+            // Captured for the campaign node below: challenge completion counters are PER DIFFICULTY and the
+            // game only exposes the one being played, so the campaign can only verify blocks on this
+            // difficulty. Taken from the same ProgressionAnalyzer read rather than a second Detect() call.
+            string liveDifficulty = null;
             Safe("stage", () =>
             {
                 var prog = ProgressionAnalyzer.Detect();
                 root["difficulty"] = prog.Difficulty ?? "Normal";
+                liveDifficulty = prog.Difficulty;
                 var stage = new JSONObject();
                 stage["known"] = prog.Known;
                 stage["label"] = prog.Label ?? "-";
@@ -952,6 +1045,11 @@ namespace NGUAdvisor.Managers
                     t["stage"] = obj.Stage ?? "";
                     if (c != null && obj.ReqAttack > 0) t["atk"] = ClampPct(c.totalAdvAttack() / obj.ReqAttack * 100.0);
                     if (c != null && obj.ReqDefense > 0) t["def"] = ClampPct(c.totalAdvDefense() / obj.ReqDefense * 100.0);
+                    // Third bar: HP regen, the game's other autokill gate from T4 up. ReqRegen is non-zero
+                    // ONLY at the "auto-kill" stage of the kill ladder (the guide's first-kill / idle stages
+                    // set it to 0), so the key is present exactly when a regen gate is the thing being
+                    // chased — its ABSENCE means "no regen requirement here", not "0% of the way there".
+                    if (c != null && obj.ReqRegen > 0) t["regen"] = ClampPct(c.totalAdvHPRegen() / obj.ReqRegen * 100.0);
                 }
                 inst["titan"] = t;
             });
@@ -1279,7 +1377,17 @@ namespace NGUAdvisor.Managers
                 root["expRatio"] = er;
             });
 
-            // --- Beards page: per-beard current level + permanent levels banked on the next rebirth. ---
+            // --- Beards page: per-beard current level + permanent levels banked on the next rebirth.
+            //     Semantics (confirmed — do not re-derive):
+            //       level = b.beardLevel                     — the beard's CURRENT level.
+            //       gain  = c.allBeards.addedTrimmings(id)   — the levels this beard would ADD on rebirth.
+            //               Only computed when the beard is `active`; an inactive beard legitimately reports
+            //               0, meaning "not applicable", NOT "no gain".
+            //       perm  = b.permLevel                      — levels ALREADY banked (permanent).
+            //     Each ships twice: the legacy pre-formatted string (level/gain/perm) for compatibility, and
+            //     a raw numeric sibling (levelRaw/gainRaw/permRaw) so number-formatting policy can live in
+            //     the UI instead of requiring an injector rebuild + re-inject. Same both-ways contract the
+            //     `growth` node uses (rate + fmt). The strings go away once nothing reads them.
             Safe("beards", () =>
             {
                 var bd = new JSONObject();
@@ -1299,10 +1407,13 @@ namespace NGUAdvisor.Managers
                         o["active"] = active;
                         long lvl = 0; try { lvl = b.beardLevel; } catch { }
                         o["level"] = FormatBig(lvl);
+                        o["levelRaw"] = Num(lvl);
                         long gain = 0; try { if (active) gain = c.allBeards.addedTrimmings(id); } catch { }
                         o["gain"] = FormatBig(gain);
+                        o["gainRaw"] = Num(gain);
                         long perm = 0; try { perm = b.permLevel; } catch { }
                         o["perm"] = FormatBig(perm);
+                        o["permRaw"] = Num(perm);
                         arr.Add(o);
                     }
                     bd["list"] = arr;
@@ -1463,6 +1574,91 @@ namespace NGUAdvisor.Managers
                 root["titans"] = t;
             });
 
+            // --- per-titan autokill readiness (`titans.ak`): the chip row on the Titans view. ---
+            // TWELVE entries, not fourteen. ZoneHelpers.AutokillAvailable returns false OUTRIGHT for
+            // titanIndex >= 12, so Tippi and Traitor have no autokill path at all and a chip for them could
+            // only ever read "short" forever — a permanently red promise the game will never keep. They are
+            // omitted; `titans.names` still carries all 14 for the manual kill grid, so the UI must index
+            // this array by its own `i` field and NOT by position in `names`.
+            //
+            // Three states (a fourth, "unknown", appears only on a failed read — see below):
+            //   ready — ZoneHelpers.AutokillAvailable is true. The game will fire.
+            //   gated — every stat threshold is met but the game still refuses. Pushing stats will NOT help.
+            //           Reachable at T4 (needs item 135 maxxed) and T5 (needs boss5Kills >= 3); for T6-T12
+            //           the game's method IS the stat check, so stats-met implies ready there.
+            //   short — at least one stat threshold unmet.
+            // The classification itself lives in TitanTables.AkState so it is unit-testable without the game.
+            //
+            // NONE OF THOSE FOUR MEAN "KILLABLE RIGHT NOW". The game gates the kill on a respawn clock the
+            // autokill methods never consult, and resets that clock on every kill, so `ready` + "80 minutes of
+            // cooldown left" is an ordinary steady state — the chip used to claim availability the game would
+            // refuse. `respawnSec` is that clock, in whole seconds, 0 = available now. It rides a DIFFERENT
+            // cadence to everything else here (see below) and, being independent of the gate reads, it is
+            // published for every state including "unknown". ABSENT MEANS UNREADABLE — never assume 0.
+            //
+            // NOR DOES ANY OF THEM MEAN "THE GAME WILL SPAWN IT". Titans 6-9 carry a per-titan unlock flag
+            // (`character.adventure.titan{N}Unlocked`) that gates both the autokill branch and the spawn table
+            // and that no autokill method consults, so a locked Beast reads `ready` with a zero clock forever.
+            // `unlocked` is that flag, published for all twelve (vacuously true for the eight with no such
+            // gate) so ABSENCE STILL MEANS UNREADABLE. Render LOCKED on `unlocked === false` regardless of
+            // `state`; never on its absence. See TitanTables' `unlocked` header for why this is a separate key
+            // rather than a narrower AutokillAvailable.
+            //
+            // ...and Walderp (i == 4) gets one more: `waldo`. His respawn clock is the only one the game
+            // FREEZES — it advances only while `waldoDefeats <= waldoFinds || waldoFinds >= 4` — so while he
+            // is hiding in a menu his `respawnSec` is a stalled number, not a countdown. `waldo.hiding` says
+            // so, `waldo.finds`/`defeats` say how far through the hunt he is, and `waldo.menu`/`menuName` say
+            // where he currently is when that is readable. The game's own zone-16 label replaces the timer
+            // outright in this state ("WALDERP IS HIDING IN THE MENUS! FIND HIM!") — do the same.
+            //
+            // REFLECTION BUDGET: AutokillAvailable calls a game method by name for titanIndex >= 5 and
+            // TitanVersion reflects a save field, i.e. up to 14 reflective calls per rebuild. So the whole
+            // array is rebuilt on the same ~5 s cadence as _profilesCache/_transformMetaCache and the SAME
+            // JSONArray instance is republished on every other tick (one dictionary write). Consequence the
+            // UI should know: these chips and their bars step every ~5 s. The CURRENT target's bars in
+            // instruments.titan are still recomputed every tick.
+            //
+            // ...AND `respawnSec` IS DELIBERATELY NOT ON THAT CADENCE. A gate answer that is 5 s old is still
+            // the right answer; a countdown that is 5 s old is a wrong number, on screen, ticking. The two
+            // alternatives were both worse. Publishing it on the cache with an as-of sequence pushes a
+            // client-side countdown back into the page, and this project has already deleted one of those for
+            // continuing to tick after the data stopped arriving — and the game gives it a way to be wrong
+            // even when data IS arriving: boss5Spawn (Walderp) only advances while
+            // `waldoDefeats <= waldoFinds || waldoFinds >= 4`, so his clock can sit FROZEN at a positive value
+            // and any extrapolation from it counts down to an availability that never comes. Publishing only
+            // for `ready` chips saves nothing that matters and costs the key its meaning: absence would then
+            // mean either "unreadable" or "we chose not to look", and the UI could not tell a broken read from
+            // a deliberate omission. So: all twelve, every tick, absence reserved for "unknown".
+            //
+            // THE COST, MEASURED rather than assumed (net9 microbenchmark of the exact two reflective reads
+            // TimeTillTitanSpawn performs, through a cache identical to ReflectionExtensions'): 0.31 us for
+            // one titan, 4.2 us and 1.6 KB for all twelve. The same tick already spends ~215 us and ~314 KB
+            // just serializing this snapshot to its JSON line — one step of many — so the whole sweep is ~2%
+            // of that step and 0.0004% of the 1 s budget. Mono's reflection is several times slower than
+            // net9's, but so is its string building; the ratio is what survives the port, and the ratio is
+            // not close. For further scale: OptimizationAdvisor.NextObjective() already makes a comparable
+            // number of reflective autokill calls and Publish() calls it TWICE per tick.
+            Safe("titanAk", () =>
+            {
+                if (_titanAkCache == null || (_seq % 5) == 1) _titanAkCache = BuildTitanAk();
+                // The titans node above bails out when settings are missing; don't let that take the chip
+                // row with it. Reading a missing key yields a JSONLazyCreator (never a JSONObject) and does
+                // not insert anything, so this is a safe presence test.
+                var host = root["titans"] as JSONObject;
+                if (host == null) { host = new JSONObject(); root["titans"] = host; }
+                host["ak"] = _titanAkCache;
+                // Highest titan index this difficulty offers at all (Normal ends at T6). Lets the UI dim the
+                // chips for content that does not exist yet instead of showing a wall of red. Clamped to the
+                // table: DifficultyMaxTitanIndex reports 13 on Sadistic, but only 12 titans have an AK path.
+                try { host["akMaxIndex"] = Math.Min(OptimizationAdvisor.DifficultyMaxTitanIndex(), TitanTables.Ak.Length - 1); } catch { }
+                // LAST, and in its own guard: the chips are already attached above, so even a total failure
+                // of the respawn overlay costs the row nothing but its timers. Mutates the cached array in
+                // place — the same instance `host["ak"]` now points at — so the stamp lands on this tick's
+                // output whether or not the row was rebuilt.
+                if (_titanSpawnReader == null) _titanSpawnReader = ZoneHelpers.TimeTillTitanSpawn;
+                try { TitanTables.StampRespawn(_titanAkCache, _titanSpawnReader); } catch { }
+            });
+
             // --- boost list editors (W3): PriorityBoosts + BoostBlacklist int[] gear-id arrays. ---
             Safe("boostLists", () =>
             {
@@ -1472,6 +1668,73 @@ namespace NGUAdvisor.Managers
                 var blk = new JSONArray(); var bb = settings.BoostBlacklist; if (bb != null) foreach (var id in bb) blk.Add(id);
                 bl["priority"] = pri; bl["blacklist"] = blk;
                 root["boostLists"] = bl;
+            });
+
+            // --- gear id->name map, so the UI can render `[188] "Ascended Edgy Helmet"` instead of a bare
+            //     integer. DELIBERATELY NOT the game's whole item table (~500 entries / several KB on a
+            //     ~30 KB line published at 1 Hz): only the ids the snapshot itself already ships, i.e. the
+            //     7 loadout lists + the 2 boost lists. Every other id-bearing node is out of scope on
+            //     purpose: wishLists carries WISH ids (Consts.MAX_WISH_ID, a different table), transform's
+            //     autoClimb/keepMax/filter are per-chain flags (and its steps already carry names),
+            //     advBlacklist carries adventure sprite ids (see advEnemies), boostPriority is a string
+            //     vocabulary, gearObjectives is a name list, and equipped already ships names.
+            //
+            //     Cache policy mirrors _zonesCache/_macguffinsCache: build once, then reuse the SAME
+            //     JSONObject every snapshot. It is rebuilt only when the referenced id SET changes (a
+            //     loadout edit), so the steady-state per-tick cost is one dictionary write. Names are
+            //     resolved through Main.ItemNameNice, which is total (it returns "" for id <= 0 and "?"
+            //     if the game's itemInfo table isn't up yet) — so this can never throw into the build.
+            //     A build that hit an unresolved id is marked incomplete and retried every 5th snapshot,
+            //     which lets the map heal once the item table populates without a per-tick rebuild.
+            Safe("itemNames", () =>
+            {
+                if (settings == null) return;
+                var ids = new List<int>();
+                CollectIds(ids, settings.TitanLoadout);
+                CollectIds(ids, settings.GoldDropLoadout);
+                CollectIds(ids, settings.QuestLoadout);
+                CollectIds(ids, settings.YggdrasilLoadout);
+                CollectIds(ids, settings.CookingLoadout);
+                CollectIds(ids, settings.LootHunterAccessories);
+                CollectIds(ids, settings.Shockwave);
+                CollectIds(ids, settings.PriorityBoosts);
+                CollectIds(ids, settings.BoostBlacklist);
+                ids.Sort();
+
+                // Sorted -> dedupe and build the change signature in one pass.
+                var sb = new StringBuilder();
+                var uniq = new List<int>();
+                int prev = int.MinValue;
+                foreach (var id in ids)
+                {
+                    if (id == prev) continue;
+                    prev = id;
+                    uniq.Add(id);
+                    sb.Append(id.ToString(CultureInfo.InvariantCulture)).Append(',');
+                }
+                string sig = sb.ToString();
+
+                bool stale = _itemNamesCache == null || _itemNamesSig != sig;
+                bool retry = !_itemNamesComplete && (_seq % 5) == 1;
+                if (stale || retry)
+                {
+                    var o = new JSONObject();
+                    bool complete = true;
+                    foreach (var id in uniq)
+                    {
+                        string nm = Main.ItemNameNice(id);
+                        if (string.IsNullOrEmpty(nm) || nm == "?")
+                        {
+                            nm = "Item " + id.ToString(CultureInfo.InvariantCulture);
+                            if (id > 0) complete = false;      // id <= 0 has no name by definition, not a failure
+                        }
+                        o[id.ToString(CultureInfo.InvariantCulture)] = nm;
+                    }
+                    _itemNamesCache = o;
+                    _itemNamesSig = sig;
+                    _itemNamesComplete = complete;
+                }
+                root["itemNames"] = _itemNamesCache;
             });
 
             // --- profiles: list (throttled disk read) + active + auto-profile (M3) ---
@@ -1505,6 +1768,97 @@ namespace NGUAdvisor.Managers
                     p["launchCompanion"] = settings.LaunchCompanion;
                 }
                 root["profiles"] = p;
+            });
+
+            // --- campaign: the guide's nine-block CBlock spine joined against live state (CampaignTables). ---
+            // COST + CADENCE. This is the only snapshot node that PARSES profile JSON, so it is throttled
+            // twice over. The node object is rebuilt on the ~5 s cadence (_seq % 5 == 2 — deliberately a
+            // different residue from the _profilesCache / _transformMetaCache / _titanAkCache refreshes at
+            // == 1, so the disk work is spread across ticks instead of piling onto one). Inside that, the
+            // profile FILES are re-parsed only when a (path, mtime, length) signature changes, the same
+            // policy as _itemNamesSig. Steady state per tick is therefore one dictionary write; steady state
+            // per 5 s is ~24 File.GetAttributes-class stats and no parsing at all.
+            Safe("campaign", () =>
+            {
+                if (_campaignCache == null || (_seq % 5) == 2)
+                    _campaignCache = BuildCampaign(settings, liveDifficulty);
+                if (_campaignCache != null) root["campaign"] = _campaignCache;
+            });
+
+            // --- lsc: the Laser Sword verdict, published WHATEVER IT SAYS. ---
+            //
+            // WHY THIS EXISTS. LscAdvisor.Compute() is already called every snapshot by
+            // OptimizationAdvisor.Analyze (the `actions` node), but that caller keeps the answer only when it
+            // is YES:
+            //     var lsc = LscAdvisor.Compute();
+            //     if (lsc.Known && lsc.Recommended) list.Add(...);
+            // A negative verdict — computed, correct, and carrying its own copy ("LSC needs ~Nm for lv T —
+            // not yet an Augs-hour freebie") — is thrown away. So a player sitting at 0/20 LSC sees nothing,
+            // which is indistinguishable from "the advisor never looked". Same silent-failure class as a
+            // frozen dashboard: the software knows the answer and declines to say it.
+            //
+            // NOT GATED ON AdvisorChallenges, deliberately. The verdict is information, not automation, and
+            // its whole value is telling a user who has the automation OFF whether turning it on would buy
+            // anything. `enabled` reports the switch alongside so the UI can say both things at once.
+            //
+            // NOT A REPLACEMENT for the recommendation card — OptimizationAdvisor's positive-only behaviour is
+            // correct AS A RECOMMENDATION. This is a parallel readout.
+            //
+            // COST / CADENCE: per snapshot, uncached here. Compute() self-caches the expensive estimate for
+            // 120 s, and every gate in front of that cache is a plain field read (Character.challenges
+            // booleans; ChallengeDetector.Current short-circuits on cc.inChallenge) — no reflection. Since
+            // Analyze() already calls it on the same tick, this second call is a cache hit. It is published
+            // per tick rather than on the ~5 s campaign cadence because `known` flips the instant a challenge
+            // starts, and a stale "yes" would invite a click into a challenge that is already running.
+            //
+            // The verdict is correct per difficulty by construction: LaserSwordChallengeController's
+            // currentCompletions() and laserSwordTarget() both dispatch on settings.rebirthDifficulty
+            // (target = that difficulty's completions + 2), and LscAdvisor reads both through the controller.
+            Safe("lsc", () =>
+            {
+                var o = new JSONObject();
+                var v = LscAdvisor.Compute();
+                o["known"] = v.Known;
+                o["difficulty"] = liveDifficulty ?? "";   // the counter the verdict was computed against
+                o["enabled"] = settings != null && settings.AdvisorChallenges;
+                try
+                {
+                    var ctl = c?.allChallenges?.laserSwordChallenge;
+                    if (ctl != null) { o["cur"] = ctl.currentCompletions(); o["max"] = ctl.maxCompletions; }
+                }
+                catch { }
+                if (v.Known)
+                {
+                    o["recommended"] = v.Recommended;
+                    o["target"] = v.Target;                                    // laser sword level to reach
+                    o["estMinutes"] = Num(Math.Round(v.EstMinutes, 0));
+                    o["text"] = v.Text ?? "";
+                }
+                else
+                {
+                    // Compute() returns Known=false from several distinct early-outs and keeps no reason.
+                    // Re-deriving the cheap ones (all plain field reads) turns a bare `known:false` into
+                    // something the user can act on. Order matches Compute()'s own gate order.
+                    string why = "no aug rate available yet — the estimate needs energy power on the sword";
+                    try
+                    {
+                        if (c == null) why = "game not attached";
+                        else if (!c.challenges.laserSwordChallengeUnlocked)
+                            why = "not unlocked yet — make a 1/1 Laser Sword first";
+                        else if (ChallengeDetector.Current() != null)
+                            why = "a challenge is already running";
+                        else
+                        {
+                            var ctl = c.allChallenges?.laserSwordChallenge;
+                            if (ctl != null && ctl.maxCompletions > 0 && ctl.currentCompletions() >= ctl.maxCompletions)
+                                why = "all " + ctl.maxCompletions + " completions are done on this difficulty";
+                        }
+                    }
+                    catch { }
+                    o["why"] = why;
+                    o["text"] = "Laser Sword: " + why;
+                }
+                root["lsc"] = o;
             });
 
             // --- nav: pending in-game view request (F9), emitted only while fresh ---
@@ -1577,6 +1931,310 @@ namespace NGUAdvisor.Managers
             }
         }
 
+        // Per-titan autokill readiness, 12 entries (see the `titanAk` node for why 12 and not 14). Called on
+        // the ~5 s cache cadence, never per tick.
+        //
+        // DEGRADE, NEVER VANISH: every one of the 12 slots is emitted on every rebuild, so the chip row keeps
+        // a stable shape and the UI can key on a fixed index. Whatever can't be read is simply not claimed —
+        // a titan whose version or gate read throws reports state "unknown" and omits the percentages rather
+        // than falling back to "short", which would be an invented claim about the player's stats. Publishing
+        // the thresholds is still safe there: they come from the static table, which cannot fail.
+        //
+        // `respawnSec` is NOT built here — it is stamped onto the finished array every tick by
+        // TitanTables.StampRespawn, because a countdown cannot ride a 5 s cache. That is also why it survives
+        // the `continue`s below untouched: the overlay walks entries by their `i`, not by how far this builder
+        // got through them, so an entry that degraded to "unknown" still carries its clock.
+        private static JSONArray BuildTitanAk()
+        {
+            var arr = new JSONArray();
+
+            // One stat read for all 12 titans (these are plain method calls, not reflection).
+            double atk = 0, def = 0, regen = 0;
+            bool statsKnown = false;
+            try
+            {
+                var ch = Main.Character;
+                if (ch != null)
+                {
+                    atk = ch.totalAdvAttack();
+                    def = ch.totalAdvDefense();
+                    regen = ch.totalAdvHPRegen();
+                    statsKnown = true;
+                }
+            }
+            catch { }
+
+            int count = Math.Min(TitanTables.Ak.Length, TitanTables.Abbrev.Length);   // 12: Ak stops at Amalg
+            for (int i = 0; i < count; i++)
+            {
+                var o = new JSONObject();
+                o["i"] = i;
+                o["ab"] = TitanTables.Abbrev[i] ?? ("T" + (i + 1).ToString(CultureInfo.InvariantCulture));
+                // How many versions this titan HAS, so `v` reads as "v3 of 4" instead of a bare number and the
+                // UI can show whether there is harder content above the one being autokilled. Pure table
+                // lookup — no game read, and it cannot fail — so unlike `v` it is emitted BEFORE the version
+                // read and therefore survives into the "unknown" branches below. vmax == 1 means unversioned.
+                o["vmax"] = TitanTables.VersionCount(i);
+
+                // The unlock gate, and — for Walderp only — why his clock may be standing still. BOTH are
+                // emitted here, ahead of the version and gate reads, for the same reason as `vmax`: they must
+                // survive every `continue` below. A locked titan is still locked when its version read
+                // throws, and a frozen Walderp clock still needs its explanation attached to the chip that
+                // shows it. Neither read can throw into the build (both are wrapped and degrade to null).
+                var unlocked = TitanTables.UnlockState(i, TitanUnlockFlag(i));
+                if (unlocked.HasValue) o[TitanTables.KeyUnlocked] = unlocked.Value;
+
+                if (i == TitanTables.WaldoTitanIndex)
+                {
+                    var waldo = BuildWaldo();
+                    if (waldo != null) o[TitanTables.KeyWaldo] = waldo;
+                }
+
+                // Version in play. Unversioned titans (0-4) short-circuit to 1 inside TitanVersion; 5-11
+                // reflect the save field. A throw here means we don't know WHICH requirement row applies, so
+                // there is nothing honest to publish beyond the identity of the chip.
+                int version;
+                try { version = ZoneHelpers.TitanVersion(i); }
+                catch { o["state"] = TitanTables.StateUnknown; arr.Add(o); continue; }
+
+                var req = TitanTables.AkRow(i, version);
+                o["v"] = version;
+                if (req == null) { o["state"] = TitanTables.StateUnknown; arr.Add(o); continue; }
+
+                // Raw thresholds always ship: static data, and the UI wants the absolute numbers next to the
+                // bars. reqRegen == 0 is the "no regen gate" sentinel (T1-T3) — see the percentage below.
+                o["reqAtk"] = Exact(req[0]);
+                o["reqDef"] = Exact(req[1]);
+                o["reqRegen"] = Exact(req[2]);
+
+                bool ak;
+                try { ak = ZoneHelpers.AutokillAvailable(i, version); }
+                catch { o["state"] = TitanTables.StateUnknown; arr.Add(o); continue; }
+
+                if (!statsKnown)
+                {
+                    // The gate is readable but the stats aren't: report it and stop. "ready" is still a fact
+                    // (the game said so); anything else would need stats we don't have.
+                    o["state"] = ak ? TitanTables.StateReady : TitanTables.StateUnknown;
+                    arr.Add(o);
+                    continue;
+                }
+
+                o["atk"] = TitanTables.StatPct(atk, req[0]);
+                o["def"] = TitanTables.StatPct(def, req[1]);
+                // ONLY published when a regen gate exists. An absent `regen` key means "this titan has no
+                // regen requirement" — distinct from `regen: 0`, which would mean "0% of the way to one".
+                if (req[2] > 0) o["regen"] = TitanTables.StatPct(regen, req[2]);
+                o["state"] = TitanTables.AkState(atk, def, regen, req, ak);
+                arr.Add(o);
+            }
+            return arr;
+        }
+
+        // `character.adventure.titan{N}Unlocked` for the four titans that have one (indices 5-8), or null for
+        // everything else INCLUDING a failed read — TitanTables.UnlockState is what turns "this titan has no
+        // such gate" into the vacuous true, so this method only ever reports what it actually read.
+        //
+        // DIRECT FIELD ACCESS, NOT REFLECTION. The four names are known at compile time, so this is four
+        // branches and one field load — no name lookup, no invoke, nothing added to the reflection budget the
+        // `titanAk` header accounts for. AdvisorApply reads the same three fields the same way.
+        private static bool? TitanUnlockFlag(int titanIndex)
+        {
+            if (!TitanTables.HasUnlockFlag(titanIndex)) return null;
+            try
+            {
+                var ch = Main.Character;
+                if (ch == null) return null;
+                var adv = ch.adventure;
+                if (adv == null) return null;
+                switch (titanIndex)
+                {
+                    case 5: return adv.titan6Unlocked;
+                    case 6: return adv.titan7Unlocked;
+                    case 7: return adv.titan8Unlocked;
+                    case 8: return adv.titan9Unlocked;
+                    default: return null;
+                }
+            }
+            catch { return null; }
+        }
+
+        // Walderp's hide-and-seek state (see TitanTables' `waldo` header for the mechanic). Null when even
+        // the save fields can't be read, so the key is omitted rather than claiming "not hiding".
+        //
+        // NO SCENE LOOKUP NEEDED. WaldoSaysUnlocker is a MonoBehaviour, but the game hands it to us on a
+        // plate: `Character.waldoUnlocker` (Character.cs:128) is a direct reference, so this is two field
+        // loads, not a FindObjectOfType sweep — which is why it can ride the ordinary ~5 s row rebuild with
+        // no cache of its own. 5 s staleness is nothing against a 180 s relocation cycle.
+        //
+        // TWO INDEPENDENT READS, ON PURPOSE. defeats/finds come from the SAVE (Character.adventure) and are
+        // what `hiding` is decided by; the menu comes from the SCENE component and is decoration. A null
+        // waldoUnlocker (scene not built yet, or a game update that drops the field) must cost us the
+        // location, not the explanation.
+        private static JSONObject BuildWaldo()
+        {
+            int? defeats, finds;
+            try
+            {
+                var ch = Main.Character;
+                if (ch == null) return null;
+                var adv = ch.adventure;
+                if (adv == null) return null;
+                defeats = adv.waldoDefeats;
+                finds = adv.waldoFinds;
+            }
+            catch { return null; }
+
+            int? menuId = null;
+            string menuName = null;
+            try
+            {
+                var u = Main.Character.waldoUnlocker;
+                // currentMenu is -1 both before his first relocation and briefly after each fade-out; that is
+                // "hiding, location unknown", which WaldoNode publishes by omitting these two keys.
+                if (u != null && u.currentMenu >= 0)
+                {
+                    menuId = u.currentMenu;
+                    var go = u.menu;                 // menuSwapper.allMenus[currentMenu]
+                    if (go != null) menuName = go.name;
+                }
+            }
+            catch { }
+
+            return TitanTables.WaldoNode(defeats, finds, menuId, menuName);
+        }
+
+        // ------------------------------------------------------------- campaign (CBlock spine)
+
+        // Resolve a campaign profile name to a LOADABLE file. Flat directory only, because that is the only
+        // place the runtime looks: the profile list is Directory.GetFiles(dir, "*.json") with no
+        // AllDirectories, and CustomAllocation opens Path.Combine(profilesDir, name + ".json").
+        //
+        // The sample tree ships as {Normal,Evil,Sadistic}\*.json and the readme tells the player to copy it
+        // in, so folder-preserved copies exist in the wild. This USED to fall back to them, which was wrong
+        // in both directions: it reported a supplier the advisor can never load -- inventing a duplicate
+        // against the flat file that genuinely supplies those ordinals (a real save showed 26 of them from
+        // one shadowed CBlock2.json) -- and for a block whose only copy is nested it would have reported the
+        // chain healthy while nothing loadable supplied it. A nested copy is now reported by
+        // NestedCampaignFolder as a missing file WITH its location, which is both true and actionable.
+        private static string ResolveCampaignFile(string dir, string name)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name)) return null;
+                var flat = Path.Combine(dir, name + ".json");
+                if (File.Exists(flat)) return flat;
+            }
+            catch { }
+            return null;
+        }
+
+        // The difficulty folder holding an unloadable copy, or null. Only consulted when the flat probe
+        // missed, so the common path is still one File.Exists per profile.
+        private static string NestedCampaignFolder(string dir, string name, string difficulty)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(difficulty))
+                    return null;
+                if (File.Exists(Path.Combine(Path.Combine(dir, difficulty), name + ".json"))) return difficulty;
+            }
+            catch { }
+            return null;
+        }
+
+        // Read every profile the campaign names. Re-parses only when a (path, mtime, length) signature
+        // changes; otherwise hands back the cached list. Called on the ~5 s cadence only.
+        private List<CampaignTables.Supply> CampaignSupply()
+        {
+            var dir = Main.GetProfilesDir();
+            var refs = CampaignTables.AllProfiles(true);   // legacy included: they are REPORTED, never counted
+
+            // Cheap signature pass first — stat only, no reads.
+            var sig = new StringBuilder();
+            var paths = new string[refs.Count];
+            var nested = new string[refs.Count];
+            for (int i = 0; i < refs.Count; i++)
+            {
+                var path = ResolveCampaignFile(dir, refs[i].Name);
+                paths[i] = path;
+                // Only probe the difficulty folder when the loadable one is absent, and fold the answer into
+                // the signature so moving a file up a level re-parses instead of serving a stale verdict.
+                nested[i] = path == null ? NestedCampaignFolder(dir, refs[i].Name, refs[i].Difficulty) : null;
+                sig.Append(refs[i].Name).Append('|').Append(nested[i] ?? "").Append('|');
+                if (path != null)
+                {
+                    try
+                    {
+                        var fi = new FileInfo(path);
+                        sig.Append(fi.LastWriteTimeUtc.Ticks).Append('|').Append(fi.Length);
+                    }
+                    catch { sig.Append('?'); }
+                }
+                sig.Append(';');
+            }
+            var s = sig.ToString();
+            if (_campaignSupplyCache != null && s == _campaignFileSig) return _campaignSupplyCache;
+
+            var list = new List<CampaignTables.Supply>(refs.Count);
+            for (int i = 0; i < refs.Count; i++)
+            {
+                var r = refs[i];
+                // File IO here; the parse + malformed classification lives in CampaignTables.ReadSupply so it
+                // can be unit-tested. A file that exists but cannot be READ is reported as malformed, not
+                // missing — the campaign knows it is there.
+                string text = null;
+                bool readFailed = false;
+                if (paths[i] != null)
+                {
+                    try { text = File.ReadAllText(paths[i]); }
+                    catch { readFailed = true; }
+                }
+                var sup = CampaignTables.ReadSupply(r.Name, r.Difficulty, r.BlockId, r.IsLegacy,
+                                                    paths[i] == null ? null : (text ?? ""));
+                sup.NestedIn = nested[i];
+                if (readFailed) sup.Malformed = CampaignTables.MalformedParse;
+                list.Add(sup);
+            }
+
+            _campaignSupplyCache = list;
+            _campaignFileSig = s;
+            return list;
+        }
+
+        // The whole `campaign` node. Rebuilt on the ~5 s cadence; the caller republishes the same instance in
+        // between. THIS METHOD ONLY DOES THE LIVE READS — the join and the JSON emission are
+        // CampaignTables.ToJson, so the exact wire shape the companion consumes is unit-tested (nothing in
+        // UiBridge can be, it pulls in Unity and Assembly-CSharp).
+        private JSONObject BuildCampaign(SavedSettings settings, string liveDifficulty)
+        {
+            List<CampaignTables.Supply> supply;
+            try { supply = CampaignSupply(); }
+            catch (Exception e) { Main.LogDebug("UiBridge campaign supply: " + e.Message); return _campaignCache; }
+
+            // Completion counters for the CURRENT difficulty only — the game exposes no others, which is why
+            // every block on another difficulty reports counted=false rather than a number.
+            Dictionary<string, int> live = null;
+            try
+            {
+                var block = ChallengeOverlay.Block();
+                if (block != null && block.Count > 0)
+                {
+                    live = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var e in block) live[e.Code] = e.Cur;
+                }
+            }
+            catch { }
+
+            return CampaignTables.ToJson(
+                supply,
+                liveDifficulty,
+                live,
+                settings == null ? null : settings.AllocationFile,
+                settings != null && settings.AutoProfile,
+                settings != null && settings.AdvisorChallenges);
+        }
+
         private void Safe(string name, Action read)
         {
             try { read(); }
@@ -1602,6 +2260,21 @@ namespace NGUAdvisor.Managers
         private static double Num(double v)
         {
             return (double.IsNaN(v) || double.IsInfinity(v)) ? 0 : v;
+        }
+
+        // Same guarantee as Num(), but WITHOUT SimpleJson's "G17" serialization. JSONNumber writes every
+        // double it holds as G17, which turns the Ak table's clean constants into float noise —
+        // 1e23 ships as "9.9999999999999992E+22": 26 characters, and a threshold the UI would render back to
+        // the user in a form the game's own source never uses. JSONNumber's string constructor keeps the
+        // literal verbatim (m_RawString), so this emits a real JSON number in round-trip-shortest form
+        // ("1E+23"). Only for values whose EXACT decimal shape matters and whose magnitude is large; the
+        // per-tick percentages are small integers where G17 is already exact.
+        private static JSONNumber Exact(double v)
+        {
+            if (double.IsNaN(v) || double.IsInfinity(v)) return new JSONNumber(0);
+            // "R" is round-trip-shortest on both net48 and Unity's Mono, and always a valid JSON number
+            // token (digits, optional '.', optional 'E+nn').
+            return new JSONNumber(v.ToString("R", CultureInfo.InvariantCulture));
         }
 
         private static string FormatBig(double v)
