@@ -2,7 +2,11 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
-## [Unreleased]
+## [2.1.0] - 2026-07-28 — Campaign
+
+The challenge campaign becomes a first-class part of the advisor: the CBlock spine is modelled, its
+profiles ship and auto-install, and the UI tells you which block you are on and whether anything in the
+chain is unreachable. Settings and profiles carry over — extract over your old copy.
 
 ### Added
 

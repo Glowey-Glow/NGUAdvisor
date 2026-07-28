@@ -27,11 +27,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CSPROJ="$ROOT/NGUAdvisor/NGUAdvisor.csproj"
 REPO="Glowey-Glow/NGUAdvisor"
 
-# Injector tools + sample profiles live in the maintainer's runtime folder (a sibling of this
-# repo by default). Override with env vars if your layout differs.
+# Injector tools live in the maintainer's runtime folder (a sibling of this repo by default), because
+# they are third-party binaries this repo deliberately does not track. Override with env vars if your
+# layout differs.
 RUNTIME="${NGU_RUNTIME:-$ROOT/../NGU}"
 TOOLS="${NGU_TOOLS:-$RUNTIME/injector}"
-PROFILES="${NGU_PROFILES:-$RUNTIME/sampleprofiles}"
+
+# Sample profiles come from THE REPO, not the runtime folder. They used to be copied from
+# $RUNTIME/sampleprofiles, which meant the release shipped whatever was in an untracked directory on one
+# machine: through 2.0.1 that was the pre-repair copies, plus cblock3-evil.json and cblock4.json, two
+# superseded files that nest `Challenges` inside a Rebirth breakpoint where the loader never sees it — so
+# they load with zero challenges and say nothing. Shipping from the repo means what users get is what is
+# reviewed here.
+PROFILES="${NGU_PROFILES:-$ROOT/NGUAdvisor/SampleProfiles}"
 
 # Version: first arg, else the Version const in Main.cs.
 VERSION="${1:-$(grep -oE 'Version = "[^"]+"' "$ROOT/NGUAdvisor/Main.cs" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')}"
