@@ -364,7 +364,13 @@ namespace NGUAdvisor.Managers
             int best = -1;
             for (int i = 0; i < ZoneHelpers.TitanZones.Length; i++)
             {
-                try { if (ZoneHelpers.AutokillAvailable(i)) best = i; }
+                // RiddleLocked as well as AutokillAvailable: a locked titan never spawns, so boss{N}Spawn
+                // saturates at its spawn time and stays there. That makes IsTitanSpawningSoon permanently
+                // true, which pins the gold loadout on indefinitely -- the 10-minute stall valve clears the
+                // target and this method re-arms it 60s later, so the run sits in gold gear at ~90% duty
+                // cycle and never banks anything. Picking the next titan DOWN is strictly better: it can
+                // actually be killed. The swap path below already guarded 6/7/8; this path guarded nothing.
+                try { if (ZoneHelpers.AutokillAvailable(i) && !ZoneHelpers.RiddleLocked(i)) best = i; }
                 catch { }
             }
             _akTitan = best;
@@ -564,15 +570,9 @@ namespace NGUAdvisor.Managers
                 for (int i = 0; i < ZoneHelpers.TitanZones.Length && i < 14; i++)
                 {
                     if (ZoneHelpers.TitanZones[i] > maxZone) continue;
-                    bool riddleLocked = false;
-                    try
-                    {
-                        if (i == 5) riddleLocked = !c.adventure.titan6Unlocked;
-                        else if (i == 6) riddleLocked = !c.adventure.titan7Unlocked;
-                        else if (i == 7) riddleLocked = !c.adventure.titan8Unlocked;
-                    }
-                    catch { }
-                    if (riddleLocked) continue;
+                    // Was an inline 6/7/8 chain that silently omitted titan9 (Exile), so a locked Exile stayed
+                    // a swap target. Shared helper now, so the two paths can't drift apart again.
+                    if (ZoneHelpers.RiddleLocked(i)) continue;
                     bool ak = false;
                     try { ak = ZoneHelpers.AutokillAvailable(i); } catch { }
                     if (!ak) targets[i] = true;
@@ -632,8 +632,17 @@ namespace NGUAdvisor.Managers
                             // pending it completes there for free, and while the next version's
                             // first-kill stats are out of reach even in best gear, the AK version
                             // keeps paying gold/drops instead of feeding doomed attempts.
+                            // <= objv.Version, NOT <. The old strict bound could never select the objective's
+                            // own version even when it auto-kills, so a v4 objective with v4 AK available got
+                            // parked on v3 -- the advisor logging "targeting Titan 6 (v4) for the next gold
+                            // bank" and "titan spawn version -> v3" on adjacent lines, and undoing a manual
+                            // v4 selection every minute. The bound was trying to say "don't park on a version
+                            // you can't auto-kill", but AutokillAvailable already tests exactly that, so it
+                            // was redundant when the version qualifies and harmful when it does. Parking on
+                            // the highest AK-able version is strictly better: the kill is still free and the
+                            // gold and drops scale with the version.
                             int akVer = 0;
-                            for (int vv = 1; vv < objv.Version; vv++)
+                            for (int vv = 1; vv <= objv.Version; vv++)
                                 try { if (ZoneHelpers.AutokillAvailable(primary, vv)) akVer = vv; } catch { }
                             if (akVer > 0 && spawn != akVer)
                             {

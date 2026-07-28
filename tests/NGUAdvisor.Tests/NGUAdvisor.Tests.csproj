@@ -35,6 +35,7 @@
     <Compile Include="..\..\NGUAdvisor\Managers\TitanTables.cs" Link="Linked\TitanTables.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BossScale.cs" Link="Linked\BossScale.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\DiggerMath.cs" Link="Linked\DiggerMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\WandoosMath.cs" Link="Linked\WandoosMath.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BloodRouter.cs" Link="Linked\BloodRouter.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\SnipeTrigger.cs" Link="Linked\SnipeTrigger.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\ExpRatio.cs" Link="Linked\ExpRatio.cs" />

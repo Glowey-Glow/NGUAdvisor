@@ -196,6 +196,32 @@ namespace NGUAdvisor.Managers
 
         public static bool AutokillAvailable(int titanIndex) => AutokillAvailable(titanIndex, TitanVersion(titanIndex));
 
+        // Titans 6-9 (indices 5-8) sit behind a clue riddle the player solves by hand. Until it's solved
+        // AdventureController.spawnEnemy serves an ordinary mob for the zone instead of the titan, so the titan
+        // cannot be fought at all -- autokill stats are beside the point. Deliberately SEPARATE from
+        // AutokillAvailable: that answers "are your stats good enough", which stays true and is what the UI's
+        // stat chips report. This answers "can it appear", and callers that pick a titan to WAIT ON need both.
+        //
+        // Fails open (false) on an unreadable field so a reflection/save hiccup can't newly strand a titan the
+        // player can actually fight -- same posture as the inline try/catch this replaced in AdvisorApply.
+        public static bool RiddleLocked(int titanIndex)
+        {
+            try
+            {
+                var adv = _character?.adventure;
+                if (adv == null) return false;
+                switch (titanIndex)
+                {
+                    case 5: return !adv.titan6Unlocked;
+                    case 6: return !adv.titan7Unlocked;
+                    case 7: return !adv.titan8Unlocked;
+                    case 8: return !adv.titan9Unlocked;
+                    default: return false;
+                }
+            }
+            catch { return false; }
+        }
+
         public static int? GetHighestSpawningTitanZone()
         {
             var spawningTitans = _titanSnapshotSummary.TitansSpawningSoon;

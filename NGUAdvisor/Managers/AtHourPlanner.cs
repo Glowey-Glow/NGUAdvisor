@@ -256,6 +256,28 @@ namespace NGUAdvisor.Managers
 
         // ---- forecast primitives ----
 
+        // Narrow public entry point (WandoosAdvisor): the projected LEVEL of one AT slot at each of
+        // the given time offsets, so other projections reuse THIS forecaster instead of growing a
+        // second copy of the game's formula. Fills `levels` and returns true only when the slot is
+        // actually growing; false means "no change over the window" (no energy allocated, target -1
+        // = paused, divisor unreadable) and callers must treat it as such, not as level 0.
+        //
+        // CALLERS SUPPLY THEIR OWN BONUS CURVE. Ratio() above is the ADVENTURE curve (0.1*L^0.4),
+        // which is only correct for slots 0/1. Slots 3/4 feed Wandoos dump speed through
+        // AdvancedTrainingController.trainingBonus() = levelFactor * level, which is LINEAR.
+        public static bool TryProjectLevels(Character c, int id, double[] atSeconds, double[] levels)
+        {
+            if (atSeconds == null || levels == null || levels.Length < atSeconds.Length) return false;
+            try
+            {
+                var s = ReadSlot(c, id);
+                if (s.R <= 0) return false;
+                for (int i = 0; i < atSeconds.Length; i++) levels[i] = LevelAt(s, atSeconds[i]);
+                return true;
+            }
+            catch (Exception e) { Main.LogDebug($"AT forecast slot {id}: {e.Message}"); return false; }
+        }
+
         private struct Slot
         {
             public double L0;    // current level
