@@ -480,6 +480,49 @@ window.addEventListener("load", guard(() => {
       ok("a no-op drop sends nothing", SENT.filter(m => m.cmd === "setSettingList").length === 0,
          JSON.stringify(SENT));
 
+      // ---- 12d-2. the string lists drag too ------------------------------------------------------
+      // Boost TYPE priority is an ordered list just like the id lists; there is no reason for one kind
+      // of ordered list on the page to be draggable and the other not.
+      send(baseSnapshot({ boostPriority: ["Power", "Toughness", "Special"] }));
+      const bto = $("boostTypeOrder");
+      const btoRows = () => Array.from(bto.querySelectorAll(".le-row"));
+      ok("boost TYPE order renders three rows", btoRows().length === 3, String(btoRows().length));
+      ok("boost TYPE rows are draggable",
+         btoRows().every(r => r.getAttribute("draggable") === "true"));
+      ok("boost TYPE rows show a grip", btoRows().every(r => !!r.querySelector(".le-grip")));
+      ok("boost TYPE keeps its arrows for keyboard",
+         btoRows()[0].querySelectorAll("[data-smove]").length === 2);
+
+      SENT.length = 0;
+      (function () {
+        const src = btoRows()[0], dst = btoRows()[2];
+        const dt = { data: {}, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k]; } };
+        const mk = (type, target, y) => {
+          const ev = new window.Event(type, { bubbles: true, cancelable: true });
+          ev.dataTransfer = dt; ev.clientY = y;
+          Object.defineProperty(ev, "target", { value: target, enumerable: true });
+          return ev;
+        };
+        src.dispatchEvent(mk("dragstart", src, 0));
+        dst.dispatchEvent(mk("dragover", dst, 1));
+        dst.dispatchEvent(mk("drop", dst, 1));
+        window.document.dispatchEvent(mk("dragend", src, 0));
+      })();
+      const strSent = SENT.filter(m => m.cmd === "setSettingStrList" && m.key === "BoostPriority");
+      ok("dragging a boost TYPE row posts setSettingStrList",
+         strSent.length === 1, JSON.stringify(SENT));
+      ok("dragging Power to the end reorders correctly",
+         strSent[0] && JSON.stringify(strSent[0].values) === JSON.stringify(["Toughness", "Special", "Power"]),
+         JSON.stringify(strSent.map(x => x.values)));
+
+      // The Add row for boost TYPE is gone: all three are always present, so it could only ever say
+      // "(all added)". The generic machinery must survive for the card sort order.
+      ok("the dead boost-type Add picker is gone", !$("boostTypeOrderAdd"));
+      ok("no Add button remains for boost type",
+         !window.document.querySelector('[data-sadd="boostTypeOrder"]'));
+      ok("the generic SLISTS Add handler still exists for other lists",
+         /data-sadd/.test(fs.readFileSync(FILE, "utf8")));
+
       // The 1 Hz snapshot must not rebuild the list mid-gesture, or the dragged element dies
       // under the pointer and the drag silently fails.
       const beforeDrag = listEl.querySelectorAll(".le-row")[0];
@@ -536,6 +579,45 @@ window.addEventListener("load", guard(() => {
       send(baseSnapshot({ boostEta: { total: 0, perMinute: 12, etaSec: 0, power: 0, toughness: 0, special: 0, etaByItem: {} } }));
       ok("everything at cap is reported as such", /All at cap/.test($("boostEta").textContent),
          $("boostEta").textContent);
+
+      // ---- 12e-2. which item is actually receiving boosts ---------------------------------------
+      send(baseSnapshot({
+        boostLists: { priority: [94, 188, 301], blacklist: [] },
+        boostEta: { total: 1200, perMinute: 10, etaSec: 7200, power: 0, toughness: 0, special: 0,
+                    etaByItem: { "94": 1800, "188": 4200 }, current: 188, currentInList: true }
+      }));
+      ok("the current boost target is named in a chip",
+         /Boosting/.test($("boostEta").textContent) && /Edgy Helmet/.test($("boostEta").textContent),
+         $("boostEta").textContent);
+      const bRows = Array.from($("boostPriority").querySelectorAll(".le-row"));
+      ok("the row receiving boosts is marked",
+         /boosting now/.test(bRows[1].textContent), bRows[1].textContent);
+      ok("other rows are NOT marked",
+         !/boosting now/.test(bRows[0].textContent) && !/boosting now/.test(bRows[2].textContent),
+         bRows.map(r => r.textContent).join(" | "));
+      ok("a marked row still shows its ETA",
+         /at cap in/.test(bRows[1].textContent), bRows[1].textContent);
+
+      // The target can be OUTSIDE the list (empty or fully-capped priority list) — say so.
+      send(baseSnapshot({
+        boostLists: { priority: [], blacklist: [] },
+        boostEta: { total: 900, perMinute: 5, etaSec: 3600, power: 0, toughness: 0, special: 0,
+                    etaByItem: {}, current: 301, currentInList: false }
+      }));
+      ok("a target outside the list is still named",
+         /Boosting/.test($("boostEta").textContent) && /Sturdy Pants/.test($("boostEta").textContent),
+         $("boostEta").textContent);
+      ok("a target outside the list says so",
+         /not in this list/.test($("boostEta").textContent), $("boostEta").textContent);
+
+      // Before any rate is measured, "which one is it working on" is still answerable.
+      send(baseSnapshot({
+        boostLists: { priority: [94], blacklist: [] },
+        boostEta: { total: 500, perMinute: 0, etaSec: -1, power: 0, toughness: 0, special: 0,
+                    etaByItem: {}, current: 94, currentInList: true }
+      }));
+      ok("the boosting row is marked even with no rate yet",
+         /boosting now/.test($("boostPriority").textContent), $("boostPriority").textContent);
 
       // ---- 12g. what is steering the run, on Current stage ---------------------------------------
       // The segment plan was WinForms timeline chips lost in the 2.0.0 port; since then the page only
@@ -619,6 +701,89 @@ window.addEventListener("load", guard(() => {
 
       send(baseSnapshot());
       ok("no swap yet is handled", /No swap yet/.test($("lastSwap").textContent), $("lastSwap").textContent);
+
+      // ---- 12i. completed campaign blocks fold away -----------------------------------------------
+      // The spine only grows, so finished blocks otherwise push the one you are on further down the
+      // page every time you finish another.
+      const camp = {
+        difficulty: "Normal",
+        blocks: [
+          { id: "cb1", name: "CBlock 1", state: "complete", chapter: 2, counted: true },
+          { id: "cb2", name: "CBlock 2", state: "complete", chapter: 3, counted: true },
+          { id: "cb3", name: "CBlock 3", state: "active",   chapter: 4, counted: true },
+          { id: "cb4", name: "CBlock 4", state: "upcoming", chapter: 5, counted: true }
+        ]
+      };
+      send(baseSnapshot({ campaign: camp }));
+      const cb = $("campBlocks");
+      ok("the completed fold appears when there are completed blocks",
+         !!cb.querySelector("[data-cgdone]"), cb.textContent.slice(0, 120));
+      ok("the fold counts them", /Completed campaigns/.test(cb.textContent) && /2/.test(cb.textContent),
+         cb.textContent.slice(0, 160));
+      ok("completed blocks are hidden by default",
+         !/CBlock 1/.test(cb.textContent) && !/CBlock 2/.test(cb.textContent), cb.textContent);
+      ok("unfinished blocks are still shown",
+         /CBlock 3/.test(cb.textContent) && /CBlock 4/.test(cb.textContent), cb.textContent);
+      ok("the fold is reported closed to assistive tech",
+         cb.querySelector("[data-cgdone]").getAttribute("aria-expanded") === "false");
+
+      cb.querySelector("[data-cgdone]").dispatchEvent(new window.Event("click", { bubbles: true }));
+      const cbOpen = $("campBlocks");
+      ok("clicking the fold reveals the completed blocks",
+         /CBlock 1/.test(cbOpen.textContent) && /CBlock 2/.test(cbOpen.textContent), cbOpen.textContent);
+      ok("the fold is reported open to assistive tech",
+         cbOpen.querySelector("[data-cgdone]").getAttribute("aria-expanded") === "true");
+      ok("the unfinished blocks did not move out",
+         /CBlock 3/.test(cbOpen.textContent), cbOpen.textContent);
+
+      cbOpen.querySelector("[data-cgdone]").dispatchEvent(new window.Event("click", { bubbles: true }));
+      ok("clicking again folds them back",
+         !/CBlock 1/.test($("campBlocks").textContent), $("campBlocks").textContent);
+
+      // No completed blocks -> no fold at all, rather than an empty "Completed campaigns (0)".
+      send(baseSnapshot({ campaign: { difficulty: "Normal", blocks: [
+        { id: "cb3", name: "CBlock 3", state: "active", chapter: 4, counted: true } ] } }));
+      ok("no fold when nothing is complete", !$("campBlocks").querySelector("[data-cgdone]"),
+         $("campBlocks").textContent.slice(0, 120));
+
+      // ---- 12j. poop targets on the orchard -------------------------------------------------------
+      // Restored from the retired WinForms panel; the Yggdrasil view has promised to "advise poop
+      // placement" since 2.0.0 without doing it.
+      send(baseSnapshot({ yggSeeds: "1.2K", fruits: [
+        { i:0, name:"Pomegranate", state:"active", tier:3, maxTier:10, frac:0.4, poopRec:true, poop:true },
+        { i:1, name:"Macguffin Beta", state:"active", tier:2, maxTier:8, frac:0.2, poopRec:true },
+        { i:2, name:"Adventure", state:"active", tier:1, maxTier:5, frac:0.1, poop:true },
+        { i:3, name:"Gold", state:"inactive", tier:0, maxTier:4 }
+      ]}));
+      const tiles = $("fruitTiles");
+      ok("a recommended fruit gets the recommended marker",
+         tiles.querySelectorAll(".ft-poop.rec").length === 2,
+         String(tiles.querySelectorAll(".ft-poop.rec").length));
+      ok("a pooped-but-not-recommended fruit gets the plain marker",
+         tiles.querySelectorAll(".ft-poop:not(.rec)").length === 1,
+         String(tiles.querySelectorAll(".ft-poop:not(.rec)").length));
+      ok("a fruit with neither gets no marker", tiles.querySelectorAll(".ft-poop").length === 3,
+         String(tiles.querySelectorAll(".ft-poop").length));
+      ok("the markers carry an explanation for hover/assistive tech",
+         !!tiles.querySelector(".ft-poop.rec").getAttribute("title"));
+      ok("the summary names where poop should go",
+         /Pomegranate/.test($("fruitPoop").textContent) && /Macguffin Beta/.test($("fruitPoop").textContent),
+         $("fruitPoop").textContent);
+      ok("the summary counts the ones still missing poop",
+         /1 of those has none yet/.test($("fruitPoop").textContent), $("fruitPoop").textContent);
+
+      // When poop is already correct, say so rather than nagging.
+      send(baseSnapshot({ fruits: [
+        { i:0, name:"Pomegranate", state:"active", tier:3, maxTier:10, frac:0.4, poopRec:true, poop:true }
+      ]}));
+      ok("correct placement is confirmed, not nagged",
+         /on the fruits the advisor would pick/.test($("fruitPoop").textContent), $("fruitPoop").textContent);
+
+      // No poop data at all (older advisor) must not render a stray line.
+      send(baseSnapshot({ fruits: [ { i:0, name:"Gold", state:"active", tier:1, maxTier:4, frac:0.1 } ]}));
+      ok("no poop data -> no summary line", $("fruitPoop").textContent.trim() === "",
+         $("fruitPoop").textContent);
+      ok("no poop data -> no markers", $("fruitTiles").querySelectorAll(".ft-poop").length === 0);
 
       // ---- 12f. the page must not redeclare a shared helper --------------------------------------
       // A second `function fmtNum(...)` in the same IIFE silently replaces the page-wide formatter for

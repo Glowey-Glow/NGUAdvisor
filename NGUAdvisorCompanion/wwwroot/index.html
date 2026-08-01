@@ -339,6 +339,13 @@
   .ftile { position: relative; height: 34px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .ftile .ft-fill { position: absolute; inset: 0 auto 0 0; height: 100%; width: 0; background: var(--accent); opacity: .82; transition: width .4s ease; }
   .ftile .ft-label { position: absolute; inset: 0; display: flex; align-items: center; gap: var(--sp-2); padding: 0 11px; z-index: 1; }
+  /* Poop marker, top-right of the tile. Two states, deliberately distinguishable without colour alone:
+     the recommended one is filled and ringed, the merely-present one is a hollow faint dot. Brown is
+     not in the token set and is not a status colour here — it is the game's own poop, so it is stated
+     once as a literal and used nowhere else. */
+  .ftile .ft-poop { position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
+                    z-index: 2; background: transparent; border: 1px solid var(--faint); }
+  .ftile .ft-poop.rec { background: #8a5a2b; border-color: #c98f4e; box-shadow: 0 0 0 2px rgba(138,90,43,.28); }
   .ftile .ft-name { font-family: var(--mono); font-size: var(--fs-2); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ftile .ft-meta { margin-left: auto; font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); flex: none; }
   .ftile.t-even .ft-fill { background: var(--ok); }
@@ -637,6 +644,13 @@
   .cg-head span { color: var(--faint); }
   .cg-row { padding: 6px 0; border-bottom: 1px solid var(--border-soft); }
   .cg-row:last-child { border-bottom: 0; }
+  /* The "Completed campaigns" fold. A row in the same flex column as the blocks, deliberately quieter
+     than one: it is a divider you can open, not an entry in the spine. */
+  .cg-done { display: flex; align-items: center; gap: var(--sp-2); width: 100%; text-align: left;
+             background: none; border: 0; border-top: 1px dashed var(--border); cursor: pointer;
+             color: var(--faint); font: inherit; font-size: var(--fs-2); padding: 8px 0 6px; }
+  .cg-done:hover { color: var(--text); }
+  .cg-done .cg-mk { color: var(--faint); }
   /* `basic` and `mopup` are sequenced by the guide but are not among its nine blocks. The dashed rule
      says so at a glance; the row still carries the word ("entry step" / "mop-up") as a badge. */
   .cg-row.k-basic, .cg-row.k-mopup { border-bottom-style: dashed; }
@@ -929,7 +943,12 @@
   .le-row.drop-after  { box-shadow: inset 0 -2px 0 0 var(--accent); }
   .le-empty { font-family: var(--mono); font-size: var(--fs-3); color: var(--faint); padding: 6px 2px; }
   .le-add { display: flex; gap: var(--sp-2); margin: 4px 0 10px; }
-  .le-input { max-width: 130px; }
+  /* .tin hard-sets width:46px, and with border-box that leaves 34px of text — about five characters
+     of 11px mono, before a number input's spinner takes another ~17px. So the placeholders rendered as
+     "ite" and "gea". These add-boxes need to show "item ID" / "gear ID" and a typed 3-4 digit id, so
+     they override the width outright; the timeline editor's own .tin fields are untouched and stay
+     narrow. Declared after .tin, same specificity, so this wins. */
+  .le-input { width: 120px; max-width: 130px; }
 
   /* F2 note: the "VOICE" variant (Expressway + sentence-case on section labels) was built, reviewed
      against the real 1346px viewport with live data, and REJECTED by the owner in favour of keeping
@@ -1297,7 +1316,12 @@
           </div>
           <div class="seclabel"><span class="eyebrow">Boost type priority · order Power / Toughness / Special</span></div>
           <div class="listed" id="boostTypeOrder" data-key="BoostPriority"></div>
-          <div class="le-add"><select class="inp le-input" id="boostTypeOrderAdd" aria-label="Boost type to add"></select><button class="btn" type="button" data-sadd="boostTypeOrder">Add</button></div>
+          <!-- No Add row here, deliberately. This list's vocabulary is exactly Power / Toughness /
+               Special and all three are always present, so the picker could only ever read
+               "(all added)" and the button could never add anything. Reordering is the entire
+               interaction — drag a row, or use the arrows. The generic SLISTS Add machinery stays for
+               the card sort order, whose vocabulary really can have unadded entries; buildStrAdd
+               no-ops when a list has no "<id>Add" element. -->
           <div class="seclabel"><span class="eyebrow">Priority boosts · boosted top-down (order matters)</span></div>
           <!-- Time to cap: the ETA the advisor has always computed on its 60s boost pump and written
                only to inject.log. Each row carries its own cumulative ETA, so moving an item up is a
@@ -1711,7 +1735,8 @@
         persist:
           '<div class="seclabel"><span class="eyebrow">Orchard · fruits</span></div>'+
           '<div class="mh"><span class="hint" id="yggSeeds">—</span></div>'+
-          '<div class="tilegrid" id="fruitTiles"></div>' },
+          '<div class="tilegrid" id="fruitTiles"></div>'+
+          '<div class="mh"><span class="hint" id="fruitPoop" style="color:var(--faint)"></span></div>' },
       blood:       { grp:"Growth", title:"Blood", cons:"BloodPanel", sev:"ok", badge:"Auto",
         rec:"Casts blood spells and pools iron pills; the planner mirrors the caster's own refusal rules.",
         why:"",
@@ -2536,10 +2561,31 @@
       else if(f.state==="inactive"){ cls+=" inactive"; meta="idle · T"+f.tier+"/"+f.maxTier; }
       else if(f.state==="purchasable"){ cls+=" buy"; meta=(f.cost!=null?f.cost+" seeds":"unlock"); }
       else { cls+=" lock"; meta=(f.cost!=null?f.cost+" seeds":"locked"); }
-      return '<div class="'+cls+'"><div class="ft-fill" style="width:'+fill+'%"></div>'+
+      /* POOP. Two independent facts, and the pair is the whole point — one alone tells you nothing
+         actionable. A brown dot is "the advisor would put poop here"; a faint dot is "poop IS here".
+         Together: brown-only = move some here, faint-only = this one is not worth it, both = correct.
+         Restored from the retired WinForms YggPanel, whose ranking was deleted outright in the 2.0.0
+         cutover — the view has promised to "advise poop placement" ever since without doing it. */
+      var dot = f.poopRec ? '<span class="ft-poop rec" title="Advisor: poop belongs here"></span>'
+              : f.poop    ? '<span class="ft-poop" title="Poop is here, but the advisor rates other fruits higher"></span>'
+              : "";
+      return '<div class="'+cls+'"><div class="ft-fill" style="width:'+fill+'%"></div>'+dot+
                '<div class="ft-label"><span class="ft-name">'+esc(f.name)+'</span><span class="ft-meta">'+esc(meta)+'</span></div>'+
              '</div>';
     }).join(""));
+    // One line naming the targets, because a dot on a tile is easy to miss and the answer people want
+    // is "where should it go". Mismatch only — when poop already sits on the right fruits, say nothing.
+    var why=$("fruitPoop");
+    if(why){
+      var rec=list.filter(function(f){ return f.poopRec; }), has=list.filter(function(f){ return f.poop; });
+      var wrong=rec.filter(function(f){ return !f.poop; });
+      var txt="";
+      if(rec.length && wrong.length)
+        txt="Poop belongs on "+rec.map(function(f){ return esc(f.name); }).join(", ")+
+            " — "+wrong.length+" of those "+(wrong.length===1?"has":"have")+" none yet.";
+      else if(rec.length && has.length) txt="Poop is on the fruits the advisor would pick.";
+      writeHtml(why, "fruitPoop", txt);
+    }
   }
 
   // Gold & Money-pit: next-throw outcome CATEGORY (no gold value exists) + ready/ETA + plan verdict.
@@ -3023,7 +3069,11 @@
   }
   // Keep the seconds above an hour too — dropping them made 3600 and 3659 both read "1h 0m", so two
   // breakpoints a minute apart were indistinguishable rows on a screen whose whole job is telling them apart.
-  function fmtSec(sec){ sec=Math.max(0,+sec||0); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  /* Round the INPUT, not just the components. h and m are floored, but `s = sec%60` was not, so any
+     caller passing a fractional second rendered it in full: "1h 20m 13.333333333333332s". Sub-second
+     precision tells nobody anything about a duration, and rounding here fixes every caller at once
+     rather than leaving the next emitter to rediscover it. */
+  function fmtSec(sec){ sec=Math.max(0,Math.round(+sec||0)); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
     if(h>0) return h+"h "+m+"m"+(s?(" "+s+"s"):""); if(m>0) return m+"m"+(s?(" "+s+"s"):""); return s+"s"; }
   // One timeline block (rows + add button) for a single system; sub-labelled when a view stacks several.
   function tlBlockHtml(sysKey, rows, showLabel){
@@ -3729,6 +3779,9 @@
     mopup: ["mop-up",     "Not a guide block: a shipped challenge sweep, sequenced last so the view does not pretend the Sadistic Final CBlock ends the challenge work."]
   };
   var CAMP_OPEN = "";   // id of the block whose detail is expanded; "" = none. User state, like CHAL.open.
+  // Completed blocks start folded: the spine only grows, and finished blocks otherwise push the one
+  // you are actually on further down the page every time you finish another. User state, not persisted.
+  var CAMP_DONE_OPEN = false;
   var _campSnap = null; // last snapshot carrying a `campaign` node, so the expander can repaint on its own
 
   function campLower(x){ return String(x==null?"":x).toLowerCase(); }
@@ -3848,9 +3901,29 @@
     var c = s.campaign; if(!c) return;
     var live = c.difficulty ? String(c.difficulty) : "";
     var blocks = c.blocks || [];
+
+    /* Finished blocks fold away. The spine only grows, and a completed block is history — it pushes
+       the block you are actually on further down the page every time you finish one. They stay
+       reachable (and stay in ORDER when opened, rather than being re-sorted into a separate list),
+       because "did I really finish CBlock 3" is a question people come back to.
+       .cg-grid is a flex column, so the header is just another child — no grid-column spanning. */
+    var done = [], rest = [];
+    blocks.forEach(function(b){ (String(b.state||"") === "complete" ? done : rest).push(b); });
+
+    var body = rest.map(function(b){ return campBlockHtml(b, live); }).join("");
+    if(done.length){
+      var open = CAMP_DONE_OPEN;
+      body += '<button class="cg-done" type="button" data-cgdone="1" data-cgfocus="__done"'+
+                ' aria-expanded="'+(open?"true":"false")+'">'+
+                '<span class="cg-mk" aria-hidden="true">'+(open?"−":"+")+'</span>'+
+                '<span>Completed campaigns</span>'+
+                '<span class="badge">'+done.length+'</span></button>';
+      if(open) body += done.map(function(b){ return campBlockHtml(b, live); }).join("");
+    }
+
     var html = blocks.length
       ? ('<div class="cg-head"><span></span><span>Block</span><span>State</span><span>Completions</span><span></span></div>'+
-         '<div class="cg-grid">'+blocks.map(function(b){ return campBlockHtml(b, live); }).join("")+'</div>')
+         '<div class="cg-grid">'+body+'</div>')
       : '<div class="mh"><span class="hint">The advisor published no blocks.</span></div>';
     // The expanders are the only focusable controls in here and this region rebuilds them, so restore
     // focus by data-cgfocus after a repaint (the #challengeChips policy) rather than refusing to paint.
@@ -3863,6 +3936,15 @@
   }
 
   document.addEventListener("click", function(e){
+    var doneBtn = e.target && e.target.closest && e.target.closest("[data-cgdone]");
+    if(doneBtn){
+      CAMP_DONE_OPEN = !CAMP_DONE_OPEN;
+      // Same contract as the per-block expander below: the state is IN the markup (the glyph and
+      // aria-expanded change, and the rows appear), so the dirty check sees a different string and
+      // repaints exactly once. No cache reset needed.
+      if(_campSnap) try{ renderCampBlocks(_campSnap); }catch(err){}
+      return;
+    }
     var btn = e.target && e.target.closest && e.target.closest("[data-cgblock]");
     if(!btn) return;
     var id = btn.getAttribute("data-cgblock");
@@ -4673,11 +4755,16 @@
     boostPriority:  { key:"PriorityBoosts", ordered:true,  arr:[], dirty:false, built:false, names:"item",
                       annotate: function(id){
                         var b = BOOST_ETA; if(!b) return "";
-                        if(!(b.perMinute > 0)) return "";
+                        // The row actually receiving boosts right now — marked even before a rate has
+                        // been measured, since "which one is it working on" is answerable immediately.
+                        var now = (b.current != null && id === b.current)
+                                ? '<b style="color:var(--accent)">boosting now</b>' : "";
+                        if(!(b.perMinute > 0)) return now;
                         var per = b.etaByItem || {};
                         var sec = per[String(id)];
-                        if(sec == null) return '<span class="mut">at cap</span>';
-                        return "at cap in " + esc(fmtSec(sec));
+                        var eta = (sec == null) ? '<span class="mut">at cap</span>'
+                                                : "at cap in " + esc(fmtSec(sec));
+                        return now ? now + " · " + eta : eta;
                       } },
     boostBlacklist: { key:"BoostBlacklist", ordered:false, arr:[], dirty:false, built:false, names:"item" },
     advBlacklist:   { key:"BlacklistedBosses", ordered:false, arr:[], dirty:false, built:false, names:"advEnemy" },
@@ -4750,10 +4837,21 @@
      rows' innerHTML on every change, so per-element handlers would be dropped on the floor. */
   var _dragList = null, _dragFrom = -1;
   function listRowOf(t){ return t && t.closest ? t.closest(".le-row.le-drag") : null; }
+  /* Which editor a dragged row belongs to. Two of the three list editors take part:
+       BLISTS (drawList)    — the ordered id lists: boost priority, the loadouts, wish priorities.
+       SLISTS (drawStrList) — the fixed-vocabulary string lists: boost TYPE order, card sort order.
+     The challenge rotation (drawChallenges) deliberately does NOT: its rows carry an expandable
+     open-row index, a live text input, and a focus-restore built around a prior bug where a repaint
+     ate a click. Dragging would have to interact with all of that, for a list that is typically two
+     to five rows where the arrows are already adequate. */
   function listIdOf(row){
     var host = row && row.closest ? row.closest(".listed") : null;
-    return host && BLISTS[host.id] ? host.id : null;
+    if(!host) return null;
+    if(BLISTS[host.id]) return host.id;
+    if(typeof SLISTS !== "undefined" && SLISTS[host.id]) return host.id;
+    return null;
   }
+  function listIsStr(id){ return typeof SLISTS !== "undefined" && !!SLISTS[id]; }
   function clearDropCues(){
     document.querySelectorAll(".le-row.drop-before, .le-row.drop-after, .le-row.dragging")
       .forEach(function(r){ r.classList.remove("drop-before","drop-after","dragging"); });
@@ -4788,7 +4886,7 @@
       e.preventDefault();
       var box = row.getBoundingClientRect();
       var to = +row.getAttribute("data-i") + (((e.clientY - box.top) > box.height/2) ? 1 : 0);
-      listReorder(id, from, to);
+      if(listIsStr(id)) strReorder(id, from, to); else listReorder(id, from, to);
     }
     _dragList = null; _dragFrom = -1; clearDropCues();
   });
@@ -4819,6 +4917,13 @@
       html = '<span class="chip max"><b>'+esc(fmtSec(b.etaSec))+'</b><span class="sub">to cap</span></span>'+
              '<span class="chip"><b>'+esc(fmtNum(b.total))+'</b><span class="sub">stat points to cap</span></span>'+
              '<span class="chip"><b>'+esc(fmtNum(b.perMinute))+'</b><span class="sub">per minute</span></span>';
+    }
+    // Which item is actually getting them, always — including when it is NOT in the priority list,
+    // which is the case that most needs saying: with an empty or fully-capped list the advisor falls
+    // through to equipped gear and then locked inventory, and nothing on this page said so.
+    if(b.current != null){
+      html += '<span class="chip act"><b>Boosting</b><span class="sub">'+itemLabel(b.current)+
+              (b.currentInList ? '' : ' · not in this list')+'</span></span>';
     }
     writeHtml(el, "beta", html);
     // The per-row ETAs are a function of this node, so repaint the list when it moves — but never
@@ -5015,8 +5120,13 @@
   }
   function drawStrList(id){
     var st=SLISTS[id], el=$(id); if(!el) return;
+    // Same drag affordance as the id lists — these are priority orders too, and there is no reason
+    // for one kind of ordered list on the page to be draggable and the other not. Arrows stay for
+    // keyboard, exactly as in drawList.
     el.innerHTML = st.arr.length ? st.arr.map(function(v,i){
-      return '<div class="le-row" data-i="'+i+'"><span class="ix">'+(i+1)+'</span><span class="id">'+esc(v)+'</span>'+
+      return '<div class="le-row le-drag" data-i="'+i+'" draggable="true">'+
+        '<span class="le-grip" aria-hidden="true">⠿</span>'+
+        '<span class="ix">'+(i+1)+'</span><span class="id">'+esc(v)+'</span>'+
         '<span class="le-ctrls"><button class="le-btn" type="button" data-smove="up" aria-label="Move up">↑</button>'+
         '<button class="le-btn" type="button" data-smove="down" aria-label="Move down">↓</button>'+
         '<button class="le-btn" type="button" data-sremove aria-label="Remove">✕</button></span></div>';
@@ -5025,8 +5135,22 @@
   }
   function applyStrList(id, incoming){
     var st=SLISTS[id]; if(!st) return; incoming=(incoming||[]).slice();
+    // Never repaint the list being dragged — a 1 Hz snapshot would destroy the row under the pointer.
+    if(_dragList === id) return;
     if(st.dirty){ if(slEq(st.arr,incoming)) st.dirty=false; return; }
     if(!st.built || !slEq(st.arr,incoming)){ st.arr=incoming; st.built=true; drawStrList(id); }
+  }
+  /* Move one entry to an insertion POINT (0..len) — the drawList/listReorder rule, same off-by-one:
+     removing first shifts everything after `from` down by one. */
+  function strReorder(id, from, to){
+    var st=SLISTS[id]; if(!st || !st.arr) return;
+    if(from<0 || from>=st.arr.length) return;
+    if(to>from) to--;
+    if(to<0) to=0; if(to>st.arr.length-1) to=st.arr.length-1;
+    if(to===from) return;
+    var v=st.arr.splice(from,1)[0];
+    st.arr.splice(to,0,v);
+    drawStrList(id); sendStrList(id);
   }
   function sendStrList(id){ var st=SLISTS[id]; st.dirty=true; window.__ngu.send({cmd:"setSettingStrList", key:st.key, values:st.arr}); }
   function addStr(id,v){ var st=SLISTS[id]; if(!v||st.arr.indexOf(v)>=0||st.vocab.indexOf(v)<0) return; st.arr.push(v); drawStrList(id); sendStrList(id); }

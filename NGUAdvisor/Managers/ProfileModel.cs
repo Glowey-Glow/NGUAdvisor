@@ -54,6 +54,12 @@ namespace NGUAdvisor.Managers
             public string Objective = "";
             // Gear only: when optimizing, always pin the single best Respawn item into the loadout.
             public bool ForceRespawn = false;
+            // Diggers only: how many diggers should be ACTIVE at this breakpoint. 0 = unset, meaning
+            // "as many as the game's unlocked slots allow", which is the behaviour every profile had
+            // before this key existed. Distinct from Items.Count on purpose: the list is a PRIORITY
+            // ORDER, so you can name your top two and still ask for four active, letting the advisor
+            // choose the rest.
+            public int Count = 0;
             public string Challenge = "";
             public readonly List<KeyValuePair<string, JSONNode>> Extras = new List<KeyValuePair<string, JSONNode>>();
 
@@ -219,6 +225,14 @@ namespace NGUAdvisor.Managers
             return At(l, index, b => { b.Items = ids ?? new List<int>(); if (systemKey == "gear") { b.Objective = ""; b.ForceRespawn = false; } });
         }
 
+        /// <summary>How many diggers should be ACTIVE at this breakpoint. 0 clears it (use all unlocked
+        /// slots). Separate from the item list, which is a priority ORDER and may be shorter.</summary>
+        public bool SetListCount(string systemKey, int index, int count)
+        {
+            var l = systemKey == "diggers" ? Diggers : systemKey == "beards" ? Beards : null;
+            return At(l, index, b => b.Count = count < 0 ? 0 : count);
+        }
+
         /// <summary>Put a gear breakpoint into optimize-objective mode (clears the manual ID list).</summary>
         public bool SetGearObjective(int index, string objective, bool forceRespawn) =>
             At(Gear, index, b => { b.Objective = objective ?? ""; b.ForceRespawn = forceRespawn; b.Items = new List<int>(); });
@@ -359,6 +373,7 @@ namespace NGUAdvisor.Managers
                         if (kv.Key == "Time" || kv.Key == payloadKey) continue;
                         if (kv.Key == "Objective") { b.Objective = kv.Value.Value; continue; }
                         if (kv.Key == "TopRespawn") { b.ForceRespawn = kv.Value.AsBool; continue; }
+                        if (kv.Key == "Count") { b.Count = kv.Value.AsInt; continue; }
                         if (kv.Key == "Challenge") { b.Challenge = kv.Value.Value ?? ""; continue; }
                         if (IsCommentKey(kv.Key)) continue;
                         b.Extras.Add(new KeyValuePair<string, JSONNode>(kv.Key, kv.Value));
@@ -593,6 +608,8 @@ namespace NGUAdvisor.Managers
                 o[payloadKey] = items;
                 if (!string.IsNullOrEmpty(b.Objective)) o["Objective"] = b.Objective;
                 if (b.ForceRespawn) o["TopRespawn"] = b.ForceRespawn;
+                // Only when set, so profiles that never use it stay byte-identical on a round trip.
+                if (b.Count > 0) o["Count"] = b.Count;
                 if (!string.IsNullOrEmpty(b.Challenge)) o["Challenge"] = b.Challenge;
                 foreach (var kv in b.Extras) o[kv.Key] = kv.Value;
                 arr.Add(o);

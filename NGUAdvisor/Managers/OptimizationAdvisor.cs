@@ -927,7 +927,14 @@ namespace NGUAdvisor.Managers
                 // filler leaks in. Leveling priority is the law-ranked order that survives the filter.
                 var ranked = order.Where(IsDiggerUnlocked);
                 if (poolFilter != null) ranked = ranked.Where(poolFilter.Contains);
-                return ranked.Take(slots).ToArray();
+                // The active breakpoint may ask for FEWER diggers than there are slots. Applied last,
+                // after the laws have finished reordering, so the count decides how many of the ranked
+                // set run — not which ones. Only ever narrows: a breakpoint cannot conjure slots the
+                // game has not unlocked.
+                int want = 0;
+                try { want = AllocationProfiles.Breakpoints.DiggerBreakpoints.ActiveProfileDiggerCount(); } catch { }
+                int take = want > 0 ? Math.Min(want, slots) : slots;
+                return ranked.Take(take).ToArray();
             }
             catch { return null; }
         }

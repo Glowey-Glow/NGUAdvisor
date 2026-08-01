@@ -118,8 +118,28 @@ namespace NGUAdvisor.Managers
                                            string challenge, int min, int max, string what)
         {
             if (!m.SetTimeSeconds(sk, index, sec)) return NoBp(sk, index);
+
+            // Diggers may carry a trailing "xN" — how many diggers should be ACTIVE here, which is not
+            // the same as how many are listed. The list is a priority ORDER, so "3, 8 x4" means "these
+            // two first, four active in total, advisor picks the other two". Absent = as many as the
+            // unlocked slots allow, i.e. exactly what every profile did before this key existed.
+            var body = (payload ?? "").Trim();
+            int count = 0;
+            int xAt = body.LastIndexOf('x');
+            if (xAt > 0 && sk == "diggers")
+            {
+                var tail = body.Substring(xAt + 1).Trim();
+                if (int.TryParse(tail, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+                {
+                    if (n < 1 || n > 12)
+                        return Result.Fail("Digger count '" + n + "' is out of range (1-12).");
+                    count = n;
+                    body = body.Substring(0, xAt).TrimEnd().TrimEnd(',').Trim();
+                }
+            }
+
             var ids = new List<int>();
-            foreach (var raw in SplitCsv(payload))
+            foreach (var raw in SplitCsv(body))
             {
                 if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
                     return Result.Fail("'" + raw + "' is not a number.");
@@ -127,7 +147,10 @@ namespace NGUAdvisor.Managers
                     return Result.Fail(what + " '" + id + "' is out of range (" + min + "-" + max + ").");
                 ids.Add(id);
             }
+            if (count > 0 && ids.Count > count)
+                return Result.Fail("You listed " + ids.Count + " diggers but asked for only " + count + " active.");
             m.SetItems(sk, index, ids);
+            if (sk == "diggers") m.SetListCount(sk, index, count);
             return SetChallenge(m, sk, index, challenge);
         }
 

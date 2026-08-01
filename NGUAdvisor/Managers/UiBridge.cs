@@ -88,6 +88,7 @@ namespace NGUAdvisor.Managers
         private JSONObject _cardMetaCache;               // static card meta (bonus types / rarities / costs / sort vocab); built once
         private int[] _gearNowIds;                       // main-gear best set published this tick, so itemNames can name it too
         private int[] _lastSwapIds;                      // kept + missed ids from the last swap, so itemNames can name them
+        private int[] _boostCurrentId;                   // the item currently receiving boosts; may be OUTSIDE the priority list, so name it explicitly
         private JSONObject _itemNamesCache;              // gear id->name map for the ids the snapshot references; rebuilt only when that id SET changes
         private string _itemNamesSig;                    // the id set _itemNamesCache was built from ("94,110,116,...")
         private bool _itemNamesComplete;                 // false while any id failed to resolve (item table not up yet) -> periodic retry
@@ -295,7 +296,17 @@ namespace NGUAdvisor.Managers
             Binding.Bool("MoneyPitDaycare",     s => s.MoneyPitDaycare,     (s, v) => s.MoneyPitDaycare = v),
             // Boosts
             Binding.Int ("CubePriority",        s => s.CubePriority,        (s, v) => s.CubePriority = v, 0, 4),
-            Binding.Int ("FavoredMacguffin",    s => s.FavoredMacguffin,    (s, v) => s.FavoredMacguffin = v, -1, 64),
+            // NOT a numeric range. Macguffin ids are 198-300 (InventoryManager.macguffinList), so the
+            // old -1..64 clamp rewrote EVERY pick to 64: the page then found no <option value="64">,
+            // blanked the select once the 4s optimistic hold expired, and the run logged "Failed to
+            // find a macguffin with id 64" — which read as "the selection disappears". Validate against
+            // the same table SavedSettings.MassUpdate validates against, so the two cannot disagree;
+            // an id outside it is dropped rather than clamped into a different, wrong id.
+            // The range is deliberately WIDER than the real ids (which top out at 300). Binding.Int
+            // clamps before this lambda runs, so a max of exactly 300 would fold a bogus 500 INTO the
+            // valid id 300 and accept it; a loose ceiling lets the table lookup below reject it instead.
+            Binding.Int ("FavoredMacguffin",    s => s.FavoredMacguffin,
+                         (s, v) => { if (v == -1 || InventoryManager.macguffinList.ContainsKey(v)) s.FavoredMacguffin = v; }, -1, 100000),
             // Wishes
             Binding.Int ("WishLimit",           s => s.WishLimit,           (s, v) => s.WishLimit = v, 1, 4),
             Binding.Int ("WishMode",            s => s.WishMode,            (s, v) => s.WishMode = v, 0, 3),
@@ -931,6 +942,23 @@ namespace NGUAdvisor.Managers
         {
             if (src == null) return;
             foreach (var id in src) into.Add(id);
+        }
+
+        // Poop priority by fruit, ported verbatim from the retired WinForms YggPanel (deleted in
+        // 4a9beab). Lower ranks first. Matched on the fruit's NAME rather than its index because the
+        // orchard's indices shift as fruits unlock, and the guide talks about fruits by name.
+        private static int PoopRank(string shortName)
+        {
+            string n = (shortName ?? "").ToLowerInvariant();
+            if (n.Contains("pomegranate")) return 0;
+            if (n.Contains("macguffin") && n.Contains("beta")) return 1;
+            if (n.Contains("macguffin")) return 2;
+            if (n.Contains("knowledge")) return 3;
+            if (n.Contains("quirk")) return 4;
+            if (n.Contains("luck")) return 5;
+            if (n.Contains("gold")) return 6;
+            if (n.Contains("adventure")) return 7;
+            return 9;
         }
 
         // The mode name a loadout key belongs to, for user-facing sentences ("Filled the Titan list...").
@@ -1664,6 +1692,41 @@ namespace NGUAdvisor.Managers
                     double thr = 0; try { thr = fc != null ? fc.tierThreshold() : 0; } catch { }
                     bool cardsOn = false; try { cardsOn = c.cards.cardsOn; } catch { }
                     int count = fruits.Count;
+
+                    // WHERE THE POOP SHOULD GO. Restored from the retired WinForms YggPanel, which was
+                    // deleted wholesale in the 2.0.0 companion cutover (4a9beab) — the ranking lived
+                    // INSIDE that file, so unlike the other casualties of that commit there was no
+                    // orphaned caller to find, just an advisor opinion that stopped existing. The
+                    // Yggdrasil view has claimed to "advise poop placement" ever since without doing it.
+                    //
+                    // Two passes on purpose: the recommendation is a ranking ACROSS fruits, so it cannot
+                    // be decided inside the per-fruit loop below. Take(max(3, currently-pooped)) mirrors
+                    // the original — never advise fewer targets than the player already has poop on, or
+                    // the advice would read as "remove poop" when it only means "these three are best".
+                    var poopBest = new HashSet<int>();
+                    try
+                    {
+                        int poopCount = 0;
+                        var cand = new List<KeyValuePair<int, long>>();   // fruit index -> maxTier, for the tiebreak
+                        for (int i = 0; i < count; i++)
+                        {
+                            long mt = 0; try { mt = fruits[i].maxTier; } catch { }
+                            if (mt == 0) continue;                                   // not owned
+                            try { if (fruits[i].usePoop) poopCount++; } catch { }
+                            bool growing = false; try { growing = fruits[i].growing(); } catch { }
+                            if (growing) cand.Add(new KeyValuePair<int, long>(i, mt));
+                        }
+                        string NameOf(int i) { try { return yc.fruitName != null && i < yc.fruitName.Count ? yc.fruitName[i] : ""; } catch { return ""; } }
+                        cand.Sort((x, y) =>
+                        {
+                            int r = PoopRank(NameOf(x.Key)).CompareTo(PoopRank(NameOf(y.Key)));
+                            if (r != 0) return r;
+                            return y.Value.CompareTo(x.Value);                        // then the deeper fruit
+                        });
+                        int take = Math.Max(3, poopCount);
+                        for (int k = 0; k < cand.Count && k < take; k++) poopBest.Add(cand[k].Key);
+                    }
+                    catch { }
                     for (int i = 0; i < count; i++)
                     {
                         long maxTier = 0; try { maxTier = fruits[i].maxTier; } catch { }
@@ -1690,6 +1753,11 @@ namespace NGUAdvisor.Managers
                             int tier = 0; try { tier = fc != null ? fc.harvestTier(i) : 0; } catch { }
                             double frac = 0; try { double sec = fruits[i].seconds; if (thr > 0) frac = (sec % thr) / thr; } catch { }
                             state = maxxed ? "maxxed" : active ? "active" : "inactive";
+                            // Where poop IS, and where the advisor thinks it should be. Two separate
+                            // facts: a fruit can be pooped and not recommended (move it), or
+                            // recommended and not pooped (put some here).
+                            try { if (fruits[i].usePoop) o["poop"] = true; } catch { }
+                            if (poopBest.Contains(i)) o["poopRec"] = true;
                             o["tier"] = tier;
                             o["maxTier"] = Num(maxTier);
                             o["frac"] = Num(maxxed ? 100 : active ? Math.Round(frac * 100, 0) : 0);   // growth % through the current tier
@@ -1880,6 +1948,21 @@ namespace NGUAdvisor.Managers
                     }
                 }
                 o["etaByItem"] = per;
+                // WHICH ITEM IS ACTUALLY GETTING THE BOOSTS. GetBoostSlots filters to items that still
+                // need some, and BoostInventory walks that array in order calling applyAllBoosts until
+                // the stock runs out — so element 0 has first call on every boost that drops. It is not
+                // necessarily from the priority list: the order is priority, then equipped gear, then
+                // locked inventory, so with an empty (or fully-capped) priority list this is whatever
+                // the advisor fell through to, which is exactly the case worth naming.
+                if (order != null && order.Length > 0)
+                {
+                    o["current"] = order[0];
+                    bool inList = false;
+                    var pri = settings.PriorityBoosts;
+                    if (pri != null) foreach (var id in pri) if (id == order[0]) { inList = true; break; }
+                    o["currentInList"] = inList;
+                    _boostCurrentId = new[] { order[0] };
+                }
                 root["boostEta"] = o;
             });
 
@@ -1928,6 +2011,7 @@ namespace NGUAdvisor.Managers
                 // into the same signature-keyed rebuild as everything else here.
                 CollectIds(ids, _gearNowIds);
                 CollectIds(ids, _lastSwapIds);
+                CollectIds(ids, _boostCurrentId);
                 ids.Sort();
 
                 // Sorted -> dedupe and build the change signature in one pass.
