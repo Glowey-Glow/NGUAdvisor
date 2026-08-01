@@ -123,22 +123,31 @@ sniped-enemy blacklist.
 
 ### Titans
 
-![Titans](docs/screenshots/titans.png)
+![Titans](docs/screenshots/titans-advisor.png)
 
 Which titans the advisor may target, and the combat mode. The readout follows the kill ladder
 (**first kill → idle-stat farm → auto-kill**) for the next titan in reach.
 
 ### Challenges
 
-![Challenges](docs/screenshots/challenges.png)
+![Challenges](docs/screenshots/challenges-advisor.png)
 
 The challenge rotation queued in the active profile, plus live challenge progress. Each row is a challenge and
 the completion it runs *up to* — the profile itself stores one entry per run, as a 1-based completion ordinal
 (`"BASIC-1" … "BASIC-5"` for five Basic runs), which is what the advisor matches against your completion count.
 
-On the **Campaign** view, finished blocks fold away behind a **Completed campaigns (N)** header, collapsed
-by default — the spine only grows, and finished blocks otherwise push the one you are actually on further
-down the page every time you finish another. Open it to see them, still in order.
+### Campaign
+
+![Campaign](docs/screenshots/campaign.png)
+
+The guide's CBlock spine: which block you are on, what each one runs, and a chain-health report naming any
+ordinal no profile can reach. Completion counters are per difficulty, and the game exposes only the one for
+the difficulty you are playing — a block on any other difficulty therefore shows what it *requires* rather
+than a progress bar.
+
+Finished blocks fold away behind a **Completed campaigns (N)** header, collapsed by default — the spine only
+grows, and finished blocks otherwise push the one you are actually on further down the page every time you
+finish another. Open it to see them, still in order.
 
 ## Resources
 
@@ -174,8 +183,9 @@ Auto-targets Energy and Magic NGUs by rating; difficulty follows the profile tim
 
 ### Loadouts
 
-![Loadouts — titan & gold](docs/screenshots/loadouts.png)
-![Loadouts — quest & shockwave](docs/screenshots/loadouts-quest-shockwave.png)
+![Loadouts — main / idle and titan](docs/screenshots/loadouts-advisor-titans.png)
+![Loadouts — gold and quest](docs/screenshots/loadouts-gold-quest.png)
+![Loadouts — yggdrasil, cooking, loot hunter, shockwave](docs/screenshots/loadouts-yggdrasil-cooking-loothunter-shockwave.png)
 
 One page per gear mode: **Main / idle**, then Titan, Gold, Quest, Yggdrasil, Cooking, Loot Hunter and
 Shockwave. Each block answers three questions in order.
@@ -297,6 +307,8 @@ Wish selection mode and the % of idle Energy/Magic/R3 to spend, with priority an
 Levels the highest-value active diggers by the digger laws (leveling is decoupled from set completion); the
 ordered set comes from the profile timeline.
 
+![Digger breakpoints in the Profile Editor](docs/screenshots/diggers-editor.png)
+
 Digger breakpoints are edited in the **Profile Editor** as a **drag list of named slots** — Adv, PP, Blood
 and so on, with the slot id still shown because the profile file stores ids. The order is the priority, so
 the top of the list is what runs when there are not enough slots for everything.
@@ -312,6 +324,8 @@ before this existed. In a hand-edited profile the same thing is written `3, 8 x4
 
 Runs the ordered beard set; the status chips show each beard's current level and the permanent levels it
 will bank on the next rebirth.
+
+![Beard breakpoints in the Profile Editor](docs/screenshots/beards-editor.png)
 
 Beard breakpoints use the same **drag list of named slots** in the Profile Editor. There is no Active count
 — a beard list's length is its own count, bounded by the slots you have unlocked. You can list more beards

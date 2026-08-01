@@ -1,7 +1,18 @@
 # Screenshots to retake for 2.2.0 — "Loadouts"
 
-Every shot below changed visually in 2.2.0. Filenames are the ones `readme.MD` already references, so
-replacing the file is enough — no README edit needed unless a **NEW** row says otherwise.
+> **Done — all 12 retaken and landed 2026-07-31.** Filenames now describe their contents (see
+> `README.md` in this folder for the full list), so several rows below name a file that no longer exists:
+> `loadouts.png` → three shots (`loadouts-advisor-titans`, `loadouts-gold-quest`,
+> `loadouts-yggdrasil-cooking-loothunter-shockwave`), `titans.png` → `titans-advisor.png`,
+> `challenges.png` → `challenges-advisor.png` plus a new `campaign.png`.
+>
+> Two rows below were **wrong** and were resolved differently: the digger and beard changes are in the
+> **Profile Editor**, not the Diggers/Beards views the README shows there, so `diggers.png` and
+> `beards.png` were kept as-is and `diggers-editor.png` / `beards-editor.png` added alongside them.
+>
+> The two "worth retaking" rows were not retaken — neither shows a stale state.
+
+Every shot below changed visually in 2.2.0.
 
 Take them at **1346 × 1184** (the reference viewport) with live data, not a fresh save: several of these
 readouts are empty or say "measuring" until the advisor has run for a few minutes.
