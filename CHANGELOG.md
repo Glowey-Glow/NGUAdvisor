@@ -2,6 +2,74 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [2.2.0] - 2026-07-31 — Loadouts
+
+Gear loadouts were configurable but not obviously *armed*: you could pick an objective, watch it save,
+and never see a swap — because the switch that arms it lived on a different page, or because a silent
+defect swallowed it. This release makes every gear decision visible and fixes the defects behind it.
+Settings and profiles carry over — extract over your old copy.
+
+### Fixed
+
+- **Loadouts that never swapped.** Four separate causes, all silent:
+  - **Cooking** required a non-empty item list before it would swap at all, so choosing only an
+    objective — which is what the objective dropdown encourages — did nothing, ever.
+  - **The active gear objective leaked between runs and profiles.** It survived a profile switch (the
+    old profile's objective kept re-equipping over the new one), survived a rebirth (the first stretch
+    of every run used the *previous* run's objective), and a typo'd objective name pinned the old one
+    for the rest of the session.
+  - **"Re-optimize gear now" ignored every mode lock except quests.** Pressing it during a titan
+    window equipped your main set over the kill set — on a real, non-autokill titan that strips exactly
+    the Power/Toughness the fight needs.
+  - **Accessories silently refused to swap.** The game reverts an accessory swap when committed
+    energy/magic/R3 exceeds the new cap, and reports it through a tooltip the advisor never sees. The
+    advisor was not releasing Basic Training energy before swapping, so any accessory that lowered the
+    energy cap quietly bounced back. Every loadout swap was affected, not just titans.
+- **Blood rituals drank the NGU marathon's magic.** During NGU MARATHON the ritual lane sat ahead of the
+  surplus absorbers and took the whole remaining pool — measured at 245.7B magic while the NGUs starved.
+  Now bounded to a slice of the surplus (26.6B measured, rituals still funded).
+- **Favored MacGuffin reset itself** a few seconds after being picked — every selection was being
+  rewritten to an invalid id.
+- **A beard list longer than your unlocked slots** put the profile into a silent retry loop, re-equipping
+  beards every tick forever. Both beard and digger lists now truncate to the slots you actually have, and
+  the entries past the cut start running as you unlock more.
+- Durations no longer render fractional seconds (`13.333333333333332s`).
+- Item-ID inputs were too narrow to show their own placeholder ("ite", "gea").
+
+### Added
+
+- **Every loadout shows what arms it.** Each mode carries its real automation switches inline, plus a
+  line naming which one is off and why nothing is happening. The same state appears as a chip on each
+  system's own page (Titans, Gold, Quests, Yggdrasil, Cooking).
+- **A Main / idle gear objective**, with the set the optimiser would equip. A profile gear breakpoint
+  computes its picks, equips them and discards them, so `Optimize: NGUs` in a timeline previously showed
+  you nothing at all.
+- **Fill from objective** writes the optimiser's best set straight into a loadout's item list — the
+  answer to "how do I find an item ID". Choosing an objective auto-fills an *empty* list; replacing a
+  curated one stays an explicit button press.
+- **Last gear swap** explains itself in the three outcomes that actually differ: swapped, **kept** (a
+  slot this objective scores nothing for, which is where your Power/Toughness survives a Gold Drops
+  swap), and **didn't fit**. Only the last is a fault.
+- **Re-optimise when new gear drops**, on by default. It only re-checks sooner; it can never stop gear
+  from moving.
+- **The auto profile's segment plan is back on Current stage** — `TM HOUR › AT HOUR › RECOVERY ›
+  NGU MARATHON` with the current step marked. A manual profile is named instead. This was lost in 2.0.0.
+- **Poop advice is back on the orchard** — also lost in 2.0.0 — showing both where poop is and where the
+  advisor would put it.
+- **Boost time-to-cap**, per row and in total, on the priority list.
+- **Drag to reorder** every ordered list: boost priority, boost type priority, the loadouts, wish
+  priorities, and digger/beard breakpoints. The arrows remain for keyboard use.
+- **Digger and beard breakpoints are drag lists** with named slots, and diggers take an **activation
+  count** — list your top two, run four, let the advisor pick the rest.
+- **Completed campaign blocks fold away** behind a "Completed campaigns" header.
+
+### Changed
+
+- The Settings gear toggle was mislabelled: `ManageGear` is the automation gate, and labelling it
+  "Advisor gear refresh" hid the decisions toggle entirely — both must be on for gear to move.
+- The boost type priority list lost its Add control; all three types are always present, so it could
+  never add anything.
+
 ## [2.1.0] - 2026-07-28 — Campaign
 
 The challenge campaign becomes a first-class part of the advisor: the CBlock spine is modelled, its

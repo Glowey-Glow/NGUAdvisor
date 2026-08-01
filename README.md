@@ -3,12 +3,31 @@
 NGU Advisor is an automation platform and advisor for the Steam version of NGU Idle. An injected DLL runs
 the automation in-game; a separate **companion window** is the configuration surface and live dashboard.
 
-**Version 2.1.0** — the Campaign release.
+**Version 2.2.0** — the Loadouts release.
+
+### New in 2.2.0
+
+Gear loadouts were configurable but not obviously *armed* — you could pick an objective, watch it save,
+and never see a swap. Four separate defects were swallowing them silently, and all four are fixed. What
+changed for you day to day:
+
+- **Every loadout now shows what arms it**, inline, and names the switch that is off when nothing is
+  happening. See [Gear › Loadouts](#loadouts).
+- **Fill from objective** writes the optimiser's best set into a loadout — no more hunting for item IDs.
+- **A Main / idle gear objective** with the picks it would equip, so `Optimize:` in a profile timeline is
+  no longer invisible.
+- **Drag to reorder** every ordered list, including digger and beard breakpoints, which are now named
+  slots instead of a comma-separated field.
+- **Time-to-cap on priority boosts**, per item, and a chip naming the one being boosted right now.
+- **The auto profile's segment plan is back on Overview**, and **poop advice is back on the orchard** —
+  both were lost in the 2.0.0 rewrite.
+
+Full detail in [CHANGELOG.md](CHANGELOG.md).
 
 # Install & update
 
 1. Download the latest release from the [releases page](https://github.com/Glowey-Glow/NGUAdvisor/releases)
-   — grab the zip named for the version (`NGUAdvisor_2.1.0.zip`), **not** the source archive.
+   — grab the zip named for the version (`NGUAdvisor_2.2.0.zip`), **not** the source archive.
 2. Extract it anywhere.
 3. With **NGU Idle open**, run **`Advisor Launcher.exe`** (or the `Run NGU Advisor.bat` fallback).
 
@@ -81,7 +100,13 @@ next-loop countdown, a Focus/Full density switch, **Reload**, and **Log**. Below
 per-hour EXP / NGU / PP / AP / Cube with sparklines.
 
 - **Do this now** — the single highest-priority action, with a button to jump to its system.
-- **Current stage** and **Next goal** — where you are and what's next.
+- **Current stage** and **Next goal** — where you are and what's next. With the **auto profile** on, this
+  also shows its plan for the run and which step you are on:
+  `TM HOUR › AT HOUR › RECOVERY › ⟨NGU MARATHON now⟩ · push phase · 15.6h into the run`.
+  The chain is the one *your* run actually has — segments the run can never reach (a re-locked Time
+  Machine on Evil, Advanced Training before it unlocks) are simply absent. Running a **manual profile**
+  instead? It names the profile and links to its breakpoints, because segments only exist when the auto
+  profile is computing them.
 - **Also worth doing** — the rest of the advisor's ranked suggestions.
 - **Instruments** — live resources, titan attack/defence vs its autokill gate, boost-farm zone vs ITOPOD,
   and NGU rate.
@@ -110,6 +135,10 @@ Which titans the advisor may target, and the combat mode. The readout follows th
 The challenge rotation queued in the active profile, plus live challenge progress. Each row is a challenge and
 the completion it runs *up to* — the profile itself stores one entry per run, as a 1-based completion ordinal
 (`"BASIC-1" … "BASIC-5"` for five Basic runs), which is what the advisor matches against your completion count.
+
+On the **Campaign** view, finished blocks fold away behind a **Completed campaigns (N)** header, collapsed
+by default — the spine only grows, and finished blocks otherwise push the one you are actually on further
+down the page every time you finish another. Open it to see them, still in order.
 
 ## Resources
 
@@ -148,15 +177,57 @@ Auto-targets Energy and Magic NGUs by rating; difficulty follows the profile tim
 ![Loadouts — titan & gold](docs/screenshots/loadouts.png)
 ![Loadouts — quest & shockwave](docs/screenshots/loadouts-quest-shockwave.png)
 
-Shows the currently-equipped set, then lets each mode (idle / titan / gold / quest / cooking / loot-hunter)
-choose the optimiser objective it targets, with per-mode respawn options.
+One page per gear mode: **Main / idle**, then Titan, Gold, Quest, Yggdrasil, Cooking, Loot Hunter and
+Shockwave. Each block answers three questions in order.
+
+**When does this set get worn?** A sentence at the top of the block says so — "Fires as a titan you have
+ticked comes up, and swaps back afterwards."
+
+**Is it actually armed?** Every switch that has to be on for that mode to swap is **shown in the block
+itself**, not on some other page, and a line underneath names the ones that are off:
+
+> **Not armed** — “Swap gear for titans” is off, so this never runs. Turn it on below.
+
+Flip it there and you are done. The switches still live on their own system pages too — this mirrors them,
+it does not move them. Titans additionally need at least one titan ticked on the Titans page, and the line
+says that too.
+
+**What will it equip?** Pick an **Objective** and the optimiser targets it live, so the set improves as
+your gear does. Leave the objective blank to use a hand-picked item list instead.
+
+- **Fill from objective** writes the optimiser's best set straight into the list — this is how you find
+  item IDs without looking them up. Choosing an objective auto-fills an *empty* list; replacing a list you
+  curated is always an explicit button press.
+- **Use current gear** snapshots what you are wearing.
+- Drag rows by the grip to reorder, or use ↑ / ↓.
+
+**Main / idle** is the set you wear the rest of the time. It has no item list — it shows the picks the
+optimiser would equip, and **Equip the best set now** applies them immediately. Its objective is used only
+when nothing more specific is in force; a challenge rotation, a gear hunt, the auto profile's segment gear
+and your profile's own gear timeline all outrank it, and the readout says which one is winning.
+
+**Last gear swap** explains a result that can look wrong but usually isn't, in three outcomes:
+
+| | Meaning |
+|---|---|
+| **swapped in** | went on as asked |
+| **kept** | a slot this objective scores nothing for, still holding what it had — **by design**, and where your Power/Toughness survives a Gold Drops swap |
+| **did not fit** | asked for and did not go on — the only real fault, named item by item |
 
 ### Gear
 
 ![Gear](docs/screenshots/gear.png)
 
-Equips the optimiser's best set for the active objective and re-optimises when a genuinely better set
-appears. A **Re-optimize gear now** button forces it immediately and reports the outcome.
+The profile's gear timeline, read-only here — edit it in the **Profile Editor**. A row is either a list of
+item IDs or `Optimize: <objective>`; the objective form re-optimises as your gear improves.
+
+**Re-optimize gear now** (on Loadouts › Main) forces it immediately and reports what happened. It refuses
+while a titan, gold, cooking, yggdrasil or money-pit swap owns your gear, rather than equipping over that
+mode's set.
+
+With **re-check when new gear drops** on (Settings, on by default) the advisor notices a drop or merge and
+re-checks then, instead of waiting out its normal interval. It only ever checks *sooner* — it cannot stop
+gear from moving, and an actual swap still has to be a real improvement.
 
 ### Boosts
 
@@ -167,6 +238,21 @@ The boost-farm advisor compares the best one-shottable farm zone against ITOPOD'
 their softcaps so you can see when boosts stop helping the cube. Manual controls: auto-convert, cube
 priority, favored MacGuffin, boost-type priority (Power / Toughness / Special), a priority-boost list, and a
 never-touch blacklist.
+
+**Priority boosts** are applied top-down, so the order is the decision. Drag a row by its grip to reorder
+(the ↑ / ↓ arrows still work), and each row shows **when it reaches its cap** at the current rate. Because
+boosts go to the top of the list first, an item only finishes once everything above it has — so moving a
+row up visibly pulls its ETA in. A **Boosting** chip names the item currently receiving them, including
+when that item is *not* in your list: with an empty or fully-capped priority list the advisor falls
+through to your equipped gear and then to locked inventory items, and the chip says so.
+
+Two things about the numbers, so they are not misread: the unit is **stat points to cap**, not boost
+items — how much one dropped boost is worth depends on that boost's own level. And the totals cover
+**everything being boosted** (this list first, then equipped gear), not just the list. Levelling an item
+raises its cap, so a long run will overrun the estimate.
+
+The boost **type** priority (Power / Toughness / Special) drags too. It has no Add control because all
+three are always present — reordering is the whole interaction.
 
 ### Inventory
 
@@ -211,12 +297,25 @@ Wish selection mode and the % of idle Energy/Magic/R3 to spend, with priority an
 Levels the highest-value active diggers by the digger laws (leveling is decoupled from set completion); the
 ordered set comes from the profile timeline.
 
+Digger breakpoints are edited in the **Profile Editor** as a **drag list of named slots** — Adv, PP, Blood
+and so on, with the slot id still shown because the profile file stores ids. The order is the priority, so
+the top of the list is what runs when there are not enough slots for everything.
+
+Each breakpoint can also set **Active**: how many diggers should run there. That is deliberately *not* the
+same as how many you list — name your top two and set Active to 4, and the advisor picks the other two by
+its own laws. Leave it blank for "as many as your unlocked slots allow", which is what every profile did
+before this existed. In a hand-edited profile the same thing is written `3, 8 x4`.
+
 ### Beards
 
 ![Beards](docs/screenshots/beards.png)
 
 Runs the ordered beard set; the status chips show each beard's current level and the permanent levels it
 will bank on the next rebirth.
+
+Beard breakpoints use the same **drag list of named slots** in the Profile Editor. There is no Active count
+— a beard list's length is its own count, bounded by the slots you have unlocked. You can list more beards
+than you have slots: the ones past the cut simply wait, and start running by themselves as you unlock more.
 
 ### Yggdrasil
 
@@ -226,6 +325,15 @@ Harvest automation plus the **orchard**: one tile per fruit, its bar filling wit
 the current tier and coloured per tier (gold when maxed), the fruit name inside the bar. Unpurchased fruits
 show the seeds needed to unlock them. Toggles for activate-fruits, loadout/digger/beard swaps, and the swap
 tier threshold.
+
+**Poop placement.** Each tile carries a marker in its corner, and the two states mean different things:
+
+- **filled brown** — the advisor would put poop on this fruit
+- **hollow** — poop *is* on this fruit, but the advisor rates others higher
+
+So brown-with-no-poop means move some here, hollow-only means this one is not worth it, and both together
+means it is already right. A line under the orchard names the targets, and stays quiet when your placement
+already matches.
 
 ### Blood
 
@@ -276,6 +384,18 @@ Master and per-system automation switches — each system has an **Automation** 
 (advise) toggle, ANDed in code — plus miscellaneous options (disable the in-game overlay, auto-launch the
 companion on game load, digger GPS cap, **Unload**).
 
+Gear is three separate switches, and **all of them matter**:
+
+| | |
+|---|---|
+| **Gear (let the advisor equip)** | the automation gate — may the advisor touch your gear at all |
+| **Gear: advisor picks the set** | the decisions layer — does it choose, or do your profile breakpoints |
+| **Gear: re-check when new gear drops** | notice a drop or merge immediately instead of waiting for the next interval. On by default; it only ever checks *sooner* and can never stop gear from moving. |
+
+The first two must **both** be on for the advisor to manage gear. (Before 2.2.0 the first was labelled
+"Advisor gear refresh", which hid the second entirely.) Every loadout also mirrors the switches that arm
+it, so you rarely need to come here — see **Gear › Loadouts**.
+
 ### Profiles
 
 Switch the active profile live and toggle auto-profile (the advisor generates allocation). Under **Profile
@@ -290,6 +410,11 @@ validated, written to the profile file, and picked up by the advisor without a r
 
 The editor always follows the **active** profile, so switch profiles on the Profiles page first. Press
 **F9** in the game window to jump straight here (it opens the companion first if it is closed).
+
+**Diggers and Beards** edit as a **drag list of named slots** rather than a comma-separated field, so you
+no longer have to know that slot 8 is PP or that the order is the priority. Drag to reorder, use the picker
+to add a slot, and (Diggers only) set **Active** for how many should run. Everything else still edits as
+text, and any profile written by hand opens correctly here.
 
 # Profiles & allocation
 
