@@ -4144,13 +4144,23 @@
   }
 
   // --- Timeline breakpoint editor (Add + full content edit) ---
+  /* Slot vocabularies for the ordered-slot systems. Declared BEFORE SYS_META on purpose: SYS_META is
+     built at parse time, so a `slots:` referencing a var assigned further down would capture undefined
+     and the editor would silently fall back to the free-text field.
+     Names mirror OptimizationAdvisor.DiggerNames / BeardNames exactly — the injector's own tables — so
+     a slot is called the same thing here as in the logs. (The old hint strings disagreed on two:
+     digger 8 was "Power" and beard 6 "GPS". The C# tables win.) */
+  var DIGGER_SLOTS = ["Drops","Wandoos","Stats","Adv","E-NGU","M-NGU","E-Beard","M-Beard","PP","Daycare","Blood","EXP"];
+  var BEARD_SLOTS  = ["Stats","Drops","Number","NGU","Wandoos","Adv","Golden"];
   var SYS_META = {
     energy:{hint:'Comma-separated priority tokens, in order — e.g. NGU-3, WAN, CAPAUG-10:50', chal:true},
     magic:{hint:'Comma-separated tokens — e.g. NGU-2, WAN, BR-3600, RIT-5', chal:true},
     r3:{hint:'Comma-separated tokens — e.g. HACK-3, ALLHACK', chal:true},
     gear:{hint:'Item IDs (e.g. 326, 100) — or "Optimize: <objective>" / "Optimize+Respawn: <objective>"', chal:true},
-    diggers:{hint:'Slot IDs 0–11 — 0 Drops · 1 Wandoos · 2 Stats · 3 Adv · 4 EnergyNGU · 5 MagicNGU · 8 Power · 10 Blood · 11 EXP', chal:true},
-    beards:{hint:'Slot IDs 0–6 — 0 Stats · 1 Drops · 2 Number · 3 NGU · 4 Wandoos · 5 Adv · 6 GPS', chal:true},
+    // `slots` names the vocabulary AND switches the editor from a free-text payload to the drag list.
+    // The hint stays for the edit-the-.json-by-hand case, which the text form still supports.
+    diggers:{hint:'Slot IDs 0–11 in priority order; a trailing x4 sets how many run', chal:true, slots:DIGGER_SLOTS},
+    beards:{hint:'Slot IDs 0–6 in priority order', chal:true, slots:BEARD_SLOTS},
     wandoos:{hint:'0 Wandoos 98 · 1 Wandoos Meh · 2 Wandoos XL', chal:true},
     ngudiff:{hint:'0 Normal · 1 Evil · 2 Sadistic', chal:true},
     consumables:{hint:'Codes (optional :amount) — LC · SLC · MUFFIN:5 · EBARBAR · EPOT-B · MAYO', chal:true},
@@ -4159,7 +4169,39 @@
   var CHALLENGES=[["","(no challenge)"],["BASIC","Basic"],["NOAUG","No Augs"],["24HR","24 Hour"],["100LC","100 Level"],["NOEC","No Equipment"],["TC","Troll"],["NORB","No Rebirth"],["LSC","Laser Sword"],["BLIND","Blind"],["NONGU","No NGU"],["NOTM","No Time Machine"]];
   var REBIRTH_TYPES=[["Time","Set time"],["Number","Number target"],["TimeBalancedMuffin","Muffin balance"],["Bosses","Bosses"]];
   function addDefault(sys){ if(sys==="wandoos"||sys==="ngudiff") return "0"; if(sys==="rebirth") return "Time"; return ""; }
-  function closeEditor(){ var e=document.querySelector(".tl-editor"); if(e&&e.parentNode) e.parentNode.removeChild(e); }
+  var PE_SLOT_NAMES = null;   // the vocabulary of the editor that is currently open
+
+  // "3, 8 x4" -> {ids:[3,8], count:4}. Tolerant of the hand-written forms the text field accepted,
+  // because profiles edited by hand must still open here.
+  function peParsePayload(payload, sys){
+    var s=String(payload||"").trim(), count=0;
+    var mx=/x\s*(\d+)\s*$/i.exec(s);
+    if(mx && sys==="diggers"){ count=+mx[1]; s=s.slice(0,mx.index).replace(/[, ]+$/,""); }
+    var ids=s.split(",").map(function(t){ return parseInt(t,10); }).filter(function(n){ return !isNaN(n) && n>=0; });
+    return { ids:ids, count:count };
+  }
+  // The list and the count are the truth; the hidden payload input is what submits. Keep them in step
+  // on every mutation so Save never has to know the widget exists.
+  function peSyncPayload(){
+    var ed=document.querySelector(".tl-editor"); if(!ed) return;
+    var hidden=ed.querySelector('[data-k="payload"]'); if(!hidden) return;
+    var ids=BLISTS.peSlots.arr||[];
+    var cEl=ed.querySelector("#peCount"), n=cEl?parseInt(cEl.value,10):0;
+    hidden.value = ids.join(", ") + (n>0 ? (ids.length? " " : "")+"x"+n : "");
+    peBuildAdd();
+  }
+  // Only offer slots that are not already in the list, named.
+  function peBuildAdd(){
+    var sel=$("peSlotsAdd"); if(!sel || !PE_SLOT_NAMES) return;
+    var have=BLISTS.peSlots.arr||[], html="";
+    for(var i=0;i<PE_SLOT_NAMES.length;i++)
+      if(have.indexOf(i)<0) html+='<option value="'+i+'">'+esc(PE_SLOT_NAMES[i])+' <'+i+'></option>';
+    sel.innerHTML = html || '<option value="">(all added)</option>';
+  }
+  function closeEditor(){
+    var e=document.querySelector(".tl-editor"); if(e&&e.parentNode) e.parentNode.removeChild(e);
+    PE_SLOT_NAMES=null; BLISTS.peSlots.arr=[]; BLISTS.peSlots.built=false;
+  }
   function buildEditor(sys, mode, d){
     var meta = SYS_META[sys]||{};
     var sec=Math.max(0,+d.sec||0), h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
@@ -4172,6 +4214,34 @@
       var tsel=REBIRTH_TYPES.map(function(t){ return '<option value="'+t[0]+'"'+(t[0]===d.payload?' selected':'')+'>'+esc(t[1])+'</option>'; }).join('');
       bodyHtml='<div class="tle-row"><label>Type</label><select class="tle-sel" data-k="payload">'+tsel+'</select></div>'+
                '<div class="tle-row"><label>Target</label><input class="tle-wide" data-k="target" value="'+esc(d.target||"")+'" placeholder="number — e.g. 1e6 (Number / Bosses only)"></div>';
+    } else if(meta.slots){
+      /* Diggers and beards are ORDERED SLOT lists, not free text. Typing "3, 8, 0" required knowing
+         both the slot numbers and that the order is the priority — neither of which the field said.
+         It is a drag list now, over the same rows the boost/loadout editors use, and it serialises
+         back into the SAME payload string on save: no new command, no new server path, and the text
+         form still works for anyone editing the .json by hand.
+         The hidden payload input is what actually submits; peSyncPayload keeps it in step. */
+      PE_SLOT_NAMES = meta.slots;
+      var parsed = peParsePayload(d.payload||"", sys);
+      BLISTS.peSlots.arr = parsed.ids; BLISTS.peSlots.built = true; BLISTS.peSlots.dirty = false;
+      bodyHtml='<div class="tle-row"><label>Order</label><span class="tle-wide">'+
+                 '<div class="listed pe-slots" id="peSlots"></div>'+
+                 '<div class="le-add"><select class="inp le-input" id="peSlotsAdd" aria-label="Slot to add"></select>'+
+                 '<button class="btn" type="button" id="peSlotsAddBtn">Add</button></div>'+
+               '</span></div>'+
+               (sys==="diggers"
+                 ? '<div class="tle-row"><label>Active</label><span class="tle-time">'+
+                   '<input class="tin" id="peCount" type="number" min="0" max="12" value="'+(parsed.count||"")+'">'+
+                   ' <span class="mut">diggers — blank = as many as your unlocked slots allow</span></span></div>'
+                 : '')+
+               '<input type="hidden" data-k="payload" value="'+esc(d.payload||"")+'">'+
+               '<div class="tle-hint">Drag to reorder — the top of the list is boosted first. '+
+               (sys==="diggers" ? 'You can list fewer than you activate; the advisor fills the rest.' :
+                                  'Entries past your unlocked slot count wait until you unlock one.')+'</div>';
+      if(meta.chal){
+        var csel2=CHALLENGES.map(function(c){ return '<option value="'+c[0]+'"'+(c[0]===(d.challenge||"")?' selected':'')+'>'+esc(c[1])+'</option>'; }).join('');
+        bodyHtml+='<div class="tle-row"><label>Challenge</label><select class="tle-sel" data-k="challenge">'+csel2+'</select></div>';
+      }
     } else {
       bodyHtml='<div class="tle-row"><label>Payload</label><input class="tle-wide" data-k="payload" value="'+esc(d.payload||"")+'"></div>'+
                '<div class="tle-hint">'+esc(meta.hint||"")+'</div>';
@@ -4196,7 +4266,18 @@
     el._init = { sec:sec, payload:edVal(el,"payload"), challenge:edVal(el,"challenge"), target:edVal(el,"target") };
     return el;
   }
-  function focusEditor(ed){ var f=ed.querySelector('[data-k="payload"],[data-k="target"]'); if(f){ try{ f.focus(); if(f.select) f.select(); }catch(e){} } }
+  // The slot list is built from BLISTS state, so it can only be drawn once the editor is in the DOM.
+  function peAfterMount(ed){
+    if(!ed || !ed.querySelector("#peSlots")) return;
+    drawList("peSlots");
+    peBuildAdd();
+    peSyncPayload();
+  }
+  function focusEditor(ed){
+    // The slot editor's first real control is the Add picker; the payload input is hidden there.
+    var f=ed.querySelector('#peSlotsAdd') || ed.querySelector('[data-k="payload"],[data-k="target"]');
+    if(f && f.type!=="hidden"){ try{ f.focus(); if(f.select) f.select(); }catch(e){} }
+  }
   // C9: Add appended the editor below the fold on a long list, with nothing to say it had opened.
   function revealEditor(ed){ try{ ed.scrollIntoView({ block:"nearest", behavior: reduce ? "auto" : "smooth" }); }catch(e){ try{ ed.scrollIntoView(false); }catch(e2){} } }
 
@@ -4776,6 +4857,10 @@
     CookingLoadout:        { key:"CookingLoadout",        ordered:true, arr:[], dirty:false, built:false, names:"item" },
     LootHunterAccessories: { key:"LootHunterAccessories", ordered:true, arr:[], dirty:false, built:false, names:"item" },
     Shockwave:             { key:"Shockwave",             ordered:true, arr:[], dirty:false, built:false, names:"item" },
+    // LOCAL list: the breakpoint editor's slot order. `local` means listSend must NOT post it — this
+    // one is not a setting, it serialises into the editor's payload field and saves with the
+    // breakpoint. Registering it here is what lets it reuse the drag/arrows/remove machinery whole.
+    peSlots:               { key:null, local:true, ordered:true, arr:[], dirty:false, built:false, names:"slot" },
     wishPriorities:        { key:"WishPriorities",        ordered:true,  arr:[], dirty:false, built:false },
     wishBlacklist:         { key:"WishBlacklist",         ordered:false, arr:[], dirty:false, built:false }
   };
@@ -4798,6 +4883,10 @@
   function listLabel(st, v){
     if(st.names==="advEnemy" && ADV_ENEMY_NAMES && ADV_ENEMY_NAMES[v]!=null) return esc(ADV_ENEMY_NAMES[v])+' <span class="mut">#'+v+'</span>';
     if(st.names==="item") return itemLabel(v);
+    // Breakpoint-editor slots: named from the injector's own table, with the id kept visible because
+    // the profile .json stores the id and people do edit those files by hand.
+    if(st.names==="slot" && PE_SLOT_NAMES && PE_SLOT_NAMES[v]!=null)
+      return esc(PE_SLOT_NAMES[v])+' <span class="mut">#'+v+'</span>';
     return String(v);
   }
   function arrEq(a,b){ if(!a||!b||a.length!==b.length) return false; for(var i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; }
@@ -5303,7 +5392,13 @@
     clearTimeout(_fillTimers[listKey]);
     _fillTimers[listKey]=setTimeout(function(){ sendObjectiveFill(listKey, sel.value, m.resp); }, 400);
   }
-  function listSend(id){ var st=BLISTS[id]; st.dirty=true; window.__ngu.send({cmd:"setSettingList", key:st.key, values:st.arr}); }
+  // A `local` list is not a setting — it belongs to the open breakpoint editor and saves with the
+  // breakpoint, so it must never post setSettingList (which would write a setting key of null).
+  function listSend(id){
+    var st=BLISTS[id];
+    if(st.local){ peSyncPayload(); return; }
+    st.dirty=true; window.__ngu.send({cmd:"setSettingList", key:st.key, values:st.arr});
+  }
   function listAdd(id,v){ var st=BLISTS[id]; v=parseInt(v,10); if(isNaN(v)||v<0||st.arr.indexOf(v)>=0) return; st.arr.push(v); drawList(id); listSend(id); }
   function listRemove(id,i){ var st=BLISTS[id]; if(i<0||i>=st.arr.length) return; st.arr.splice(i,1); drawList(id); listSend(id); }
   function listMove(id,i,dir){ var st=BLISTS[id]; var j=i+(dir==="up"?-1:1); if(j<0||j>=st.arr.length) return; var t=st.arr[i]; st.arr[i]=st.arr[j]; st.arr[j]=t; drawList(id); listSend(id); }
@@ -5524,6 +5619,9 @@
           setPending(id+":auto", !!t.checked, function(){ t.checked = was; });
           window.__ngu.send({cmd:"setAutomation", system:id, on:!!t.checked});
         }
+      } else if(t.id === "peCount"){
+        // The digger activation count lives beside the list and serialises into the same payload.
+        peSyncPayload();
       } else if(t.matches && t.matches("[data-setting]")){
         var skey=t.getAttribute("data-setting");
         // A key can be bound by several controls (the mirrored arming switches on Loadouts). Move every
@@ -5598,6 +5696,7 @@
       var d = ((TIMELINES[sys]||[])[idx]) || {};
       var ed = buildEditor(sys, "edit", { sec:d.sec, payload:d.payload, challenge:d.challenge, target:d.target, idx:idx });
       row.parentNode.insertBefore(ed, row.nextSibling);
+      peAfterMount(ed);
       revealEditor(ed);
       focusEditor(ed);
     });
@@ -5612,6 +5711,7 @@
       var scroll = btn.parentNode.querySelector(".tl-scroll"); if(!scroll) return;
       var ed = buildEditor(sys, "add", { sec:0, payload:addDefault(sys), challenge:"", target:"" });
       scroll.appendChild(ed);
+      peAfterMount(ed);
       revealEditor(ed);   // C9: on a long list Add used to open below the fold, silently
       focusEditor(ed);
     });
@@ -5738,6 +5838,13 @@
     document.addEventListener("click", function(e){
       var addBtn = e.target.closest ? e.target.closest("[data-add]") : null;
       if(addBtn){ var aid=addBtn.getAttribute("data-add"); var inp=document.querySelector('[data-addfor="'+aid+'"]'); if(inp){ listAdd(aid, inp.value); if(inp.tagName!=="SELECT") inp.value=""; } return; }
+      // Breakpoint-editor slot picker: add the chosen slot to the ordered list. Local to the editor —
+      // it saves with the breakpoint, not as a setting (see listSend's `local` branch).
+      if(e.target && e.target.id === "peSlotsAddBtn"){
+        var pick=$("peSlotsAdd");
+        if(pick && pick.value!=="") listAdd("peSlots", pick.value);
+        return;
+      }
       var fillBtn = e.target.closest ? e.target.closest("[data-fillobj]") : null;
       if(fillBtn){
         var fk=fillBtn.getAttribute("data-fillobj");

@@ -785,6 +785,101 @@ window.addEventListener("load", guard(() => {
          $("fruitPoop").textContent);
       ok("no poop data -> no markers", $("fruitTiles").querySelectorAll(".ft-poop").length === 0);
 
+      // ---- 12k. the breakpoint editor's slot picker ------------------------------------------------
+      // Diggers and beards are ordered SLOT lists. Typing "3, 8, 0" required knowing both the numbers
+      // and that order = priority. It is a drag list now, and it serialises back into the SAME payload
+      // string, so nothing on the server side changed.
+      // Drive the REAL path: a timelines message, then the row's own Edit button.
+      function openBp(sys, payload) {
+        const tl = { type: "timelines", systems: {} };
+        // Every system needs a key or the tab strip won't offer it.
+        ["energy","magic","r3","gear","diggers","beards","wandoos","ngudiff","consumables","rebirth"]
+          .forEach(k => { tl.systems[k] = []; });
+        tl.systems[sys] = [{ sec: 0, summary: payload, payload: payload, challenge: "" }];
+        send(tl);
+        // The Profile Editor renders only the ACTIVE tab, so select the system first.
+        const tab = window.document.querySelector('[data-petab="' + sys + '"]');
+        if (tab) tab.dispatchEvent(new window.Event("click", { bubbles: true }));
+        const row = window.document.querySelector('.tl-row[data-sys="' + sys + '"] .tl-edit');
+        if (row) row.dispatchEvent(new window.Event("click", { bubbles: true }));
+        return window.document.querySelector(".tl-editor");
+      }
+      function payloadOf(ed) { const h = ed && ed.querySelector('[data-k="payload"]'); return h ? h.value : null; }
+
+      let ed = openBp("diggers", "3, 8, 0");
+      ok("editing a digger breakpoint opens the slot editor", !!(ed && ed.querySelector("#peSlots")),
+         ed ? ed.className : "no editor");
+      if (ed && ed.querySelector("#peSlots")) {
+        const slotRows = () => Array.from(ed.querySelectorAll("#peSlots .le-row"));
+        ok("the existing order is loaded as rows", slotRows().length === 3, String(slotRows().length));
+        ok("slots are NAMED, not bare numbers",
+           /Adv/.test(slotRows()[0].textContent) && /PP/.test(slotRows()[1].textContent),
+           slotRows().map(r => r.textContent.trim()).join(" | "));
+        ok("the id stays visible for hand-edited profiles",
+           /#3/.test(slotRows()[0].textContent), slotRows()[0].textContent);
+        ok("slot rows are draggable", slotRows().every(r => r.getAttribute("draggable") === "true"));
+        ok("the payload is seeded from the list", payloadOf(ed) === "3, 8, 0", payloadOf(ed));
+
+        // Removing a row must rewrite the payload, not post a setting.
+        SENT.length = 0;
+        slotRows()[1].querySelector("[data-lremove]").dispatchEvent(new window.Event("click", { bubbles: true }));
+        ok("removing a slot rewrites the payload", payloadOf(ed) === "3, 0", payloadOf(ed));
+        ok("the editor list never posts a setting",
+           SENT.filter(m => m.cmd === "setSettingList").length === 0, JSON.stringify(SENT));
+
+        // The Add picker offers only slots not already listed.
+        const pick = $("peSlotsAdd");
+        ok("the picker excludes already-listed slots",
+           !Array.from(pick.options).some(o => o.value === "3"),
+           Array.from(pick.options).map(o => o.value).join(","));
+        pick.value = "2";
+        $("peSlotsAddBtn").dispatchEvent(new window.Event("click", { bubbles: true }));
+        ok("adding a slot appends it to the order", payloadOf(ed) === "3, 0, 2", payloadOf(ed));
+
+        // The digger count serialises into the same payload.
+        const cnt = $("peCount");
+        ok("diggers offer an activation count", !!cnt);
+        cnt.value = "4";
+        cnt.dispatchEvent(new window.Event("change", { bubbles: true }));
+        ok("the count is appended as xN", payloadOf(ed) === "3, 0, 2 x4", payloadOf(ed));
+        cnt.value = "";
+        cnt.dispatchEvent(new window.Event("change", { bubbles: true }));
+        ok("clearing the count drops the xN", payloadOf(ed) === "3, 0, 2", payloadOf(ed));
+      }
+
+      // Beards get the same editor but NO count — a beard list's length is its own count.
+      ed = openBp("beards", "0, 5");
+      ok("editing a beard breakpoint opens the slot editor", !!(ed && ed.querySelector("#peSlots")));
+      ok("beards offer no activation count", !!(ed && !ed.querySelector("#peCount")));
+      ok("beard slots use the beard vocabulary",
+         !!(ed && /Stats/.test(ed.querySelector("#peSlots").textContent) &&
+                  /Adv/.test(ed.querySelector("#peSlots").textContent)),
+         ed ? ed.querySelector("#peSlots").textContent : "");
+
+      // A system WITHOUT a slot vocabulary must keep the plain text field.
+      ed = openBp("energy", "NGU-3, WAN");
+      ok("non-slot systems keep the free-text payload",
+         !!(ed && !ed.querySelector("#peSlots") && ed.querySelector('input[data-k="payload"]')));
+      ok("the text payload is still editable, not hidden",
+         !!(ed && ed.querySelector('input[data-k="payload"]').type !== "hidden"));
+
+      // The slot vocabularies must match the injector's own tables, or a slot is called one thing in
+      // the editor and another in the logs.
+      const srcTxt = fs.readFileSync(FILE, "utf8");
+      ok("digger slot names match the injector table",
+         /DIGGER_SLOTS *= *\["Drops","Wandoos","Stats","Adv","E-NGU","M-NGU","E-Beard","M-Beard","PP","Daycare","Blood","EXP"\]/.test(srcTxt.replace(/\s+/g, " ").replace(/", "/g, '","')),
+         "see DIGGER_SLOTS");
+      ok("beard slot names match the injector table",
+         /BEARD_SLOTS *= *\["Stats","Drops","Number","NGU","Wandoos","Adv","Golden"\]/.test(srcTxt.replace(/\s+/g, " ").replace(/", "/g, '","')),
+         "see BEARD_SLOTS");
+
+      // The local list must never post a setting — it belongs to the breakpoint, not to settings.
+      ok("the editor slot list is registered as local",
+         /peSlots:\s*\{[^}]*local:\s*true/.test(srcTxt), "peSlots is not marked local");
+      ok("listSend short-circuits local lists",
+         /if\(st\.local\)\s*\{\s*peSyncPayload\(\);\s*return;\s*\}/.test(srcTxt.replace(/\s+/g, " ").replace(/\{ /g, "{").replace(/ \}/g, "}")) ||
+         /st\.local/.test(srcTxt), "listSend does not check st.local");
+
       // ---- 12f. the page must not redeclare a shared helper --------------------------------------
       // A second `function fmtNum(...)` in the same IIFE silently replaces the page-wide formatter for
       // every existing caller — invisible in review, and invisible to any test that only checks one
