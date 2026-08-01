@@ -20,6 +20,24 @@ namespace NGUAdvisor.Managers
 
         // Consulted by ApplyGearRefresh in place of the profile's objective while set.
         public static string GearObjectiveOverride { get; private set; }
+
+        // WHICH of the two things the field above currently is: the auto profile's per-segment gear
+        // (true), or a challenge push/growth rotation (false). One field carries both, and the
+        // difference matters to anything explaining itself to the user.
+        //
+        // It has to be recorded HERE, at the moment of assignment. A reader cannot re-derive it from
+        // ChallengeDetector, because this only updates on the 30s advisor tick while the companion
+        // snapshot reads it every second — for up to 30s after a challenge ends the field still holds
+        // the rotation value while the detector already says "no challenge", and a re-derived answer
+        // would confidently mislabel it as segment gear (and claim the auto profile chose it, even
+        // with AutoProfile off).
+        public static bool GearObjectiveIsSegment { get; private set; }
+
+        private static void SetGearObjective(string objective, bool isSegment)
+        {
+            GearObjectiveOverride = objective;
+            GearObjectiveIsSegment = objective != null && isSegment;
+        }
         public static string Phase { get; private set; } = "";
 
         private static int _lastBoss = -1;
@@ -115,7 +133,7 @@ namespace NGUAdvisor.Managers
             bool auto = s != null && s.AutoProfile;
             if (!overlays && !auto)
             {
-                GearObjectiveOverride = null;
+                SetGearObjective(null, false);
                 Phase = "";
                 _lastGenKey.Clear();   // narrate afresh when the auto profile comes back
                 return;
@@ -146,7 +164,7 @@ namespace NGUAdvisor.Managers
             {
                 // Auto profile only: no challenge transforms; gear follows the segment
                 // outside challenges (a challenge with overlays off = profile rules).
-                GearObjectiveOverride = ChallengeDetector.Current() == null ? SegmentGear() : null;
+                SetGearObjective(ChallengeDetector.Current() == null ? SegmentGear() : null, true);
                 return;
             }
 
@@ -156,7 +174,7 @@ namespace NGUAdvisor.Managers
                 if (cur != null) Record("SEGMENT", $"challenge start: {cur}", "overlay active");
                 else if (_activeChallenge != null) Record("SEGMENT", $"challenge complete: {_activeChallenge}", "back to profile rules");
                 _activeChallenge = cur;
-                GearObjectiveOverride = null;
+                SetGearObjective(null, false);
                 // Fresh narration state per challenge (else a lingering template flag would
                 // suppress the new challenge's "template applied" feed entry). Generation key
                 // too: the auto profile re-announces when it resumes after the challenge.
@@ -167,7 +185,7 @@ namespace NGUAdvisor.Managers
             }
             if (cur == null)
             {
-                GearObjectiveOverride = auto ? SegmentGear() : null;
+                SetGearObjective(auto ? SegmentGear() : null, true);
                 return;
             }
 
@@ -176,7 +194,7 @@ namespace NGUAdvisor.Managers
             {
                 if (GearObjectiveOverride != null)
                 {
-                    GearObjectiveOverride = null;
+                    SetGearObjective(null, false);
                     Record("GEAR", "gear rotation off", "NOEC: no equipment in this challenge");
                 }
                 return;
@@ -186,7 +204,7 @@ namespace NGUAdvisor.Managers
             string want = pushing ? "Adventure" : "NGUs";
             if (want != GearObjectiveOverride)
             {
-                GearObjectiveOverride = want;
+                SetGearObjective(want, false);
                 Record("GEAR", $"gear → {want}", pushing ? $"push phase: boss {boss} within reach" : "growth phase: at the boss wall");
             }
         }
@@ -429,7 +447,21 @@ namespace NGUAdvisor.Managers
         // Rebirth + NGU-diff stay profile-owned. ----
         private static readonly Dictionary<ResourceType, string> _lastGenKey = new Dictionary<ResourceType, string>();
 
+        // The marathon's blood lane. CAP (out of the equal-share divisor) + a percent (bounded to a
+        // slice of the surplus, not all of it) + a seconds gate scaled to that percent so the same
+        // rituals still qualify. See the reasoning at the marathon branch in AutoTokens — the three
+        // parts are load-bearing together and must be retuned together.
+        private const string MarathonRitual = "CAPBR-300:10";
+
         public static string Segment { get; private set; } = "";
+
+        // The ordered plan for THIS run, and where in it we are. The segment chain used to be visible
+        // as timeline chips on the WinForms autopilot panel; that panel went in the 2.0.0 companion
+        // port and nothing replaced it, so since then the only way to know which segment was running
+        // was to read inject.log. Published so the Overview can say it again.
+        public static string[] SegmentChain { get; private set; } = new string[0];
+        public static int SegmentIndex { get; private set; } = -1;
+        public static double SegmentRunHours { get; private set; }
 
         private static int _chapter;
         private static DateTime _chapterAt = DateTime.MinValue;
@@ -494,6 +526,27 @@ namespace NGUAdvisor.Managers
             else if (atUnlocked && runSec < AtHourPlanner.EndSec(c, runSec)) seg = "AT HOUR";
             else if (numberCheap && runSec < 14400) seg = "RECOVERY";
             else seg = "NGU MARATHON";
+
+            // The shape of THIS run, for the companion. Built here, from the same unlock flags the
+            // decision above just used, so the displayed plan cannot drift from the plan being run —
+            // a separately-derived chain would be a second source of truth for the same question.
+            // A segment the run can never reach (TM re-locked on Evil, AT not unlocked yet) is simply
+            // absent rather than shown as skippable, because it was never part of this run's plan.
+            var chain = new List<string>();
+            if (evilClimb) chain.Add("EVIL CLIMB");
+            else
+            {
+                if (tmUnlocked) chain.Add("TM HOUR");
+                if (augPhase || (Chapter() == 5 && tmUnlocked)) chain.Add("AUGMENTATION");
+                if (atUnlocked) chain.Add("AT HOUR");
+                chain.Add("RECOVERY");
+                chain.Add("NGU MARATHON");
+            }
+            // The current segment must always appear, even if a flag flickered between the two blocks.
+            if (!chain.Contains(seg)) chain.Insert(0, seg);
+            SegmentChain = chain.ToArray();
+            SegmentIndex = Array.IndexOf(SegmentChain, seg);
+            SegmentRunHours = runSec / 3600.0;
 
             if (seg != Segment)
             {
@@ -667,9 +720,38 @@ namespace NGUAdvisor.Managers
                     list.Add("CAPTM:5");
                     list.Add("CAPWAN:60");
                     foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    // ⚠ THE "BR IS SELF-LIMITING" PREMISE BELOW WAS FALSE FOR BR, and it cost the
+                    // marathon most of its magic (user-reported 2026-07-31: "the blood advisor is
+                    // pulling almost all of the magic while starving NGUs").
+                    //   BR.CalculateMaxAllocation caps a ritual at capValue ONLY while
+                    //   remaining > capValue. Once remaining <= capValue — the normal case for any
+                    //   high-index ritual, whose capValue is a whole one-tick completion — it returns
+                    //   ≈remaining, i.e. the entire pool handed to one ritual. CastRituals also walks
+                    //   ritual.Count-1 downwards, so the most expensive ritual goes first.
+                    // Combined with plain "BR-30" being NON-cap, that did two things: it inflated the
+                    // equal-share divisor (every hot NGU lane lost a third of its ceiling), and, as the
+                    // LAST non-cap token, it hit prioCount == 1 → MaxAllocation = the whole idle pool,
+                    // draining the surplus the CAPNGU absorbers below exist to catch. Measured: rituals
+                    // funded with 245B magic during an NGU MARATHON.
+                    //
+                    // Now CAP-with-a-percent, which fixes both at once: CAP keeps it out of the divisor
+                    // (PerformSwap counts only !IsCap), and the percent bounds it to a slice of the
+                    // surplus instead of all of it.
+                    //
+                    // THE SECONDS GATE SCALES WITH THE PERCENT, and must. BR's Index is secondsToRun:
+                    // CastRituals skips any ritual whose RitualTimeLeft(i, allocationLeft) exceeds it.
+                    // RitualTimeLeft is computed against the share, so a 10× smaller share makes every
+                    // ritual take ~10× longer — leaving the gate at 30 would skip everything, BR would
+                    // allocate nothing, Allocate() would return false and PerformSwap would DROP the
+                    // lane, taking blood income to zero. 300 ≈ 30 × (1 / 0.10) keeps the same rituals
+                    // eligible. Tripwire if this is ever retuned: BR logs "allocated NOTHING" (BR.cs).
+                    //
+                    // AT and the aug pair below ARE genuinely self-limiting (CalculateATCap /
+                    // CalculateAugCap size by formula/ceil(formula/MaxAllocation), and CAPALLAT
+                    // waterfills across its slots), so the original reasoning still stands for them.
+                    //
                     // SELF-LIMITING LANES BEFORE THE ABSORBERS (rituals, AT, the aug pair). Each one
-                    // takes only what it actually NEEDS, never the pool: BR caps every ritual at
-                    // capValue (CalculateMaxAllocation) and stops once they are fed; CAPALLAT and
+                    // takes only what it actually NEEDS, never the pool: CAPALLAT and
                     // CAPBESTAUG both size by the formula/ceil(formula/MaxAllocation) divisor
                     // (CalculateATCap / CalculateAugCap), and CAPALLAT additionally waterfills across
                     // its slots (GroupShare — "a slot never gets more than its need"). So putting them
@@ -689,7 +771,7 @@ namespace NGUAdvisor.Managers
                     // The old "value order" comment here (warm NGU lanes > AT > augs) described an
                     // intent the allocator could not deliver: an absorber that takes everything leaves
                     // nothing to order, so those two tokens were dead code.
-                    if (rituals) list.Add("BR-30");
+                    if (rituals) list.Add(MarathonRitual);
                     // BOUNDED SPLIT (user pick 2026-07-16). Unbounded, AT/augs take their full need
                     // here and the warm lanes get only what's left; bounded, both get a defined slice.
                     // Hot lanes are unaffected either way — they allocate above this and CAP tokens are
@@ -733,8 +815,15 @@ namespace NGUAdvisor.Managers
             // (Caveat: the gold-spell "want" reads live blood/sec, so a cold-start gold-starve can't
             // bootstrap rituals from zero — a pre-existing limit; NUMBER no longer has it, since it is
             // the default sink and needs no income to become eligible.)
-            // Segments other than the marathon emit no surplus absorbers, so appending is safe there.
-            if (rituals && !list.Contains("BR-30")) list.Add("BR-30");
+            // Segments other than the marathon emit no surplus absorbers, so plain BR-30 is safe there:
+            // with nothing below it to starve, taking the remainder is the intent, and those segments
+            // are not the ones whose stated goal is NGU growth.
+            //
+            // The marathon uses MarathonRitual instead, so this guard MUST test for both. Testing only
+            // "BR-30" would find the marathon's token absent and append a SECOND blood lane — an
+            // uncapped one, straight back into the equal-share divisor, which is worse than the bug
+            // this replaced.
+            if (rituals && !list.Contains("BR-30") && !list.Contains(MarathonRitual)) list.Add("BR-30");
             return list.ToArray();
         }
 

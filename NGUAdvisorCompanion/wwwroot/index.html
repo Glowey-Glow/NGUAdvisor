@@ -909,6 +909,7 @@
   .le-row { display: flex; align-items: center; gap: var(--sp-2); padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
   .le-row .ix { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); width: 18px; }
   .le-row .id { font-family: var(--mono); font-size: var(--fs-4); }
+  .le-row .le-note { font-size: var(--fs-2); color: var(--faint); margin-left: var(--sp-2); }
   .le-row .le-ctrls { margin-left: auto; display: flex; gap: var(--sp-1); }
   /* E17: 24px floor. These sat at ~22px and only passed SC 2.5.8 through the spacing exception —
      one 2px tightening of .listed/.tl-actions gap away from an outright failure. min-width as well as
@@ -916,6 +917,16 @@
      buttons were still leaning on the exception in one axis. Now 24x24 on their own. */
   .le-btn { border: 1px solid var(--border-control); background: var(--surface); border-radius: 6px; cursor: pointer; font: inherit; font-size: var(--fs-2); padding: 2px 7px; min-height: 24px; min-width: 24px; color: var(--muted); }
   .le-btn:hover { border-color: var(--accent); color: var(--text); }
+  /* Drag to reorder. The grip is the affordance; the row is what's draggable. --accent is the
+     "current / interactive" colour per the colour rules, which is exactly what a drop target is. */
+  .le-row.le-drag { cursor: grab; }
+  .le-row.le-drag:active { cursor: grabbing; }
+  .le-grip { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); letter-spacing: -1px; }
+  .le-row.le-drag:hover .le-grip { color: var(--muted); }
+  .le-row.dragging { opacity: .45; }
+  /* inset, so the cue costs no layout — a real border would reflow every row it touches mid-drag. */
+  .le-row.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+  .le-row.drop-after  { box-shadow: inset 0 -2px 0 0 var(--accent); }
   .le-empty { font-family: var(--mono); font-size: var(--fs-3); color: var(--faint); padding: 6px 2px; }
   .le-add { display: flex; gap: var(--sp-2); margin: 4px 0 10px; }
   .le-input { max-width: 130px; }
@@ -1061,6 +1072,10 @@
             <div class="stage-name" id="stageName">—</div>
             <div class="stage-sub" id="stageSub"></div>
             <div class="chips" id="stageChips"></div>
+            <!-- What is actually steering the run. Under the auto profile this is its segment plan with
+                 the current step marked; under a manual profile it names the profile instead. Written
+                 only by renderAutoProfile. -->
+            <div class="chips" id="stagePlan"></div>
           </div>
           <div class="card">
             <h2><span class="eyebrow">Next goal</span></h2>
@@ -1284,6 +1299,14 @@
           <div class="listed" id="boostTypeOrder" data-key="BoostPriority"></div>
           <div class="le-add"><select class="inp le-input" id="boostTypeOrderAdd" aria-label="Boost type to add"></select><button class="btn" type="button" data-sadd="boostTypeOrder">Add</button></div>
           <div class="seclabel"><span class="eyebrow">Priority boosts · boosted top-down (order matters)</span></div>
+          <!-- Time to cap: the ETA the advisor has always computed on its 60s boost pump and written
+               only to inject.log. Each row carries its own cumulative ETA, so moving an item up is a
+               visible trade rather than a guess. Drag a row, or use ↑ / ↓.
+               The wording is deliberately careful: the totals cover EVERY boost target (this list,
+               then equipped gear, then locked inventory items), the unit is stat points and not boost
+               items, and the rate is optimistic by construction — see the hint below. -->
+          <div class="chips" id="boostEta"></div>
+          <div class="mh"><span class="hint" style="color:var(--faint)">Drag a row by its grip to reorder, or use ↑ / ↓ — boosts are applied top-down, so each row is only finished once the ones above it are. Totals cover everything being boosted (this list first, then equipped gear), measured in stat points to cap. Levelling an item raises its cap, so a long run will overrun this estimate.</span></div>
           <div class="listed" id="boostPriority" data-key="PriorityBoosts"></div>
           <div class="le-add"><input class="inp tin le-input" type="number" min="0" placeholder="gear ID" aria-label="Gear ID to add to the boost priority list" data-addfor="boostPriority"><button class="btn" type="button" data-add="boostPriority">Add</button></div>
           <div class="seclabel"><span class="eyebrow">Boost blacklist · never boost/merge</span></div>
@@ -1393,25 +1416,86 @@
 
     // ---- Loadouts editor (finalize slice 2): 7 modes, each an optimizer objective (Advisor) OR a manual
     //      item-ID list + "Use current gear". Values below are static safe literals (no esc needed). ----
+    // `gates` are the REAL SavedSettings keys the injector tests before this loadout can ever swap, in the
+    // order the engine evaluates them. They used to live only on the consuming system's own view, so a user
+    // could pick an objective here, watch it save, and never see a swap — with no feedback anywhere. Each
+    // list mirrors one live expression; keep them in step if the engine changes. Named rather than
+    // line-numbered, because line numbers rot the moment either side is edited:
+    //   Titan      ZoneHelpers.GetTitanSnapshot          Gold  ZoneHelpers.GetTitanSnapshot / LockManager.TryGoldDropSwap
+    //   Quest      LockManager.TryQuestSwap             Ygg   LockManager.TryYggdrasilSwap
+    //   Cooking    CookingManager (the TryCookingSwap gate)
+    //   Loot Hunt  GearHunter.Active                    Shockwave MoneyPitManager (worn / daycare throws)
+    //   Main       AdvisorApply.Tick (GlobalEnabled, AdvisorGearRefresh) + ApplyGearRefresh (ManageGear)
+    // `fires` says WHEN the set is worn — the missing mental model behind "it isn't toggling".
     var LOADOUT_MODES = [
-      { name:"Titan",       key:"TitanLoadout",          obj:"TitanObjective",     resp:"TitanObjectiveRespawn" },
-      { name:"Gold",        key:"GoldDropLoadout",       obj:"GoldObjective",      resp:"GoldObjectiveRespawn" },
-      { name:"Quest",       key:"QuestLoadout",          obj:"QuestObjective",     resp:"QuestObjectiveRespawn" },
-      { name:"Yggdrasil",   key:"YggdrasilLoadout",      obj:"YggdrasilObjective", resp:"YggdrasilObjectiveRespawn" },
-      { name:"Cooking",     key:"CookingLoadout",        obj:"CookingObjective",   resp:"CookingObjectiveRespawn" },
-      { name:"Loot Hunter", key:"LootHunterAccessories", loot:true },
-      { name:"Shockwave",   key:"Shockwave" }
+      { name:"Main / idle", key:"Main", obj:"GearObjective", resp:"GearObjectiveRespawn", main:true,
+        gates:["GlobalEnabled","ManageGear","AdvisorGearRefresh"],
+        fires:"What you wear the rest of the time. The advisor keeps this set current as your gear improves." },
+      { name:"Titan",       key:"TitanLoadout",          obj:"TitanObjective",     resp:"TitanObjectiveRespawn",
+        gates:["GlobalEnabled","ManageTitans","SwapTitanLoadouts"], link:"titans", linkLabel:"Open Titans",
+        fires:"Fires as a titan you have ticked comes up, and swaps back afterwards." },
+      { name:"Gold",        key:"GoldDropLoadout",       obj:"GoldObjective",      resp:"GoldObjectiveRespawn",
+        gates:["GlobalEnabled","ManageGoldLoadouts"],
+        fires:"Fires on a gold snipe, and on titan gold-banking runs." },
+      { name:"Quest",       key:"QuestLoadout",          obj:"QuestObjective",     resp:"QuestObjectiveRespawn",
+        gates:["GlobalEnabled","AutoQuest","ManageQuestLoadouts"],
+        fires:"Fires while a quest is running." },
+      { name:"Yggdrasil",   key:"YggdrasilLoadout",      obj:"YggdrasilObjective", resp:"YggdrasilObjectiveRespawn",
+        gates:["GlobalEnabled","ManageYggdrasil","SwapYggdrasilLoadouts"],
+        fires:"Fires at harvest, once a fruit reaches the swap threshold set on the Yggdrasil page." },
+      { name:"Cooking",     key:"CookingLoadout",        obj:"CookingObjective",   resp:"CookingObjectiveRespawn",
+        gates:["GlobalEnabled","ManageCooking","ManageCookingLoadouts"],
+        fires:"Fires when the advisor cooks a dish." },
+      { name:"Loot Hunter", key:"LootHunterAccessories", loot:true,
+        gates:["GlobalEnabled","ManageGear","AdvisorGearRefresh","GearHuntEnabled"],
+        fires:"Fires while gear hunt is camping a stage. Yields to the challenge rotation." },
+      { name:"Shockwave",   key:"Shockwave",
+        gates:["GlobalEnabled","AutoMoneyPit"],
+        fires:"Fires on the money pit's daycare / shockwave throw." }
     ];
+    // Human names for the gate switches, so the mirrored control reads the same as it does on its home view.
+    var GATE_LABEL = {
+      GlobalEnabled:"Global automation", ManageGear:"Gear automation",
+      AdvisorGearRefresh:"Advisor picks the gear", ManageTitans:"Titan automation",
+      SwapTitanLoadouts:"Swap gear for titans", ManageGoldLoadouts:"Gold loadout swaps",
+      AutoQuest:"Run quests", ManageQuestLoadouts:"Swap quest gear",
+      ManageYggdrasil:"Yggdrasil automation", SwapYggdrasilLoadouts:"Swap Yggdrasil gear",
+      ManageCooking:"Manage cooking", ManageCookingLoadouts:"Swap cooking gear",
+      GearHuntEnabled:"Gear hunt", AutoMoneyPit:"Money pit automation"
+    };
+    // The live layer is a separate <script> (same reason window.viewTitle exists): renderLoadoutGates
+    // needs the gate lists to explain why a mode isn't armed, and must read the SAME table that rendered
+    // the switches — a second copy would drift the moment a gate changes.
+    window.loadoutModes = LOADOUT_MODES;
+    window.gateLabel = GATE_LABEL;
     function loadoutModesHtml(){
       return LOADOUT_MODES.map(function(m){
         var h = '<div class="seclabel"><span class="eyebrow">'+m.name+'</span></div>';
+        // When this set is actually worn, then the live arming state. #lg-<key> is written ONLY by
+        // renderLoadoutGates (single-writer contract) and carries the "why isn't this doing anything" line.
+        h += '<div class="mh"><span class="hint">'+m.fires+'</span></div>'+
+             '<div class="mh"><span class="hint" id="lg-'+m.key+'">&mdash;</span></div>';
+        // The gates themselves, mirrored from their home views so the fix is one click from the confusion.
+        if(m.gates && m.gates.length){
+          h += '<div class="switchwrap">'+m.gates.map(function(g){
+            return '<label class="switch"><input type="checkbox" role="switch" data-setting="'+g+'">'+
+                   '<span class="sw" aria-hidden="true"></span>'+(GATE_LABEL[g]||g)+'</label>';
+          }).join("")+'</div>';
+        }
+        // Per-titan targets aren't a boolean this page can own — reuse the existing [data-view] router.
+        if(m.link)
+          h += '<div class="le-add"><button class="btn" type="button" data-view="'+m.link+'">'+m.linkLabel+' &rarr;</button></div>';
         // E2: seven of these reached the a11y tree unnamed — the <label> is a sibling with no `for`, and
         // "Objective (Advisor)" appears once per mode, so the name has to carry the mode too or a screen
         // reader hears the same label five times. Same id convention as renderGroups ("set-<key>"), and
         // each settings key is rendered at most once, so the ids stay unique document-wide.
         if(m.obj){
+          // data-empty overrides the "" option's label: for a mode that means "use my item list", but for
+          // Main there is no list — "" means "let the profile timeline / segment decide".
+          // data-fillfor names the id list this objective can populate (absent on Main, which has none).
           h += '<div class="fieldgrid"><div class="field"><label for="set-'+m.obj+'">Objective (Advisor)</label>'+
-               '<select class="inp" id="set-'+m.obj+'" aria-label="'+m.name+' loadout objective (Advisor)" data-setting="'+m.obj+'" data-dyn="gearObjectives" data-str="1"></select></div></div>'+
+               '<select class="inp" id="set-'+m.obj+'" aria-label="'+m.name+' loadout objective (Advisor)" data-setting="'+m.obj+'" data-dyn="gearObjectives" data-str="1"'+
+               (m.main ? ' data-empty="Follow the profile timeline"' : ' data-fillfor="'+m.key+'"')+'></select></div></div>'+
                '<div class="switchwrap"><label class="switch"><input type="checkbox" role="switch" data-setting="'+m.resp+'">'+
                '<span class="sw" aria-hidden="true"></span>Keep Respawn</label></div>';
         } else if(m.loot){
@@ -1419,11 +1503,29 @@
                '<div class="field"><label for="set-LootHunterRespawnCount">Advisor picks — × Respawn</label><input class="inp" id="set-LootHunterRespawnCount" aria-label="Loot Hunter — respawn multiplier" type="number" inputmode="numeric" min="0" max="20" data-setting="LootHunterRespawnCount"></div>'+
                '<div class="field"><label for="set-LootHunterDropCount">× Drop Chance</label><input class="inp" id="set-LootHunterDropCount" aria-label="Loot Hunter — drop-chance multiplier" type="number" inputmode="numeric" min="0" max="20" data-setting="LootHunterDropCount"></div></div>';
         }
+        // Main has no id list — it IS the live set, so its action is the existing Re-optimize command
+        // (Actions["refreshGear"] -> AdvisorApply.ForceGearReoptimize), which reports its real outcome
+        // via the notice toast. No new command, no second equip path.
+        if(m.main){
+          // Main has no id list, so this is where "what would it equip?" gets answered — the profile
+          // timeline never writes its picks anywhere. Filled by renderMainBestSet from gearNow.bestIds.
+          h += '<div class="chips" id="mainBestSet"></div>'+
+               '<div class="le-add">'+
+               '<button class="btn" type="button" data-action="refreshGear">Equip the best set now</button>'+
+               '<span class="hint">Optimises for whatever is in force above and equips it immediately.</span></div>';
+          return h;
+        }
         // The add-input is placeholder-only, and a placeholder is not a label: it disappears the moment
         // you type (WCAG 3.3.2). Chrome's accname falls back to it, so this never showed up in the count.
+        // "Fill from objective" is the answer to "how do I find an item ID": it writes the optimiser's
+        // best set straight into the list, where it renders as [188] "Edgy Helmet" with a ✕ on every row.
         h += '<div class="listed" id="'+m.key+'" data-key="'+m.key+'"></div>'+
              '<div class="le-add"><input class="inp tin le-input" type="number" min="0" placeholder="item ID" aria-label="Item ID to add to the '+m.name+' loadout" data-addfor="'+m.key+'">'+
              '<button class="btn" type="button" data-add="'+m.key+'">Add</button>'+
+             // Only where there IS an objective to fill from. Loot Hunter's set is a hybrid the optimizer
+             // assembles itself, and Shockwave is a daycare-levelling list with no objective at all —
+             // giving either one this button would just produce a control that can never succeed.
+             (m.obj ? '<button class="btn" type="button" data-fillobj="'+m.key+'" aria-label="Fill the '+m.name+' loadout from its objective">Fill from objective</button>' : '')+
              '<button class="btn" type="button" data-usegear="'+m.key+'">Use current gear</button></div>';
         return h;
       }).join("");
@@ -1515,13 +1617,23 @@
         why:"",
         kind:"timeline", tlHead:["Time","Difficulty"], tl:[] },
       loadouts:    { grp:"Gear", title:"Loadouts", cons:"LoadoutsPanel", sev:"ok", badge:"Auto",
-        rec:"Each mode (idle / titan / gold / quest) optimises for its own objective.",
-        why:"",
-        kind:"settings", groups:[],
-        after:
+        rec:"Pick an objective per mode; the optimiser equips the best set your inventory can make for it.",
+        why:"Each mode also needs its own automation switches on — they are mirrored into every block below.",
+        // `persist` (not `after`): live status the user always wants visible, per docs/COMPANION_UI.md.
+        // It is a sibling of readout/manual and can never be hidden by a decisions layer.
+        // The faint hint colour is scoped to `.manual .mh .hint`, so a hint moved outside .manual needs
+        // the colour stated inline — same as the other persist-block hints on this page.
+        persist:
           '<div class="seclabel"><span class="eyebrow">Currently equipped</span></div>'+
-          '<div class="mh"><span class="hint" id="equippedList">—</span></div>'+
-          loadoutModesHtml() },
+          '<div class="mh"><span class="hint" id="equippedList" style="color:var(--faint)">—</span></div>'+
+          // Why the last swap looks the way it does. A swap that leaves slots untouched is usually
+          // CORRECT — the objective scored nothing for them, so they keep their Power/Toughness — and
+          // without saying so it reads as a half-finished swap.
+          '<div class="seclabel"><span class="eyebrow">Last gear swap</span></div>'+
+          '<div class="chips" id="lastSwap"></div>'+
+          '<div class="mh"><span class="hint" id="lastSwapWhy" style="color:var(--faint)"></span></div>',
+        kind:"settings", groups:[],
+        after: loadoutModesHtml() },
       gear:        { grp:"Gear", title:"Gear", cons:"GearEditor", sev:"ok", badge:"Auto",
         rec:"Equips the optimiser's best set for the active objective; re-optimises when a better set appears.",
         why:"",
@@ -1719,7 +1831,12 @@
             {t:"toggle", key:"ManageEnergy", label:"Energy"},
             {t:"toggle", key:"ManageMagic", label:"Magic"},
             {t:"toggle", key:"ManageR3", label:"R3"},
-            {t:"toggle", key:"ManageGear", label:"Advisor gear refresh"},
+            // ManageGear is the AUTOMATION gate (may the advisor equip at all); AdvisorGearRefresh is the
+            // DECISIONS layer (does the advisor pick the set). Labelling the first as "Advisor gear
+            // refresh" hid the second entirely — and both must be on for any gear to move.
+            {t:"toggle", key:"ManageGear", label:"Gear (let the advisor equip)"},
+            {t:"toggle", key:"AdvisorGearRefresh", label:"Gear: advisor picks the set"},
+            {t:"toggle", key:"AdvisorGearOnDrop", label:"Gear: re-check when new gear drops"},
             {t:"toggle", key:"ManageDiggers", label:"Diggers"},
             {t:"toggle", key:"ManageBeards", label:"Beards"},
             {t:"toggle", key:"ManageWandoos", label:"Wandoos"},
@@ -1826,6 +1943,28 @@
            '<div class="mh"><span class="hint tl-pay mut">loading breakpoints…</span></div></div>' : '')+
         '<div class="manual">'+buildManual(v)+'</div>';
       canvas.appendChild(sec);
+    });
+
+    /* Gear-source chips on the system views that own a loadout. Without these you had to open Loadouts
+       to learn whether THIS system's gear was being chosen by the advisor, taken from your own id list,
+       or not swapping at all — the whole "it isn't toggling" complaint, seen from the other side.
+       Injected here rather than hand-edited into five places (two of which are bespoke sections), so
+       there is one code path and the set can't drift from GEARCHIP_VIEWS. Filled by renderGearChips. */
+    var GEARCHIP_VIEWS = { titans:"TitanLoadout", gold:"GoldDropLoadout", quests:"QuestLoadout",
+                           yggdrasil:"YggdrasilLoadout", cooking:"CookingLoadout" };
+    window.gearChipViews = GEARCHIP_VIEWS;
+    Object.keys(GEARCHIP_VIEWS).forEach(function(vid){
+      var sec = document.getElementById("view-"+vid); if(!sec) return;
+      if (sec.querySelector('[id^="gearchip-"]')) return;
+      var host = document.createElement("div");
+      // .persist so it shows in BOTH decisions modes — "is my gear armed" is exactly the status you
+      // want visible while the advisor is in charge, not only in MANUAL.
+      host.className = "persist";
+      host.innerHTML = '<div class="seclabel"><span class="eyebrow">Gear for this system</span></div>'+
+                       '<div class="chips" id="gearchip-'+vid+'"></div>';
+      var readout = sec.querySelector(".readout");
+      if (readout && readout.nextSibling) sec.insertBefore(host, readout.nextSibling);
+      else sec.appendChild(host);
     });
 
     /* D5: three of the per-system AUTOMATION switches don't own the setting they appear to own.
@@ -2465,6 +2604,39 @@
       if(st.rebirthRemaining) parts.push('<span class="chip">'+esc(st.rebirthRemaining)+' left</span>');
       chips.innerHTML = parts.join("");
     }
+  }
+
+  /* What is steering the run, on the card that answers "where am I".
+     Under the AUTO PROFILE this is the segment plan — TM HOUR › AT HOUR › RECOVERY › NGU MARATHON —
+     with the current step marked. That readout existed as timeline chips on the old WinForms autopilot
+     panel and was lost in the 2.0.0 port; since then "Farming / idle" was all the page said, and the
+     segment was only discoverable in inject.log.
+     Under a MANUAL profile the segments do not apply at all (the auto profile is what computes them),
+     so it names the profile and points at its breakpoints rather than inventing a plan. */
+  function renderAutoProfile(s){
+    var el=$("stagePlan"); if(!el) return;
+    var a=s.autoProfile;
+    if(!a){ writeHtml(el, "aplan", ""); return; }
+    if(!a.on){
+      var nm = a.profile ? String(a.profile).replace(/\.json$/i,"") : "";
+      writeHtml(el, "aplan",
+        '<span class="chip"><b>Manual profile</b>'+(nm?'<span class="sub">'+esc(nm)+'</span>':'')+'</span>'+
+        '<button class="chip" type="button" data-view="profileEditor" aria-label="Open the profile editor to see this profile’s breakpoints"><b>Breakpoints →</b></button>');
+      return;
+    }
+    var chain=a.chain||[], idx=(typeof a.index==="number")?a.index:-1;
+    var out=chain.map(function(seg,i){
+      // Position-based, and only that: segments are time-anchored but not strictly monotonic (TM HOUR
+      // returns whenever TM gold hits zero), so "passed" claims where we are in the plan, not that the
+      // step can never come back.
+      var cls = i===idx ? "chip max" : (idx>=0 && i<idx ? "chip" : "chip lock");
+      return '<span class="'+cls+'"><b>'+esc(seg)+'</b>'+(i===idx?'<span class="sub">now</span>':'')+'</span>';
+    }).join("");
+    if(!out) out='<span class="chip lock"><b>Auto profile</b><span class="sub">working out the plan…</span></span>';
+    var sub=[];
+    if(a.phase) sub.push(esc(a.phase)+" phase");
+    if(a.runHours>0) sub.push(esc(a.runHours)+"h into the run");
+    writeHtml(el, "aplan", out + (sub.length?'<span class="chip"><span class="sub">'+sub.join(" · ")+'</span></span>':''));
   }
 
   function renderGoal(s){
@@ -4494,7 +4666,19 @@
                     "Edgy Helmet". Same reason boost TYPE order (a string vocabulary) and the gear
                     OBJECTIVE lists (names already) are not id lists at all. */
   var BLISTS = {
-    boostPriority:  { key:"PriorityBoosts", ordered:true,  arr:[], dirty:false, built:false, names:"item" },
+    // annotate: per-row "at cap in Xh Ym". Cumulative down the boost order, because boosts are applied
+    // front-first — an item is only finished once everything ahead of it is. That is what makes moving
+    // a row a real decision. An id with no entry is already at cap (GetBoostSlots drops those), so it
+    // is labelled as such rather than left blank, which would read as "unknown".
+    boostPriority:  { key:"PriorityBoosts", ordered:true,  arr:[], dirty:false, built:false, names:"item",
+                      annotate: function(id){
+                        var b = BOOST_ETA; if(!b) return "";
+                        if(!(b.perMinute > 0)) return "";
+                        var per = b.etaByItem || {};
+                        var sec = per[String(id)];
+                        if(sec == null) return '<span class="mut">at cap</span>';
+                        return "at cap in " + esc(fmtSec(sec));
+                      } },
     boostBlacklist: { key:"BoostBlacklist", ordered:false, arr:[], dirty:false, built:false, names:"item" },
     advBlacklist:   { key:"BlacklistedBosses", ordered:false, arr:[], dirty:false, built:false, names:"advEnemy" },
     // Loadout id-lists (element id === setting key). ordered so slot arrangement is user-controllable.
@@ -4534,15 +4718,115 @@
     var st=BLISTS[id], el=$(id); if(!el) return;
     if(!st.arr.length){ el.innerHTML='<div class="le-empty">none yet</div>'; return; }
     el.innerHTML = st.arr.map(function(v,i){
+      // ORDERED lists can also be dragged. The ↑/↓ buttons STAY: dragging is a pointer-only gesture,
+      // so removing them would leave keyboard and screen-reader users with no way to reorder at all.
+      // Drag is the fast path, the arrows are the accessible one, and both go through listMove.
+      var grip=(st.ordered?'<span class="le-grip" aria-hidden="true">⠿</span>':'');
       var ctrls=(st.ordered?'<button class="le-btn" type="button" data-lmove="up" aria-label="Move up">↑</button><button class="le-btn" type="button" data-lmove="down" aria-label="Move down">↓</button>':'')
         +'<button class="le-btn" type="button" data-lremove aria-label="Remove">✕</button>';
-      return '<div class="le-row" data-i="'+i+'"><span class="ix">'+(i+1)+'</span><span class="id">'+listLabel(st,v)+'</span><span class="le-ctrls">'+ctrls+'</span></div>';
+      // Optional per-row annotation (the boost list uses it for "maxed in 2h 10m"). Faint and after
+      // the name, so it reads as a note about the row rather than part of its identity.
+      var note = st.annotate ? st.annotate(v, i) : "";
+      return '<div class="le-row'+(st.ordered?' le-drag':'')+'" data-i="'+i+'"'+(st.ordered?' draggable="true"':'')+'>'+
+             grip+'<span class="ix">'+(i+1)+'</span><span class="id">'+listLabel(st,v)+'</span>'+
+             (note?'<span class="le-note">'+note+'</span>':'')+
+             '<span class="le-ctrls">'+ctrls+'</span></div>';
     }).join("");
   }
   function applyList(id, incoming){
     var st=BLISTS[id]; if(!st) return; incoming=(incoming||[]).map(Number);
+    // NEVER repaint the list currently being dragged. Snapshots arrive at 1 Hz, and rebuilding the
+    // rows mid-gesture destroys the element under the pointer — the drag dies silently and the row
+    // snaps back. The pending write is still tracked by st.dirty, so the reconcile happens on the
+    // first paint after the drop.
+    if(_dragList === id) return;
     if(st.dirty){ if(arrEq(st.arr, incoming)) st.dirty=false; return; }   // confirmed -> clear; else keep local
     if(!st.built || !arrEq(st.arr, incoming)){ st.arr=incoming.slice(); st.built=true; drawList(id); }
+  }
+
+  /* ---- Drag to reorder (ordered lists: boost priority + the loadouts) ------------------------
+     Reordering a long priority list one ↑ click at a time is the slow path this replaces; the
+     arrows remain for keyboard. Delegated at document level ON PURPOSE — drawList replaces the
+     rows' innerHTML on every change, so per-element handlers would be dropped on the floor. */
+  var _dragList = null, _dragFrom = -1;
+  function listRowOf(t){ return t && t.closest ? t.closest(".le-row.le-drag") : null; }
+  function listIdOf(row){
+    var host = row && row.closest ? row.closest(".listed") : null;
+    return host && BLISTS[host.id] ? host.id : null;
+  }
+  function clearDropCues(){
+    document.querySelectorAll(".le-row.drop-before, .le-row.drop-after, .le-row.dragging")
+      .forEach(function(r){ r.classList.remove("drop-before","drop-after","dragging"); });
+  }
+  document.addEventListener("dragstart", function(e){
+    var row = listRowOf(e.target); if(!row) return;
+    // A drag begun on the ↑/↓/✕ cluster is almost always a mis-grab of a button — let the click win.
+    if(e.target.closest && e.target.closest(".le-ctrls")){ e.preventDefault(); return; }
+    var id = listIdOf(row); if(!id){ return; }
+    _dragList = id; _dragFrom = +row.getAttribute("data-i");
+    row.classList.add("dragging");
+    try{ e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(_dragFrom)); }catch(err){}
+  });
+  document.addEventListener("dragover", function(e){
+    if(_dragList === null) return;
+    var row = listRowOf(e.target); if(!row || listIdOf(row) !== _dragList) return;
+    e.preventDefault();                                   // required, or the drop never fires
+    try{ e.dataTransfer.dropEffect = "move"; }catch(err){}
+    var box = row.getBoundingClientRect();
+    var after = (e.clientY - box.top) > box.height / 2;
+    row.classList.toggle("drop-after", after);
+    row.classList.toggle("drop-before", !after);
+  });
+  document.addEventListener("dragleave", function(e){
+    var row = listRowOf(e.target); if(row) row.classList.remove("drop-before","drop-after");
+  });
+  document.addEventListener("drop", function(e){
+    if(_dragList === null) return;
+    var row = listRowOf(e.target);
+    var id = _dragList, from = _dragFrom;
+    if(row && listIdOf(row) === id){
+      e.preventDefault();
+      var box = row.getBoundingClientRect();
+      var to = +row.getAttribute("data-i") + (((e.clientY - box.top) > box.height/2) ? 1 : 0);
+      listReorder(id, from, to);
+    }
+    _dragList = null; _dragFrom = -1; clearDropCues();
+  });
+  // Fires even when the drop was cancelled (dropped outside, Esc), so the cues can never be stranded.
+  document.addEventListener("dragend", function(){ _dragList = null; _dragFrom = -1; clearDropCues(); });
+  /* ---- Boost "time to max" ---------------------------------------------------------------------
+     Every number here is computed by the advisor's existing 60s boost pump (InventoryManager
+     .ShowBoostProgress), which already knew the ETA and only ever wrote it to inject.log. Nothing is
+     recomputed on the page, and nothing is recomputed per tick.
+     A rate of 0 means the rolling average has no samples yet — say "measuring", never invent a number
+     a user would plan a run around. */
+  var BOOST_ETA = null, _boostEtaKey = null;
+  function renderBoostEta(s){
+    var el=$("boostEta"); if(!el) return;
+    var b=s.boostEta;
+    BOOST_ETA = b || null;
+    if(!b){ writeHtml(el, "beta", '<span class="chip lock"><b>Time to cap</b><span class="sub">measuring…</span></span>'); return; }
+    var key = String(b.total)+"|"+String(b.perMinute);
+    var html;
+    if(!(b.total > 0)){
+      html = '<span class="chip act"><b>All at cap</b><span class="sub">nothing left to boost</span></span>';
+    } else if(!(b.perMinute > 0)){
+      // The rolling average needs a few minutes of samples. A fabricated ETA is worse than none —
+      // this is a number someone plans a run around.
+      html = '<span class="chip lock"><b>Time to cap</b><span class="sub">measuring the rate…</span></span>'+
+             '<span class="chip"><b>'+esc(fmtNum(b.total))+'</b><span class="sub">stat points to cap</span></span>';
+    } else {
+      html = '<span class="chip max"><b>'+esc(fmtSec(b.etaSec))+'</b><span class="sub">to cap</span></span>'+
+             '<span class="chip"><b>'+esc(fmtNum(b.total))+'</b><span class="sub">stat points to cap</span></span>'+
+             '<span class="chip"><b>'+esc(fmtNum(b.perMinute))+'</b><span class="sub">per minute</span></span>';
+    }
+    writeHtml(el, "beta", html);
+    // The per-row ETAs are a function of this node, so repaint the list when it moves — but never
+    // mid-drag, and only when it actually moved (this node changes once a minute, the tick is 1 Hz).
+    if(key !== _boostEtaKey){
+      _boostEtaKey = key;
+      if(BLISTS.boostPriority.built && _dragList !== "boostPriority") drawList("boostPriority");
+    }
   }
   function renderBoostLists(s){ if(!s.boostLists) return; applyList("boostPriority", s.boostLists.priority); applyList("boostBlacklist", s.boostLists.blacklist); }
   // Adventure enemy blacklist (finalize 1b): flat enemy picker + the current never-snipe list (reuses BLISTS).
@@ -4578,14 +4862,142 @@
   function renderGearObjectives(s){
     if(_gearObjBuilt || !s.gearObjectives) return;
     var sels=document.querySelectorAll('select[data-dyn="gearObjectives"]'); if(!sels.length) return;
-    var opts='<option value="">Manual — use item list</option>'+
-      s.gearObjectives.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join("");
-    for(var i=0;i<sels.length;i++){ var cur=sels[i].value; sels[i].innerHTML=opts; sels[i].value=cur; }
+    var tail=s.gearObjectives.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join("");
+    for(var i=0;i<sels.length;i++){
+      // "" means different things per mode: "use my item list" for the seven mode loadouts, but
+      // "follow the profile timeline" for Main, which has no list of its own.
+      var lead=sels[i].getAttribute("data-empty") || "Manual — use item list";
+      var cur=sels[i].value;
+      sels[i].innerHTML='<option value="">'+esc(lead)+'</option>'+tail;
+      sels[i].value=cur;
+    }
     _gearObjBuilt=true;
+  }
+  /* Why a loadout is or isn't armed. Reads only `settings` (already on the wire for every gate key),
+     `titans.targets` (already consumed by renderTitanGrid) and `gearNow` (the injector's own resolution
+     of what the main gear objective currently is). Never calls the optimiser; costs one string build per
+     mode per snapshot, and writeHtml drops it when nothing changed. Single writer for every #lg-* id. */
+  function renderLoadoutGates(s){
+    var vals=s.settings; if(!vals) return;
+    var MODES=window.loadoutModes, LABEL=window.gateLabel||{};
+    if(!MODES) return;
+    var targets=(s.titans&&s.titans.targets)||[], ticked=0;
+    for(var t=0;t<targets.length;t++) if(targets[t]) ticked++;
+    MODES.forEach(function(m){
+      var el=$("lg-"+m.key); if(!el) return;
+      var off=(m.gates||[]).filter(function(g){ return (g in vals) && !vals[g]; });
+      var html;
+      if(off.length){
+        var names=off.map(function(g){ return '“'+esc(LABEL[g]||g)+'”'; });
+        var list=names.length===1 ? names[0]
+               : names.slice(0,-1).join(", ")+" and "+names[names.length-1];
+        html='<b>Not armed</b> &mdash; '+list+(names.length===1?" is":" are")+
+             ' off, so this never runs. Turn '+(names.length===1?"it":"them")+' on below.';
+      } else if(m.key==="TitanLoadout" && targets.length && ticked===0){
+        html='<b>Not armed</b> &mdash; no titans are ticked. Open <b>Titans</b> and tick the ones to swap for.';
+      } else if(m.loot && vals.GearHuntZone!=null && vals.GearHuntZone<0){
+        html='<b>Not armed</b> &mdash; no hunt stage is chosen. Pick one under <b>Adventure &rsaquo; Gear hunt</b>.';
+      } else if(m.key==="CookingLoadout" && !vals.CookingObjective && !(s.loadouts&&s.loadouts.CookingLoadout&&s.loadouts.CookingLoadout.length)){
+        html='<b>Nothing configured</b> &mdash; pick an objective, or add item IDs below.';
+      } else if(m.main){
+        var g=s.gearNow;
+        html = (g && g.sentence) ? esc(g.sentence)
+             : '<b>Armed</b> &mdash; the advisor is managing your gear.';
+      } else {
+        html='<b>Armed</b> &mdash; the advisor will swap to this set when it fires.';
+      }
+      writeHtml(el, "lg:"+m.key, html);
+    });
+    renderMainBestSet(s);
+  }
+  /* What "optimal" actually MEANS for the gear in force. A profile gear breakpoint computes its ids in
+     PerformSwap, equips them and throws them away — it writes neither the profile nor any loadout list —
+     so until now typing `Optimize: NGUs` into the timeline gave you no way to see what it picked short
+     of the F10 dump. These ids ride along on an Optimize the advisor already runs every ~10s, so showing
+     them is free. `.chip.max` = the accent, i.e. "this is the interesting thing here", per the colour
+     rules; the plain chips are the rest of the set. */
+  function renderMainBestSet(s){
+    var el=$("mainBestSet"); if(!el) return;
+    var g=s.gearNow, ids=(g&&g.bestIds)||[];
+    if(!ids.length){ writeHtml(el, "mbs", ""); return; }
+    var worn={}; (s.equipped||[]).forEach(function(n){ worn[n]=1; });
+    var html=ids.map(function(id){
+      var label=ITEM_NAMES&&ITEM_NAMES[id] ? ITEM_NAMES[id] : null;
+      var on=label && worn[label];
+      return '<span class="chip'+(on?'':' max')+'"><b>'+esc(label?label:"Item "+id)+'</b>'+
+             (on?'<span class="sub">worn</span>':'<span class="sub">would swap in</span>')+'</span>';
+    }).join("");
+    writeHtml(el, "mbs", html);
+  }
+  /* One chip per system that owns a loadout, on that system's OWN page: where its gear comes from, and
+     whether anything will actually swap. Reads only settings + gearNow — no optimizer, no new node. */
+  function renderGearChips(s){
+    var vals=s.settings; if(!vals) return;
+    var VIEWS_MAP=window.gearChipViews, MODES=window.loadoutModes;
+    if(!VIEWS_MAP || !MODES) return;
+    Object.keys(VIEWS_MAP).forEach(function(vid){
+      var el=$("gearchip-"+vid); if(!el) return;
+      var key=VIEWS_MAP[vid];
+      var m=MODES.filter(function(x){ return x.key===key; })[0]; if(!m) return;
+      var off=(m.gates||[]).filter(function(g){ return (g in vals) && !vals[g]; });
+      var armed=off.length===0;
+      var objective=m.obj ? (vals[m.obj]||"") : "";
+      var list=(s.loadouts&&s.loadouts[key])||[];
+
+      var src = objective ? '<span class="chip act"><b>Advisor</b><span class="sub">'+esc(objective)+'</span></span>'
+              : list.length ? '<span class="chip"><b>Your list</b><span class="sub">'+list.length+' item'+(list.length===1?'':'s')+'</span></span>'
+              : '<span class="chip lock"><b>Nothing set</b><span class="sub">no objective or list</span></span>';
+      var state = armed ? '<span class="chip act"><b>Will swap</b></span>'
+                : '<span class="chip buy"><b>Won’t swap</b><span class="sub">'+off.length+' switch'+(off.length===1?'':'es')+' off</span></span>';
+      // Nothing configured can't "swap" whatever the switches say — don't claim it will.
+      if(!objective && !list.length) state='<span class="chip lock"><b>Nothing to swap to</b></span>';
+      writeHtml(el, "gc:"+vid, src+state+
+        '<button class="chip" type="button" data-view="loadouts" aria-label="Edit this loadout under Loadouts"><b>Edit →</b></button>');
+    });
   }
   function renderLoadouts(s){
     if(!s.loadouts) return;
     for(var k in s.loadouts) if(BLISTS[k]) applyList(k, s.loadouts[k]);
+  }
+  /* The last swap, in the three outcomes that are actually different — because two of them look
+     identical on the paper doll and only one is a problem:
+       swapped — went on as asked
+       kept    — a slot this objective scores nothing for, still holding what it had. BY DESIGN:
+                 ChangeGear only swaps IN, never clears, which is exactly how Power/Toughness stays on
+                 through a Gold Drops swap and why high-zone gold snipes survive. Reads as a
+                 half-finished swap if nobody says otherwise, which is the whole point of this readout.
+       missed  — asked for and didn't go on. The only failure, and named item by item.
+     Also carries the worn set's Power/Toughness so "did that swap cost me the kill?" is answerable
+     rather than guessed at. */
+  function renderLastSwap(s){
+    var el=$("lastSwap"), why=$("lastSwapWhy"); if(!el) return;
+    var w=s.lastSwap;
+    if(!w){ writeHtml(el,"lsw",'<span class="chip lock"><b>No swap yet</b></span>'); if(why) writeHtml(why,"lswy",""); return; }
+    var missed=w.missed||[], kept=w.kept||[];
+    var mode=w.mode && w.mode!=="Default" ? w.mode : "Main";
+    var chips='<span class="chip"><b>'+esc(mode)+'</b><span class="sub">'+esc(String(w.agoSec||0))+'s ago</span></span>'+
+              '<span class="chip act"><b>'+esc(String(w.swapped||0))+' of '+esc(String(w.requested||0))+'</b><span class="sub">swapped in</span></span>';
+    if(kept.length)   chips+='<span class="chip"><b>'+kept.length+'</b><span class="sub">slot'+(kept.length===1?'':'s')+' kept</span></span>';
+    if(missed.length) chips+='<span class="chip buy"><b>'+missed.length+'</b><span class="sub">did not fit</span></span>';
+    if(typeof w.power==="number" && typeof w.toughness==="number")
+      chips+='<span class="chip"><b>P '+esc(fmtNum(w.power))+'</b><span class="sub">T '+esc(fmtNum(w.toughness))+'</span></span>';
+    writeHtml(el,"lsw",chips);
+
+    if(!why) return;
+    var txt="";
+    if(missed.length){
+      // itemLabel takes one id and already returns escaped markup — do NOT esc() it again.
+      txt = "<b>"+missed.length+" item"+(missed.length===1?"":"s")+" the advisor asked for did not go on:</b> "+
+            missed.map(function(id){ return itemLabel(id); }).join(", ")+
+            ". That usually means more accessories than you have unlocked slots, or the game refused the swap.";
+    } else if(kept.length){
+      txt = "Not every slot changed, and that is correct: this objective scores nothing for "+kept.length+
+            " of them, so they keep what they had. That retained gear is where your Power and Toughness "+
+            "come from during a drop- or gold-focused swap.";
+    } else {
+      txt = "Every slot the objective asked for went on.";
+    }
+    writeHtml(why,"lswy",txt);
   }
   // Wish priority + blacklist (int wish-id lists; reuse BLISTS).
   function renderWishLists(s){ if(!s.wishLists) return; applyList("wishPriorities", s.wishLists.priorities); applyList("wishBlacklist", s.wishLists.blacklist); }
@@ -4743,22 +5155,71 @@
     }
     if(s.cards.sortOrder) applyStrList("cardSortOrder", s.cards.sortOrder);
   }
+  /* Fill a mode's id list from its objective (slice 3). The optimiser answer comes back through the
+     EXISTING `loadouts` snapshot node and repaints through applyList — so there is no preview node, no
+     preview cache and no second renderer: the list editor IS the preview, named and row-by-row removable.
+     dirty must be cleared first, or applyList (see its st.dirty branch) would ignore the very array the
+     user just asked the injector to write. Debounced because a <select> fires change per arrow-key. */
+  var _fillTimers = Object.create(null);
+  function sendObjectiveFill(listKey, objective, respawnKey){
+    var st=BLISTS[listKey]; if(st) st.dirty=false;
+    var rEl=document.querySelector('[data-setting="'+respawnKey+'"]');
+    window.__ngu.send({cmd:"applyObjective", key:listKey, objective:objective, respawn:!!(rEl&&rEl.checked)});
+  }
+  function scheduleObjectiveFill(sel){
+    var listKey=sel.getAttribute && sel.getAttribute("data-fillfor");
+    if(!listKey || !sel.value) return;                     // "" = keep the manual list; never wipe it
+    // ONLY fill a list that is empty. Picking an objective must never destroy a hand-curated set of
+    // ids: that list is what the mode falls back to when the objective is cleared again, or when the
+    // optimizer returns nothing, and there is no undo and no confirmation on this path. A user who
+    // wants to replace a curated list has the explicit "Fill from objective" button for it.
+    var st=BLISTS[listKey];
+    if(st && st.arr && st.arr.length) return;
+    var m=(window.loadoutModes||[]).filter(function(x){ return x.key===listKey; })[0]; if(!m) return;
+    clearTimeout(_fillTimers[listKey]);
+    _fillTimers[listKey]=setTimeout(function(){ sendObjectiveFill(listKey, sel.value, m.resp); }, 400);
+  }
   function listSend(id){ var st=BLISTS[id]; st.dirty=true; window.__ngu.send({cmd:"setSettingList", key:st.key, values:st.arr}); }
   function listAdd(id,v){ var st=BLISTS[id]; v=parseInt(v,10); if(isNaN(v)||v<0||st.arr.indexOf(v)>=0) return; st.arr.push(v); drawList(id); listSend(id); }
   function listRemove(id,i){ var st=BLISTS[id]; if(i<0||i>=st.arr.length) return; st.arr.splice(i,1); drawList(id); listSend(id); }
   function listMove(id,i,dir){ var st=BLISTS[id]; var j=i+(dir==="up"?-1:1); if(j<0||j>=st.arr.length) return; var t=st.arr[i]; st.arr[i]=st.arr[j]; st.arr[j]=t; drawList(id); listSend(id); }
+  /* Move one entry to an insertion POINT (0..len), not to an index — that is what a drop between two
+     rows means. Removing first shifts everything after `from` down by one, so a target past it has to
+     come back by one or the item lands one slot too far. */
+  function listReorder(id, from, to){
+    var st=BLISTS[id]; if(!st || !st.arr) return;
+    if(from<0 || from>=st.arr.length) return;
+    if(to>from) to--;
+    if(to<0) to=0; if(to>st.arr.length-1) to=st.arr.length-1;
+    if(to===from) return;                                  // dropped back where it started
+    var v=st.arr.splice(from,1)[0];
+    st.arr.splice(to,0,v);
+    drawList(id); listSend(id);
+  }
+  // A setting key may now be bound by MORE THAN ONE control: the Loadouts page mirrors each mode's
+  // real arming switches (ManageTitans, SwapTitanLoadouts, ...) next to the objective they arm, so the
+  // fix is where the confusion is. reconcile() keys on the SETTING, not the element, and LASTOK holds a
+  // single apply closure per key — so every element sharing a key has to be driven from ONE closure.
+  // Grouping first is what makes that true; per-element reconcile would leave the second copy stale and
+  // an A3 rollback would restore only one of them.
+  function settingEls(key){ return document.querySelectorAll('[data-setting="'+key+'"]'); }
   function renderSettings(s){
     var vals = s.settings; if(!vals) return;
+    var byKey = Object.create(null);
     document.querySelectorAll("[data-setting]").forEach(function(el){
-      var key = el.getAttribute("data-setting");
+      var k = el.getAttribute("data-setting");
+      (byKey[k] || (byKey[k] = [])).push(el);
+    });
+    Object.keys(byKey).forEach(function(key){
       if(!(key in vals)) return;
-      var actual = vals[key];
-      if(el.type === "checkbox"){
-        reconcile("set:"+key, !!actual, function(v){ el.checked = v; });
-      } else {
-        if(document.activeElement === el) return;   // don't clobber a number the user is editing
-        reconcile("set:"+key, actual, function(v){ el.value = v; });
-      }
+      var els = byKey[key], cb = els[0].type === "checkbox";
+      reconcile("set:"+key, cb ? !!vals[key] : vals[key], function(v){
+        for(var i=0;i<els.length;i++){
+          var el = els[i];
+          if(el.type === "checkbox") el.checked = !!v;
+          else if(document.activeElement !== el) el.value = v;   // don't clobber what the user is editing
+        }
+      });
     });
   }
 
@@ -4798,6 +5259,7 @@
     noteSnapshot();   // A1: real data arrived — this, not the status message, is what "live" means
     try{ renderHeader(s); }catch(e){}
     try{ renderStage(s); }catch(e){}
+    try{ renderAutoProfile(s); }catch(e){}
     try{ renderGoal(s); }catch(e){}
     try{ renderHero(s); }catch(e){}
     try{ renderNeeds(s); }catch(e){}
@@ -4817,11 +5279,15 @@
     try{ renderTitanAk(s); }catch(e){}
     try{ renderTitanGrid(s); }catch(e){}
     try{ renderItemNames(s); }catch(e){}   // before the id lists, so their FIRST paint is already named
+    try{ renderBoostEta(s); }catch(e){}    // before the lists: drawList's annotate reads BOOST_ETA
     try{ renderBoostLists(s); }catch(e){}
     try{ renderAdvEnemies(s); }catch(e){}
     try{ renderAdvBlacklist(s); }catch(e){}
     try{ renderGearObjectives(s); }catch(e){}
     try{ renderLoadouts(s); }catch(e){}
+    try{ renderLoadoutGates(s); }catch(e){}
+    try{ renderLastSwap(s); }catch(e){}
+    try{ renderGearChips(s); }catch(e){}
     try{ renderWishLists(s); }catch(e){}
     try{ renderBoostPriority(s); }catch(e){}
     try{ renderTransform(s); }catch(e){}
@@ -4936,14 +5402,20 @@
         }
       } else if(t.matches && t.matches("[data-setting]")){
         var skey=t.getAttribute("data-setting");
+        // A key can be bound by several controls (the mirrored arming switches on Loadouts). Move every
+        // copy optimistically and undo every copy on rollback — see renderSettings' grouping note.
+        var twins=settingEls(skey);
         if(t.type==="checkbox"){
-          var wasC=!t.checked;
-          setPending("set:"+skey, !!t.checked, function(){ t.checked = wasC; });
-          window.__ngu.send({cmd:"setSetting", key:skey, value:!!t.checked});
+          var wasC=!t.checked, nowC=!!t.checked;
+          for(var ti=0;ti<twins.length;ti++) twins[ti].checked = nowC;
+          setPending("set:"+skey, nowC, function(){ for(var i=0;i<twins.length;i++) twins[i].checked = wasC; });
+          window.__ngu.send({cmd:"setSetting", key:skey, value:nowC});
         } else if(t.hasAttribute("data-str")){   // string-valued select (e.g. loadout objective; "" = manual)
-          var wasS=t._preVal;
-          setPending("set:"+skey, t.value, function(){ if(wasS!==undefined) t.value = wasS; });
-          window.__ngu.send({cmd:"setSetting", key:skey, value:t.value});
+          var wasS=t._preVal, nowS=t.value;
+          for(var tj=0;tj<twins.length;tj++) if(twins[tj]!==t) twins[tj].value = nowS;
+          setPending("set:"+skey, nowS, function(){ if(wasS!==undefined) for(var i=0;i<twins.length;i++) twins[i].value = wasS; });
+          window.__ngu.send({cmd:"setSetting", key:skey, value:nowS});
+          scheduleObjectiveFill(t);   // slice 3: auto-populate the mode's id list from the objective
         } else {
           var snum=parseFloat(t.value); if(isNaN(snum)){ return; }
           var smn=t.getAttribute("min"), smx=t.getAttribute("max");
@@ -5142,6 +5614,20 @@
     document.addEventListener("click", function(e){
       var addBtn = e.target.closest ? e.target.closest("[data-add]") : null;
       if(addBtn){ var aid=addBtn.getAttribute("data-add"); var inp=document.querySelector('[data-addfor="'+aid+'"]'); if(inp){ listAdd(aid, inp.value); if(inp.tagName!=="SELECT") inp.value=""; } return; }
+      var fillBtn = e.target.closest ? e.target.closest("[data-fillobj]") : null;
+      if(fillBtn){
+        var fk=fillBtn.getAttribute("data-fillobj");
+        var fm=(window.loadoutModes||[]).filter(function(x){ return x.key===fk; })[0];
+        var fsel=fm && $("set-"+fm.obj);
+        if(!fsel || !fsel.value){
+          if(window.showToast) window.showToast("Pick an objective for this loadout first.");
+          return;
+        }
+        sendObjectiveFill(fk, fsel.value, fm.resp);
+        var fo=fillBtn.textContent; fillBtn.disabled=true; fillBtn.textContent="Optimizing…";
+        setTimeout(function(){ fillBtn.textContent=fo; fillBtn.disabled=false; }, 1200);
+        return;
+      }
       var useBtn = e.target.closest ? e.target.closest("[data-usegear]") : null;
       if(useBtn){ var uk=useBtn.getAttribute("data-usegear"); window.__ngu.send({cmd:"setLoadoutFromGear", key:uk});
         var ot=useBtn.textContent; useBtn.disabled=true; useBtn.textContent="Reading…"; setTimeout(function(){ useBtn.textContent=ot; useBtn.disabled=false; }, 1200); return; }

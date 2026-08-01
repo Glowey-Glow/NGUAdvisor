@@ -123,6 +123,28 @@ comparison at 1346px with real data first.
     filter box lives here precisely because `.manual` is the subtree it hides).
     It is a sibling of readout/manual and is never hidden or overwritten.
 
+## One setting, several controls
+
+A `data-setting` key may be bound by **more than one control**. The Loadouts view uses this: each mode
+mirrors the real switches that arm it (`ManageTitans`, `SwapTitanLoadouts`, …) next to the objective
+they arm, so the fix is where the confusion is stated rather than two views away. The switches on the
+system's own view stay exactly where they were — this duplicates, it does not move.
+
+Two rules make that safe, and both already hold in `index.html`:
+
+- **`renderSettings` groups by key first.** `reconcile()` keys on the SETTING, not the element, and
+  `LASTOK` holds a single apply closure per key — so every element sharing a key must be driven from
+  ONE closure. Per-element reconcile would leave the second copy a snapshot behind, and a
+  connection-drop rollback would restore only one of them.
+- **The change handler moves every copy optimistically**, and its rollback closure restores every copy.
+
+If you add a mirrored control, add nothing else: the binding, the snapshot and the write path all
+already exist. What you must NOT do is invent a second key for the same underlying setting.
+
+`tests/companion/test-loadouts.js` asserts both behaviours, and cross-checks every `[data-setting]`
+key the page emits against `UiBridge.BindingList` — that boundary has no compiler behind it, and a key
+the injector doesn't bind fails silently as a `LogDebug` while the control appears to work.
+
 ## Colour semantics (separate from the accent)
 
 `--ok` good / on-target · `--warn` needs attention / actionable · `--crit` blocking ·

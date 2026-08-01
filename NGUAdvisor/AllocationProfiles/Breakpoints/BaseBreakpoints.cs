@@ -102,6 +102,7 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             {
                 current = null;
                 currentChallenge = cur;
+                OnNoBreakpoint();
                 return;
             }
 
@@ -120,6 +121,12 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
         }
 
         protected abstract bool PerformSwap(Breakpoint bp);
+
+        // No breakpoint applies right now (empty timeline, or the run is younger than the first entry).
+        // Subclasses that publish state ABOUT the active breakpoint must clear it here: `current = null`
+        // only clears the field, and Swap() is not virtual, so there is nowhere else to hook.
+        // Only GearBreakpoints overrides this today; the empty base keeps every other lane unchanged.
+        protected virtual void OnNoBreakpoint() { }
 
         public virtual void Reset() { current = null; currentChallenge = null; }
     }

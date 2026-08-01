@@ -41,6 +41,15 @@
     <Compile Include="..\..\NGUAdvisor\Managers\BloodRouter.cs" Link="Linked\BloodRouter.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\SnipeTrigger.cs" Link="Linked\SnipeTrigger.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\ExpRatio.cs" Link="Linked\ExpRatio.cs" />
+    <!-- The gear optimizer's pure core. GearScorer was validated by hand against gmiclotte's tool and
+         then had NO regression test under it; GearObjectives is pure data whose stat strings are matched
+         by name at runtime, so a typo scores 0 forever and nothing else catches it. GearObjectiveResolver
+         is the precedence table the equip path and the companion both read, and GearSignature carries
+         the invariants that stop the drop trigger self-triggering. All four are Unity-free. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearScorer.cs" Link="Linked\GearScorer.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\GearObjectives.cs" Link="Linked\GearObjectives.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\GearObjectiveResolver.cs" Link="Linked\GearObjectiveResolver.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\GearSignature.cs" Link="Linked\GearSignature.cs" />
   </ItemGroup>
 
 </Project>

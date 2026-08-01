@@ -1,0 +1,12 @@
+{
+  "name": "nguadvisor-companion-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless tests for the companion page (NGUAdvisorCompanion/wwwroot/index.html).",
+  "scripts": {
+    "test": "node test-loadouts.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0"
+  }
+}

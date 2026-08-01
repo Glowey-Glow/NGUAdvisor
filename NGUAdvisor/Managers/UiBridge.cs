@@ -86,6 +86,8 @@ namespace NGUAdvisor.Managers
         // already does. By the time Publish runs, the game is up.
         private Func<int, float?> _titanSpawnReader;
         private JSONObject _cardMetaCache;               // static card meta (bonus types / rarities / costs / sort vocab); built once
+        private int[] _gearNowIds;                       // main-gear best set published this tick, so itemNames can name it too
+        private int[] _lastSwapIds;                      // kept + missed ids from the last swap, so itemNames can name them
         private JSONObject _itemNamesCache;              // gear id->name map for the ids the snapshot references; rebuilt only when that id SET changes
         private string _itemNamesSig;                    // the id set _itemNamesCache was built from ("94,110,116,...")
         private bool _itemNamesComplete;                 // false while any id failed to resolve (item table not up yet) -> periodic retry
@@ -253,6 +255,13 @@ namespace NGUAdvisor.Managers
             Binding.Bool("YggdrasilObjectiveRespawn", s => s.YggdrasilObjectiveRespawn, (s, v) => s.YggdrasilObjectiveRespawn = v),
             Binding.Str ("CookingObjective",    s => s.CookingObjective,    (s, v) => s.CookingObjective = v),
             Binding.Bool("CookingObjectiveRespawn", s => s.CookingObjectiveRespawn, (s, v) => s.CookingObjectiveRespawn = v),
+            // Main/idle gear: the standing objective + its respawn pin, and the drop trigger.
+            // AdvisorGearRefresh also lives in Toggles (the Gear view's ADVISOR/MANUAL segment) — binding
+            // it here too lets the Loadouts page arm it in place, and both write the same setter.
+            Binding.Str ("GearObjective",       s => s.GearObjective,       (s, v) => s.GearObjective = v),
+            Binding.Bool("GearObjectiveRespawn", s => s.GearObjectiveRespawn, (s, v) => s.GearObjectiveRespawn = v),
+            Binding.Bool("AdvisorGearRefresh",  s => s.AdvisorGearRefresh,  (s, v) => s.AdvisorGearRefresh = v),
+            Binding.Bool("AdvisorGearOnDrop",   s => s.AdvisorGearOnDrop,   (s, v) => s.AdvisorGearOnDrop = v),
             Binding.Int ("LootHunterRespawnCount", s => s.LootHunterRespawnCount, (s, v) => s.LootHunterRespawnCount = v, 0, 20),
             Binding.Int ("LootHunterDropCount", s => s.LootHunterDropCount,  (s, v) => s.LootHunterDropCount = v, 0, 20),
             // Challenges
@@ -819,6 +828,51 @@ namespace NGUAdvisor.Managers
                     break;
                 }
 
+                case "applyObjective":
+                {
+                    // Fill a mode's item-id list with the optimizer's best set for an objective — the
+                    // answer to "how do I find an item ID". It writes a SETTING ONLY: no ChangeGear, no
+                    // assignCurrentEquipToLoadout. The result comes back through the existing `loadouts`
+                    // snapshot node and repaints in the existing list editor, which already renders
+                    // [188] "Edgy Helmet" with a remove button per row — so the list IS the preview,
+                    // and it is reversible without touching the game.
+                    string key = obj["key"].Value;
+                    var objNode = obj["objective"];
+                    var respNode = obj["respawn"];
+                    if (settings == null || string.IsNullOrEmpty(key) || objNode == null || !objNode.IsString)
+                    { Main.LogDebug("UiBridge: applyObjective invalid"); break; }
+                    bool respawn = respNode != null && respNode.IsBoolean && respNode.AsBool;
+                    string objective = objNode.Value;
+                    if (string.IsNullOrEmpty(objective))
+                    { Main.LogDebug("UiBridge: applyObjective with no objective"); break; }
+
+                    var gobj = GearOptimizer.FindObjective(objective);
+                    if (gobj == null)
+                    { _notice = $"Couldn't find the '{objective}' objective."; break; }
+
+                    int[] optimized;
+                    try { optimized = GearOptimizer.OptimizeIds(gobj, respawn); }
+                    catch (Exception oe)
+                    {
+                        Main.LogDebug($"UiBridge: applyObjective optimize failed: {oe.Message}");
+                        _notice = "The optimizer hit an error — check the Debug log.";
+                        break;
+                    }
+                    if (optimized == null || optimized.Length == 0)
+                    { _notice = $"The optimizer returned no set for '{gobj.Name}'."; break; }
+
+                    // Same range floor setSettingList applies; the setters themselves don't validate.
+                    var okIds = new List<int>();
+                    foreach (var id in optimized) if (id >= 0 && id <= Consts.MAX_GEAR_ID) okIds.Add(id);
+                    if (AssignGearList(settings, key, okIds.ToArray()))
+                    {
+                        Main.Log($"UI command: applyObjective {key} <- '{gobj.Name}'{(respawn ? " (+top respawn)" : "")} ({okIds.Count} ids)");
+                        _notice = $"Filled the {LoadoutLabel(key)} list with the best '{gobj.Name}' set ({okIds.Count} items).";
+                    }
+                    else Main.LogDebug("UiBridge: applyObjective unknown key '" + key + "'");
+                    break;
+                }
+
                 case "setIntArray":
                 {
                     // Whole int[] for fixed-index arrays (transform per-chain flags, card rarity/cost thresholds).
@@ -850,7 +904,15 @@ namespace NGUAdvisor.Managers
                 }
 
                 default:
+                    // The page and the injector version independently: the companion is reloaded by
+                    // restarting it, the advisor only by F5 / re-inject. So a NEWER page talking to an
+                    // OLDER advisor is a normal state after an update — and it used to be completely
+                    // silent, because the command simply fell in here. The user pressed a button, the
+                    // control looked like it worked, and nothing happened (reported in testing: "Fill
+                    // from objective" did nothing, with no message). Say so instead of only logging it.
                     Main.LogDebug("UiBridge: unknown command '" + cmd + "'");
+                    _notice = "This control needs a newer advisor than the one running — press F5 in the "
+                            + "game to reload it, then try again.";
                     break;
             }
         }
@@ -869,6 +931,23 @@ namespace NGUAdvisor.Managers
         {
             if (src == null) return;
             foreach (var id in src) into.Add(id);
+        }
+
+        // The mode name a loadout key belongs to, for user-facing sentences ("Filled the Titan list...").
+        // Only the five objective-backed modes are listed: Loot Hunter's set is a hybrid the optimizer
+        // assembles itself and Shockwave has no objective, so neither can reach applyObjective — the
+        // page doesn't render a fill button for them. The key is a readable fallback either way.
+        private static string LoadoutLabel(string key)
+        {
+            switch (key)
+            {
+                case "TitanLoadout": return "Titan";
+                case "GoldDropLoadout": return "Gold";
+                case "QuestLoadout": return "Quest";
+                case "YggdrasilLoadout": return "Yggdrasil";
+                case "CookingLoadout": return "Cooking";
+                default: return key;
+            }
         }
 
         // Assign a gear-id int[] to a named list setting (boost lists + the 7 loadout modes). Returns false
@@ -1217,6 +1296,107 @@ namespace NGUAdvisor.Managers
                 lo["LootHunterAccessories"] = IntArr(settings.LootHunterAccessories);
                 lo["Shockwave"] = IntArr(settings.Shockwave);
                 root["loadouts"] = lo;
+            });
+
+            // --- what is actually steering the run: the auto profile's segment plan, or the manual
+            //     profile's name. The segment chain used to be timeline chips on the WinForms autopilot
+            //     panel; that went in the 2.0.0 port and nothing replaced it, so since then the only
+            //     way to know which segment was running was to read inject.log. Cheap: three statics
+            //     ChallengeOverlay already maintains on its own 30s tick.
+            Safe("autoProfile", () =>
+            {
+                if (settings == null) return;
+                var a = new JSONObject();
+                bool on = settings.AutoProfile;
+                a["on"] = on;
+                a["profile"] = settings.AllocationFile ?? "";
+                if (on)
+                {
+                    a["segment"] = ChallengeOverlay.Segment ?? "";
+                    a["phase"] = ChallengeOverlay.Phase ?? "";
+                    a["index"] = ChallengeOverlay.SegmentIndex;
+                    a["runHours"] = Num(Math.Round(ChallengeOverlay.SegmentRunHours, 1));
+                    var chain = new JSONArray();
+                    var src = ChallengeOverlay.SegmentChain;
+                    if (src != null) foreach (var seg in src) chain.Add(seg);
+                    a["chain"] = chain;
+                }
+                root["autoProfile"] = a;
+            });
+
+            // --- the last gear swap, so a result that LOOKS wrong can explain itself. Three outcomes,
+            //     and conflating them is what makes a swap look broken when it isn't:
+            //       swapped — went on as asked
+            //       kept    — a slot this objective scores nothing for, still holding what it had.
+            //                 BY DESIGN (ChangeGear only swaps in) and the reason Power/Toughness
+            //                 survives a Gold Drops swap. NOT a failure.
+            //       missed  — asked for and didn't go on. The only one that is a problem.
+            //     Static fields written once per swap; nothing is computed here.
+            Safe("lastSwap", () =>
+            {
+                var sw = LoadoutManager.LastSwap;
+                if (sw == null) return;
+                var o = new JSONObject();
+                o["mode"] = sw.Mode ?? "";
+                o["swapped"] = sw.Requested.Length - sw.Missed.Length;
+                o["requested"] = sw.Requested.Length;
+                o["kept"] = IntArr(sw.Kept);
+                o["missed"] = IntArr(sw.Missed);
+                o["agoSec"] = Num(Math.Round((DateTime.UtcNow - sw.At).TotalSeconds));
+                // What the worn set is actually worth for fighting, so "did this cost me the kill?" is
+                // answerable rather than inferred. CurrentScore is one scoring pass over the equipped
+                // items — no optimizer search — and both objectives are cached for the tick.
+                try
+                {
+                    var pow = GearOptimizer.FindObjective("Power");
+                    var tou = GearOptimizer.FindObjective("Toughness");
+                    if (pow != null) o["power"] = Num(GearOptimizer.CurrentScore(pow));
+                    if (tou != null) o["toughness"] = Num(GearOptimizer.CurrentScore(tou));
+                }
+                catch { }
+                var named = new List<int>(sw.Kept.Length + sw.Missed.Length);
+                named.AddRange(sw.Kept);
+                named.AddRange(sw.Missed);
+                _lastSwapIds = named.ToArray();
+                root["lastSwap"] = o;
+            });
+
+            // --- which gear objective is in force, and why (Loadouts › Main readout). The advisor's own
+            //     resolution, so the page can never disagree with what the equip path will do. Cheap:
+            //     a handful of field reads and one string — it NEVER runs the optimizer. ---
+            Safe("gearNow", () =>
+            {
+                var r = GearObjectiveApply.Current();
+                var g = new JSONObject();
+                g["objective"] = r.Name ?? "";
+                g["source"] = r.Source ?? "";
+                g["forceRespawn"] = r.ForceRespawn;
+                // An objective name can be any string: profiles are hand-editable files, and the pin is
+                // a Binding.Str. If it doesn't resolve, the equip path silently does nothing — so the
+                // readout must not keep asserting "Running X". FindObjective is a lookup over a static
+                // list; it never runs the optimizer.
+                string sentence = r.Sentence ?? "";
+                if (r.Resolved && r.Name != GearObjectiveResolver.LootHunter
+                    && GearOptimizer.FindObjective(r.Name) == null)
+                    sentence = "\"" + r.Name + "\" isn't a known objective, so no gear is being chosen. "
+                             + "Pick one from the list.";
+                g["sentence"] = sentence;
+                // The set the optimizer would equip for the objective in force. Comes from the Optimize()
+                // ProgressionAnalyzer already runs on a 10s cache — no extra optimizer work — and answers
+                // "what does 'optimal' actually mean?", which a profile gear breakpoint otherwise never
+                // tells you: it computes its ids, equips them and discards them without writing the
+                // profile or any loadout list.
+                try
+                {
+                    if (ProgressionAnalyzer.BestGearFor == r.Name && ProgressionAnalyzer.BestGearIds.Length > 0)
+                    {
+                        g["bestIds"] = IntArr(ProgressionAnalyzer.BestGearIds);
+                        _gearNowIds = ProgressionAnalyzer.BestGearIds;
+                    }
+                    else _gearNowIds = null;
+                }
+                catch { _gearNowIds = null; }
+                root["gearNow"] = g;
             });
 
             // --- gear-objective names (static; drives the loadout Advisor-objective dropdowns). Built once. ---
@@ -1659,6 +1839,50 @@ namespace NGUAdvisor.Managers
                 try { TitanTables.StampRespawn(_titanAkCache, _titanSpawnReader); } catch { }
             });
 
+            // --- boost "time to max": how many boosts the targets still need, how fast they are being
+            //     applied, and therefore when each one finishes. Every number here was ALREADY computed
+            //     by InventoryManager.ShowBoostProgress on its 60s pump and written only to inject.log
+            //     ("ETA: N minutes."); this just puts it on the wire. Nothing is recomputed per tick.
+            //
+            //     The per-item ETA is CUMULATIVE down the boost order — boosts are applied to the
+            //     priority list front-first, so item N is only finished after everything ahead of it is.
+            //     That is what makes reordering the list a real decision instead of a guess.
+            Safe("boostEta", () =>
+            {
+                var needed = InventoryManager.LastNeeded;
+                if (needed == null) return;                       // no sample yet (first 60s after load)
+                var o = new JSONObject();
+                float total = needed.Total();
+                float perMin = InventoryManager.LastBoostsPerMinute;
+                // UNITS: these are STAT POINTS to cap, not a count of boost items. GetNeededBoosts sums
+                // (level-scaled cap - current) across attack/defence/specs. How many points one dropped
+                // boost delivers depends on that boost item's own level, which nothing here models — so
+                // never label this "boosts".
+                o["power"] = Num(needed.power);
+                o["toughness"] = Num(needed.toughness);
+                o["special"] = Num(needed.special);
+                o["total"] = Num(total);
+                o["perMinute"] = Num(perMin);
+                // Seconds, and -1 for "not measurable yet" — mirrors the money pit's etaSec, which the
+                // page already renders with fmtSec. The rate is 0 until the rolling average has samples.
+                o["etaSec"] = Num(perMin > 0 ? total / perMin * 60.0 : -1);
+                var per = new JSONObject();
+                var order = InventoryManager.LastBoostOrder;
+                var map = InventoryManager.LastPerItem;
+                if (order != null && map != null && perMin > 0)
+                {
+                    float run = 0;
+                    foreach (var id in order)
+                    {
+                        if (!map.TryGetValue(id, out var n)) continue;
+                        run += n;
+                        per[id.ToString(CultureInfo.InvariantCulture)] = Num(run / perMin * 60.0);
+                    }
+                }
+                o["etaByItem"] = per;
+                root["boostEta"] = o;
+            });
+
             // --- boost list editors (W3): PriorityBoosts + BoostBlacklist int[] gear-id arrays. ---
             Safe("boostLists", () =>
             {
@@ -1699,6 +1923,11 @@ namespace NGUAdvisor.Managers
                 CollectIds(ids, settings.Shockwave);
                 CollectIds(ids, settings.PriorityBoosts);
                 CollectIds(ids, settings.BoostBlacklist);
+                // ...and the main-gear best set, so its chips render named rather than as bare integers.
+                // It changes only when the optimizer's answer changes (~10s cache upstream), so it folds
+                // into the same signature-keyed rebuild as everything else here.
+                CollectIds(ids, _gearNowIds);
+                CollectIds(ids, _lastSwapIds);
                 ids.Sort();
 
                 // Sorted -> dedupe and build the change signature in one pass.

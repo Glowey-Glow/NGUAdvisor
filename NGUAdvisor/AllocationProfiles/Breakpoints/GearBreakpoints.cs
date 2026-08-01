@@ -21,9 +21,20 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
     // re-optimize the same objective as drops improve (Phase C gear auto-refresh).
     public class GearBreakpoints : BaseBreakpoints<GearSpec>
     {
-        public GearBreakpoints() : base() { }
+        // ActiveObjective is a STATIC, but a profile load builds a NEW GearBreakpoints
+        // (BreakpointWrapper's parsing ctor) — so without clearing here the previous profile's
+        // objective survived the switch and the advisor kept re-equipping, every 120s, a set the new
+        // profile never asked for. Clearing in the ctor makes "a new timeline is in charge" mean
+        // "nothing is in force until it says so".
+        public GearBreakpoints() : base() { ClearActive(); }
 
-        public GearBreakpoints(JSONNode bps) : base(bps, ParseSpec) { }
+        public GearBreakpoints(JSONNode bps) : base(bps, ParseSpec) { ClearActive(); }
+
+        private static void ClearActive()
+        {
+            ActiveObjective = null;
+            ActiveForceRespawn = false;
+        }
 
         private static GearSpec ParseSpec(JSONNode bp)
         {
@@ -42,6 +53,18 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         public static string ActiveObjective { get; private set; }
         public static bool ActiveForceRespawn { get; private set; }
+
+        // Rebirth (CustomAllocation calls Reset on every lane) and "the timeline has nothing to say
+        // yet". Both used to leave the previous value standing: at t=0 of a new run GetCurrentBreakpoint
+        // returns null, so PerformSwap never ran, so the whole first stretch of every run was driven by
+        // the PREVIOUS run's final objective.
+        public override void Reset()
+        {
+            base.Reset();
+            ClearActive();
+        }
+
+        protected override void OnNoBreakpoint() => ClearActive();
 
         protected override bool PerformSwap(Breakpoint bp)
         {
@@ -69,7 +92,14 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 var objective = GearOptimizer.FindObjective(objectiveName);
                 if (objective == null)
                 {
+                    // A typo'd objective is accepted by the profile editor (it only rejects an EMPTY
+                    // one), so this is reachable from ordinary use. Returning false without clearing
+                    // left the PREVIOUS objective active for the rest of the session, which is worse
+                    // than doing nothing: the advisor keeps optimizing for a set the profile no longer
+                    // asks for, and the only trace is this debug line. Clear, so the resolver falls
+                    // through to the user's standing pick instead.
                     Main.LogDebug($"Gear breakpoint objective '{objectiveName}' not recognized.");
+                    ClearActive();
                     return false;
                 }
                 ids = GearOptimizer.OptimizeIds(objective, forceRespawn);

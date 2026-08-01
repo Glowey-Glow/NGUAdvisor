@@ -55,7 +55,13 @@ namespace NGUAdvisor.Managers
                     }
                 }
 
-                if (Settings.ManageCookingLoadouts && Settings.CookingLoadout.Length > 0)
+                // An OBJECTIVE alone is a complete configuration: TryCookingSwap resolves it through
+                // GearOptimizer.ResolveModeGear, which only falls back to the id list when no objective
+                // is set. Requiring a non-empty list here meant "Cooking -> Drop Chance" with an empty
+                // list never swapped at all, silently — the exact shape the companion's objective
+                // dropdown encourages. Mirrors the quest gate in LockManager.RestoreConfiguration.
+                if (Settings.ManageCookingLoadouts &&
+                    (Settings.CookingLoadout.Length > 0 || !string.IsNullOrEmpty(Settings.CookingObjective)))
                 {
                     if (!LockManager.TryCookingSwap())
                     {

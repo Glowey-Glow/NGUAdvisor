@@ -171,6 +171,24 @@ namespace NGUAdvisor.Managers
                 // Level caps ride the segment the overlay just computed (self-gates on AutoProfile).
                 RunStep("Level planner", LevelPlanner.Tick);
 
+                // Watch what the player OWNS, not what they wear: a drop or a merge means the optimizer's
+                // answer may have changed, and until now the only thing that ever noticed was the 120s
+                // poll inside ApplyGearRefresh. Observing is read-only and costs nothing, so it sits
+                // OUTSIDE the lock check — a titan swap holding the lock must not make us miss a drop.
+                RunStep("Gear watch", () =>
+                {
+                    // Nothing downstream could act on a change, so don't even look. Turning the trigger
+                    // back on re-primes the baseline on the next tick (Poll's first call never fires),
+                    // which is right: a change observed while the feature was off isn't its business,
+                    // and the 120s poll still picks it up.
+                    if (!Main.Settings.AdvisorGearOnDrop || !Main.Settings.ManageGear || !Main.Settings.AdvisorGearRefresh)
+                    {
+                        GearWatch.Reset();
+                        return;
+                    }
+                    if (GearWatch.Poll()) GearInventoryChanged();
+                });
+
                 // Set/gear appliers must not fight a mode lock's temporary swaps; the purchase and
                 // routing appliers below touch nothing a lock owns, so they keep running during locks
                 // (audit fix: previously a titan wait stalled perk/EXP/blood automation for no reason).
@@ -805,6 +823,17 @@ namespace NGUAdvisor.Managers
             _lastGearCheck = DateTime.MinValue;
         }
 
+        // A drop / merge / trash changed what the player owns, so the set the optimizer would pick may
+        // have changed too. Deliberately NOT GearRestored(): that also clears _lastGearObjective, which
+        // makes objectiveChanged true in ApplyGearRefresh and BYPASSES the 5% anti-churn bar — a 0.2%
+        // improvement would then trigger a full re-equip, and every ChangeGear zeroes energy/magic/R3
+        // allocation until the next allocation pass (up to 10s of nothing across eight systems).
+        // Re-arm the clock; keep the bar.
+        public static void GearInventoryChanged()
+        {
+            _lastGearCheck = DateTime.MinValue;
+        }
+
         // Companion "Re-optimize gear now" button. Unlike GearRestored() (which only re-arms the throttled
         // auto pass — and that pass still bails on ManageGear-off / locks / the anti-churn bar, so the user
         // sees "nothing happened"), this is an explicit manual action: it resolves the active objective,
@@ -816,20 +845,27 @@ namespace NGUAdvisor.Managers
             try
             {
                 if (Main.Settings == null || !Main.Settings.ManageGear)
-                    return "Gear automation is OFF — turn it on (Gear view · Automation) to let the advisor equip gear.";
+                    return "Gear automation is OFF — turn it on (Loadouts · Main) to let the advisor equip gear.";
+                // The tick path runs inside `if (LockManager.CanSwap())` (see Tick), but this one only
+                // ever checked the QUEST lock — so pressing the button during a titan / gold / cooking /
+                // yggdrasil / money-pit window equipped the main set straight over that mode's loadout.
+                // On a real (non-autokill) titan that strips the Power/Toughness kill set ResolveTitanGear
+                // deliberately forces, which is the death loop; and RestoreConfiguration then throws the
+                // user's request away anyway, restoring the gear worn at lock acquisition. Same gate as
+                // the tick, so the two paths can no longer disagree.
+                if (!LockManager.CanSwap())
+                    return $"A {LockManager.GetLockTypeName().ToLowerInvariant()} swap owns your gear right now — try again once it finishes.";
                 if (LockManager.HasQuestLock())
                     return "A major quest is running — gear is held to the quest set until it finishes.";
-                try { if (ChallengeDetector.Current() == "NOEC") return "No-Equipment Challenge is active — there's nothing to equip."; } catch { }
 
-                bool inChallenge = false;
-                try { inChallenge = ChallengeDetector.Current() != null; } catch { }
-                string objName = !inChallenge && GearHunter.Active
-                    ? "LOOT HUNTER"
-                    : ChallengeOverlay.GearObjectiveOverride ?? AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+                var resolved = GearObjectiveApply.Current();
+                if (resolved.Source == GearObjectiveResolver.Src.Noec)
+                    return "No-Equipment Challenge is active — there's nothing to equip.";
+                string objName = resolved.Name;
                 if (string.IsNullOrEmpty(objName))
-                    return "No gear objective is active right now — nothing to optimize toward.";
+                    return "No gear objective is active — pick one under Loadouts › Main, or add a gear breakpoint to your profile.";
 
-                if (objName == "LOOT HUNTER")
+                if (objName == GearObjectiveResolver.LootHunter)
                 {
                     var huntIds = GearHunter.ResolveLoadout(out var what);
                     if (huntIds.Length == 0) return "The loot-hunter loadout resolved empty.";
@@ -843,7 +879,10 @@ namespace NGUAdvisor.Managers
                 var obj = GearOptimizer.FindObjective(objName);
                 if (obj == null) return $"Couldn't find the '{objName}' objective.";
                 double cur = GearOptimizer.CurrentScore(obj);
-                var best = GearOptimizer.Optimize(obj, AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn);
+                // Name and respawn flag come from the SAME resolution, so the set scored here is always
+                // the set that would be equipped. For every pre-existing source this is the profile
+                // breakpoint's flag exactly as before; only the standing pin supplies its own.
+                var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn);
                 if (best == null) return "The optimizer returned no set for this objective.";
                 var ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
                 if (ids.Length == 0) return "The optimizer returned an empty set.";
@@ -873,25 +912,27 @@ namespace NGUAdvisor.Managers
             if (!Main.Settings.ManageGear) return;
             // CanSwap() allows the quest lock through, but quest gear is equipped then — don't fight it.
             if (LockManager.HasQuestLock()) return;
-            // NOEC: there is no equipment — don't churn.
-            try { if (ChallengeDetector.Current() == "NOEC") return; } catch { }
-            // The challenge overlay's rotation outranks the profile objective — this is what un-freezes
-            // gear during challenges even when the profile's challenge breakpoints are static ID lists.
-            // GEAR HUNT sits between them: it replaces the SEGMENT objective (the user is deliberately
-            // camping a stage) but yields to challenge rotation. NOTE: GearObjectiveOverride is the
-            // SEGMENT gear whenever AutoProfile is on (not just challenge rotation), so the hunt must
-            // be checked FIRST outside challenges — `override ?? hunt` never fell through and the
-            // Loot Hunter loadout was never equipped (user-reported).
-            bool inChallenge = false;
-            try { inChallenge = ChallengeDetector.Current() != null; } catch { }
-            string objName = !inChallenge && GearHunter.Active
-                ? "LOOT HUNTER"
-                : ChallengeOverlay.GearObjectiveOverride ?? AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
+
+            // One shared definition of "which objective, and why" (GearObjectiveResolver): NOEC beats
+            // everything, then the challenge rotation, then gear hunt, then the profile timeline, then
+            // the user's standing pick. The hunt is checked BEFORE the override because
+            // GearObjectiveOverride is the SEGMENT gear whenever AutoProfile is on, so `override ?? hunt`
+            // never fell through and the Loot Hunter loadout was never equipped (user-reported).
+            var resolved = GearObjectiveApply.Current();
+            if (resolved.Source == GearObjectiveResolver.Src.Noec) return;   // no equipment — don't churn
+            string objName = resolved.Name;
             if (string.IsNullOrEmpty(objName)) return;
+
+            // A new drop/merge re-arms this clock (GearWatch, which runs earlier in this same tick), so
+            // a better set is picked up on this pass instead of waiting out the rest of the 2 minutes.
+            // It deliberately does NOT touch _lastGearObjective: that would set objectiveChanged below
+            // and bypass the 5% bar, so a 0.2% gain would trigger a full re-equip — and every equip
+            // zeroes energy/magic/R3 allocation until the next allocation pass. Re-arm the clock, keep
+            // the bar.
             if ((DateTime.UtcNow - _lastGearCheck).TotalSeconds < 120) return;
             _lastGearCheck = DateTime.UtcNow;
 
-            if (objName == "LOOT HUNTER")
+            if (objName == GearObjectiveResolver.LootHunter)
             {
                 // Hybrid set (pool accessories + best P/T): no single objective score exists, so the
                 // anti-churn test is set-membership — re-equip only when the resolved set isn't worn.
@@ -924,7 +965,9 @@ namespace NGUAdvisor.Managers
             // stale AT gear then sat inside the 5% bar forever).
             bool objectiveChanged = objName != _lastGearObjective;
             double cur = GearOptimizer.CurrentScore(obj);
-            var best = GearOptimizer.Optimize(obj, AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn);
+            // Same resolution supplied the name AND the respawn flag, so this score always describes the
+            // set that would actually be equipped. Unchanged from before for every pre-existing source.
+            var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn);
             if (best == null) return;
             if (_gearAsserted)
             {

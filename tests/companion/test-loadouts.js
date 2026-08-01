@@ -1,0 +1,665 @@
+// jsdom harness for the Gear > Loadouts work. Runs the REAL index.html from whichever tree is passed
+// (default: dev), fakes the WebView2 host so the live layer boots, feeds synthetic snapshots down the
+// same path MainForm uses (PostWebMessageAsJson -> window "message" event) and asserts on the DOM.
+//
+// Usage: node test-loadouts.js [path-to-index.html]
+const fs = require("fs");
+const path = require("path");
+const { JSDOM, VirtualConsole } = require("jsdom");
+
+const FILE = process.argv[2] || path.resolve(__dirname, "../../NGUAdvisorCompanion/wwwroot/index.html");
+// The injector's binding registry, so the page's [data-setting] keys can be checked against the real
+// thing rather than against a fixture that only agrees with itself. Resolved RELATIVE TO THE PAGE, so
+// pointing this at the public tree checks the public tree's UiBridge. A deployed copy
+// (<injectorDir>/companion/wwwroot) has no source beside it — that check is then skipped rather than
+// crashing the run, since a deployed page is verified by hashing it against its source instead.
+const BRIDGE = [
+  path.resolve(path.dirname(FILE), "../../NGUAdvisor/Managers/UiBridge.cs"),
+  path.resolve(__dirname, "../../NGUAdvisor/Managers/UiBridge.cs")
+].find(p => fs.existsSync(p)) || null;
+
+let pass = 0, fail = 0;
+const failures = [];
+function ok(name, cond, detail) {
+  if (cond) { pass++; }
+  else { fail++; failures.push(name + (detail ? "  --> " + detail : "")); }
+}
+
+const html = fs.readFileSync(FILE, "utf8");
+const vc = new VirtualConsole();
+vc.on("jsdomError", e => { console.log("JSDOM ERROR: " + e.message); });
+
+// The live layer registers its snapshot listener at SCRIPT-EXECUTION time
+//   window.chrome.webview.addEventListener("message", e => applySnapshot(e.data))
+// and an earlier IIFE early-returns unless `window.chrome.webview` exists. So the WebView2 stub has to
+// be in place BEFORE the page's scripts run — beforeParse, not after construction.
+const SENT = [];
+let hostListener = null;
+const dom = new JSDOM(html, {
+  runScripts: "dangerously",
+  pretendToBeVisual: true,
+  virtualConsole: vc,
+  beforeParse(w) {
+    w.chrome = {
+      webview: {
+        postMessage(s) { try { SENT.push(JSON.parse(s)); } catch (e) { SENT.push({ raw: s }); } },
+        addEventListener(type, fn) { if (type === "message") hostListener = fn; },
+        removeEventListener() {}
+      }
+    };
+    if (!w.matchMedia) w.matchMedia = () => ({ matches: false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} });
+    w.scrollTo = w.scrollTo || function () {};
+  }
+});
+const { window } = dom;
+if (!window.Element.prototype.scrollIntoView) window.Element.prototype.scrollIntoView = function () {};
+
+// The page installs 1 Hz intervals, so node never exits on its own; and a throw inside our own load
+// handler would otherwise be swallowed by jsdom and look identical to a hang.
+function done(code) {
+  console.log("\n" + "=".repeat(60));
+  console.log(FILE);
+  console.log("PASS " + pass + "   FAIL " + fail);
+  if (failures.length) { console.log("\nFAILURES:"); failures.forEach(f => console.log("  - " + f)); }
+  console.log("=".repeat(60));
+  try { dom.window.close(); } catch (e) {}
+  process.exit(code != null ? code : (fail ? 1 : 0));
+}
+const HARD_STOP = setTimeout(() => { console.log("\n!! harness timed out before finishing"); done(1); }, 45000);
+HARD_STOP.unref && HARD_STOP.unref();
+function guard(fn) { return function () { try { return fn.apply(null, arguments); } catch (e) { console.log("HARNESS THREW: " + (e && e.stack || e)); done(1); } }; }
+
+// --- stubs the page needs but jsdom lacks -------------------------------------------------
+// index.html calls matchMedia unguarded (fine in WebView2).
+if (!window.matchMedia) window.matchMedia = () => ({ matches: false, addListener(){}, removeListener(){}, addEventListener(){}, removeEventListener(){} });
+window.scrollTo = window.scrollTo || function(){};
+if (!window.Element.prototype.scrollIntoView) window.Element.prototype.scrollIntoView = function(){};
+
+function send(snapshot) {
+  // MainForm.PostWebMessageAsJson -> the page's listener gets it as e.data, already deserialised.
+  if (!hostListener) throw new Error("the page never registered a webview message listener");
+  hostListener({ data: snapshot });
+}
+
+function $(id) { return window.document.getElementById(id); }
+function txt(id) { const el = $(id); return el ? el.textContent.trim() : null; }
+
+// --- the fixture ---------------------------------------------------------------------------
+const GEAR_OBJECTIVES = ["Adventure", "Power", "Toughness", "Drop Chance", "Gold Drops", "NGUs", "Cooking"];
+
+function baseSnapshot(overrides) {
+  const s = {
+    v: 1,
+    settings: {
+      GlobalEnabled: true,
+      ManageGear: true, AdvisorGearRefresh: true, AdvisorGearOnDrop: true,
+      ManageTitans: true, SwapTitanLoadouts: true,
+      ManageGoldLoadouts: true,
+      AutoQuest: true, ManageQuestLoadouts: true,
+      ManageYggdrasil: true, SwapYggdrasilLoadouts: true,
+      ManageCooking: true, ManageCookingLoadouts: true,
+      GearHuntEnabled: true, GearHuntZone: 12,
+      AutoMoneyPit: true,
+      TitanObjective: "", GoldObjective: "", QuestObjective: "",
+      YggdrasilObjective: "", CookingObjective: "", GearObjective: "",
+      TitanObjectiveRespawn: false, GoldObjectiveRespawn: false, QuestObjectiveRespawn: false,
+      YggdrasilObjectiveRespawn: false, CookingObjectiveRespawn: false, GearObjectiveRespawn: false,
+      LootHunterRespawnCount: 0, LootHunterDropCount: 0
+    },
+    gearObjectives: GEAR_OBJECTIVES,
+    loadouts: {
+      TitanLoadout: [], GoldDropLoadout: [], QuestLoadout: [],
+      YggdrasilLoadout: [], CookingLoadout: [], LootHunterAccessories: [], Shockwave: []
+    },
+    itemNames: { "94": "Wooden Spoon", "188": "Edgy Helmet", "301": "Sturdy Pants" },
+    titans: { names: ["T1","T2","T3"], targets: [true, false, false] },
+    equipped: ["Wooden Spoon", "Edgy Helmet"],
+    gearNow: { objective: "Adventure", source: "pin", sentence: "Running <b>Adventure</b> — your standing pick." },
+    systems: {}, action: "Default", nextLoopSec: 5
+  };
+  if (overrides) {
+    for (const k of Object.keys(overrides)) {
+      if (k === "settings" || k === "loadouts" || k === "titans" || k === "gearNow") Object.assign(s[k], overrides[k]);
+      else s[k] = overrides[k];
+    }
+  }
+  return s;
+}
+
+// ---------------------------------------------------------------------------------------------
+window.addEventListener("load", guard(() => {
+  const MODES = window.loadoutModes;
+
+  // ---- 1. the registry crossed the script boundary --------------------------------------
+  ok("loadoutModes is exported to the live layer", Array.isArray(MODES), String(MODES));
+  ok("gateLabel is exported to the live layer", !!window.gateLabel);
+  ok("Main is the first mode", MODES && MODES[0] && MODES[0].key === "Main", MODES && MODES[0] && MODES[0].key);
+  ok("8 modes are declared", MODES && MODES.length === 8, MODES && String(MODES.length));
+
+  send(baseSnapshot());
+
+  // ---- 2. every [data-setting] key the page emits must be BOUND IN THE INJECTOR ----------
+  // Checking against the fixture would only prove the fixture agrees with itself. The real failure
+  // mode is a key the page writes that UiBridge.BindingList doesn't know: setSetting then falls
+  // through to a LogDebug("unknown key") and the switch silently does nothing forever. So read the
+  // actual C# registry and cross the language boundary.
+  if (!BRIDGE) {
+    console.log("note: no UiBridge.cs beside this page — skipping the binding cross-check "
+              + "(expected for a deployed copy; verify that by hashing it against its source).");
+  } else {
+    const bridge = fs.readFileSync(BRIDGE, "utf8");
+    const bound = new Set();
+    const bindRe = /Binding\.(?:Bool|Str|Int|Dbl)\s*\(\s*"([^"]+)"/g;
+    let bm;
+    while ((bm = bindRe.exec(bridge))) bound.add(bm[1]);
+    ok("UiBridge.BindingList was parsed", bound.size > 50, "found " + bound.size);
+
+    const unbound = [];
+    window.document.querySelectorAll("#view-loadouts [data-setting], #view-settings [data-setting]").forEach(el => {
+      const k = el.getAttribute("data-setting");
+      if (!bound.has(k)) unbound.push(k);
+    });
+    ok("every [data-setting] on Loadouts/Settings is bound in UiBridge",
+       unbound.length === 0, Array.from(new Set(unbound)).join(", "));
+
+    // and the declared gate lists specifically (they may not all be rendered if a mode is skipped)
+    const unboundGates = [];
+    MODES.forEach(m => (m.gates || []).forEach(g => { if (!bound.has(g)) unboundGates.push(m.key + ":" + g); }));
+    ok("every declared gate key is bound in UiBridge", unboundGates.length === 0, unboundGates.join(", "));
+  }
+
+  // the fixture must also cover them, or the later assertions are vacuous
+  const fixtureKeys = new Set(Object.keys(baseSnapshot().settings));
+  const missing = [];
+  MODES.forEach(m => (m.gates || []).forEach(g => { if (!fixtureKeys.has(g)) missing.push(m.key + ":" + g); }));
+  ok("the fixture covers every gate key", missing.length === 0, missing.join(", "));
+
+  // every gate also needs a human label, or the switch renders its raw key
+  const unlabelled = [];
+  MODES.forEach(m => (m.gates || []).forEach(g => { if (!window.gateLabel[g]) unlabelled.push(g); }));
+  ok("every gate key has a human label", unlabelled.length === 0, unlabelled.join(", "));
+
+  // ---- 3. gate switches actually rendered, per mode ---------------------------------------
+  MODES.forEach(m => {
+    (m.gates || []).forEach(g => {
+      const el = window.document.querySelector('#view-loadouts [data-setting="' + g + '"]');
+      ok("gate switch rendered: " + m.key + "/" + g, !!el);
+    });
+  });
+
+  // ---- 4. status line: armed ---------------------------------------------------------------
+  ok("Titan reports armed when all gates on + a titan ticked",
+     /Armed/i.test(txt("lg-TitanLoadout") || ""), txt("lg-TitanLoadout"));
+  ok("Main uses the injector's own sentence",
+     /your standing pick/i.test(txt("lg-Main") || ""), txt("lg-Main"));
+  // The injector sends PLAIN TEXT and the page escapes it. An objective name can reach gearNow from a
+  // hand-edited profile JSON or settings.json, so this must never be injected as markup.
+  send(baseSnapshot({ gearNow: { sentence: 'Running "<img src=x onerror=alert(1)>" — your standing pick.' } }));
+  ok("a hostile gearNow sentence is escaped, not injected",
+     $("lg-Main").querySelector("img") === null, $("lg-Main").innerHTML.slice(0, 120));
+  ok("the hostile sentence still renders as readable text",
+     /img src=x/.test(txt("lg-Main") || ""), txt("lg-Main"));
+
+  // ---- 5. status line: one gate off ---------------------------------------------------------
+  send(baseSnapshot({ settings: { SwapTitanLoadouts: false } }));
+  const one = txt("lg-TitanLoadout") || "";
+  ok("one gate off -> Not armed", /Not armed/i.test(one), one);
+  ok("one gate off names that gate", /Swap gear for titans/i.test(one), one);
+  ok("one gate off uses singular 'is'", /\bis\b/.test(one), one);
+
+  // ---- 6. status line: two gates off --------------------------------------------------------
+  send(baseSnapshot({ settings: { ManageTitans: false, SwapTitanLoadouts: false } }));
+  const two = txt("lg-TitanLoadout") || "";
+  ok("two gates off names both", /Titan automation/i.test(two) && /Swap gear for titans/i.test(two), two);
+  ok("two gates off uses plural 'are'", /\bare\b/.test(two), two);
+
+  // ---- 7. the non-boolean preconditions -----------------------------------------------------
+  send(baseSnapshot({ titans: { targets: [false, false, false] } }));
+  ok("no titans ticked is reported", /no titans are ticked/i.test(txt("lg-TitanLoadout") || ""), txt("lg-TitanLoadout"));
+
+  send(baseSnapshot({ settings: { GearHuntZone: -1 } }));
+  ok("gear hunt with no stage is reported",
+     /no hunt stage/i.test(txt("lg-LootHunterAccessories") || ""), txt("lg-LootHunterAccessories"));
+
+  send(baseSnapshot({ settings: { CookingObjective: "" }, loadouts: { CookingLoadout: [] } }));
+  ok("cooking with neither objective nor list is reported",
+     /Nothing configured/i.test(txt("lg-CookingLoadout") || ""), txt("lg-CookingLoadout"));
+
+  // objective-only cooking must NOT be reported as unconfigured (this is the RC2 fix's UI half)
+  send(baseSnapshot({ settings: { CookingObjective: "Cooking" } }));
+  ok("cooking with an objective and no list is armed",
+     /Armed/i.test(txt("lg-CookingLoadout") || ""), txt("lg-CookingLoadout"));
+
+  // ---- 8. duplicate-bound controls move together --------------------------------------------
+  // GearHuntEnabled is on BOTH the Adventure view and the Loot Hunter block; ManageGear is on
+  // Settings, Main and Loot Hunter. Grouping in renderSettings is what keeps them in step.
+  send(baseSnapshot());
+  const gearHunts = window.document.querySelectorAll('[data-setting="GearHuntEnabled"]');
+  ok("GearHuntEnabled is bound more than once", gearHunts.length > 1, String(gearHunts.length));
+  ok("all GearHuntEnabled copies are checked",
+     Array.from(gearHunts).every(e => e.checked), Array.from(gearHunts).map(e => e.checked).join(","));
+
+  send(baseSnapshot({ settings: { GearHuntEnabled: false } }));
+  ok("all GearHuntEnabled copies cleared together",
+     Array.from(window.document.querySelectorAll('[data-setting="GearHuntEnabled"]')).every(e => !e.checked));
+
+  // clicking one copy moves every copy immediately (optimistic), and posts exactly one setSetting
+  send(baseSnapshot());
+  SENT.length = 0;
+  const first = window.document.querySelectorAll('[data-setting="ManageGear"]')[0];
+  first.checked = false;
+  first.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const setSettingMsgs = SENT.filter(m => m.cmd === "setSetting" && m.key === "ManageGear");
+  ok("one click posts exactly one setSetting", setSettingMsgs.length === 1, JSON.stringify(SENT));
+  ok("every ManageGear copy moved on click",
+     Array.from(window.document.querySelectorAll('[data-setting="ManageGear"]')).every(e => !e.checked));
+
+  // ---- 9. objective dropdowns ---------------------------------------------------------------
+  const titanSel = $("set-TitanObjective");
+  ok("titan objective select exists", !!titanSel);
+  ok("objective options were built", titanSel && titanSel.options.length === GEAR_OBJECTIVES.length + 1,
+     titanSel && String(titanSel.options.length));
+  ok("mode selects lead with 'Manual — use item list'",
+     titanSel && /Manual/.test(titanSel.options[0].textContent), titanSel && titanSel.options[0].textContent);
+  const mainSel = $("set-GearObjective");
+  ok("main objective select exists", !!mainSel);
+  ok("Main leads with 'Follow the profile timeline'",
+     mainSel && /Follow the profile timeline/.test(mainSel.options[0].textContent),
+     mainSel && mainSel.options[0].textContent);
+
+  // ---- 10. Main has no id list; the others do ------------------------------------------------
+  ok("Main renders no id list", !$("Main"));
+  ok("Main offers the existing refreshGear action",
+     !!window.document.querySelector('#view-loadouts [data-action="refreshGear"]'));
+  ok("Titan still renders its id list", !!$("TitanLoadout"));
+  ok("Titan offers Fill from objective",
+     !!window.document.querySelector('[data-fillobj="TitanLoadout"]'));
+  // A fill button on a mode with no objective select could only ever fail — don't render one.
+  ok("Loot Hunter has NO fill button (hybrid set, not an objective)",
+     !window.document.querySelector('[data-fillobj="LootHunterAccessories"]'));
+  ok("Shockwave has NO fill button (no objective exists for it)",
+     !window.document.querySelector('[data-fillobj="Shockwave"]'));
+  // Conversely, every mode that HAS an objective select must have a way to use it.
+  MODES.filter(m => m.obj && !m.main).forEach(m => {
+    ok("fill button present for " + m.key, !!window.document.querySelector('[data-fillobj="' + m.key + '"]'));
+  });
+  // Every fill button must resolve to a real objective select, or the click is a dead end.
+  window.document.querySelectorAll("[data-fillobj]").forEach(b => {
+    const k = b.getAttribute("data-fillobj");
+    const m = MODES.filter(x => x.key === k)[0];
+    ok("fill button " + k + " has a matching objective select", !!(m && m.obj && $("set-" + m.obj)));
+  });
+
+  // ---- 11. selecting an objective auto-fills, debounced --------------------------------------
+  SENT.length = 0;
+  titanSel.value = "Drop Chance";
+  titanSel._preVal = "";
+  titanSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const immediate = SENT.filter(m => m.cmd === "applyObjective");
+  ok("applyObjective is debounced, not immediate", immediate.length === 0, JSON.stringify(SENT));
+  ok("setSetting for the objective is immediate",
+     SENT.some(m => m.cmd === "setSetting" && m.key === "TitanObjective" && m.value === "Drop Chance"),
+     JSON.stringify(SENT));
+
+  // fire the debounce
+  setTimeout(guard(() => {
+    const fills = SENT.filter(m => m.cmd === "applyObjective");
+    ok("exactly one applyObjective after the debounce", fills.length === 1, JSON.stringify(fills));
+    ok("applyObjective carries the right key + objective",
+       fills[0] && fills[0].key === "TitanLoadout" && fills[0].objective === "Drop Chance",
+       JSON.stringify(fills[0]));
+
+    // clearing the objective must NOT wipe the manual list
+    SENT.length = 0;
+    titanSel.value = "";
+    titanSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    setTimeout(guard(() => {
+      ok("clearing the objective sends no applyObjective",
+         SENT.filter(m => m.cmd === "applyObjective").length === 0, JSON.stringify(SENT));
+
+      // ---- 11b. picking an objective must NEVER destroy a curated list ----------------------
+      // That list is the mode's fallback when the objective is cleared again or the optimizer
+      // returns nothing, and this path has no confirmation and no undo. Auto-fill is a convenience
+      // for an EMPTY list only; replacing a curated one is the explicit button's job.
+      send(baseSnapshot({ loadouts: { QuestLoadout: [10, 25, 188] } }));
+      SENT.length = 0;
+      const questSel = $("set-QuestObjective");
+      questSel.value = "Drop Chance";   // must be one of GEAR_OBJECTIVES, or the <select> silently keeps ""
+      questSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+      setTimeout(guard(() => {
+        ok("auto-fill does NOT overwrite a non-empty loadout",
+           SENT.filter(m => m.cmd === "applyObjective").length === 0, JSON.stringify(SENT));
+        ok("the objective itself is still saved",
+           SENT.some(m => m.cmd === "setSetting" && m.key === "QuestObjective"), JSON.stringify(SENT));
+
+        // ...but the explicit button still replaces it on demand.
+        SENT.length = 0;
+        window.document.querySelector('[data-fillobj="QuestLoadout"]')
+          .dispatchEvent(new window.Event("click", { bubbles: true }));
+        ok("the explicit Fill button still overwrites a curated list",
+           SENT.filter(m => m.cmd === "applyObjective").length === 1, JSON.stringify(SENT));
+        rest();
+      }), 600);
+    }), 600);
+  }), 600);
+
+  function rest() {
+    guard(() => {
+      // ---- 12. the Fill button ---------------------------------------------------------------
+      send(baseSnapshot({ settings: { GoldObjective: "Gold Drops" } }));
+      SENT.length = 0;
+      window.document.querySelector('[data-fillobj="GoldDropLoadout"]')
+        .dispatchEvent(new window.Event("click", { bubbles: true }));
+      const gf = SENT.filter(m => m.cmd === "applyObjective");
+      ok("Fill button posts applyObjective", gf.length === 1, JSON.stringify(SENT));
+      ok("Fill button uses the mode's current objective",
+         gf[0] && gf[0].key === "GoldDropLoadout" && gf[0].objective === "Gold Drops", JSON.stringify(gf[0]));
+
+      // With no objective chosen it must refuse rather than send a blank. Uses Cooking deliberately:
+      // it has had no change event, so no optimistic PENDING entry is holding its <select> against the
+      // snapshot (that hold is correct behaviour and lasts 4s, which would mask this check).
+      send(baseSnapshot({ settings: { CookingObjective: "" } }));
+      SENT.length = 0;
+      ok("the Cooking objective really is empty", $("set-CookingObjective").value === "",
+         $("set-CookingObjective").value);
+      window.document.querySelector('[data-fillobj="CookingLoadout"]')
+        .dispatchEvent(new window.Event("click", { bubbles: true }));
+      ok("Fill with no objective sends nothing",
+         SENT.filter(m => m.cmd === "applyObjective").length === 0, JSON.stringify(SENT));
+
+      // ---- 12b. gear-source chips on the owning system views -----------------------------------
+      // The "it isn't toggling" complaint seen from the other side: on the Titans page, is titan gear
+      // being chosen by the advisor, taken from my own list, or not swapping at all?
+      send(baseSnapshot({
+        settings: { TitanObjective: "Drop Chance", GoldObjective: "", ManageGoldLoadouts: false },
+        loadouts: { GoldDropLoadout: [94, 188] }
+      }));
+      Object.keys(window.gearChipViews).forEach(v => {
+        ok("gear chip host exists on view-" + v, !!$("gearchip-" + v));
+      });
+      const titanChip = $("gearchip-titans").textContent;
+      ok("titan chip reports the advisor objective",
+         /Advisor/.test(titanChip) && /Drop Chance/.test(titanChip), titanChip);
+      ok("titan chip reports it will swap", /Will swap/.test(titanChip), titanChip);
+
+      const goldChip = $("gearchip-gold").textContent;
+      ok("gold chip reports a user list with its size",
+         /Your list/.test(goldChip) && /2 items/.test(goldChip), goldChip);
+      ok("gold chip reports it won't swap when a gate is off",
+         /Won.t swap/.test(goldChip), goldChip);
+
+      // Nothing configured must not claim it will swap, even with every switch on.
+      send(baseSnapshot({ settings: { CookingObjective: "" }, loadouts: { CookingLoadout: [] } }));
+      const cookChip = $("gearchip-cooking").textContent;
+      ok("a mode with no objective and no list says there's nothing to swap to",
+         /Nothing to swap to/.test(cookChip) && !/Will swap/.test(cookChip), cookChip);
+
+      // ---- 12c. the main best set is shown ------------------------------------------------------
+      // The answer to "does `Optimize: n` in the profile show me what it picked?" — it does now.
+      send(baseSnapshot({ gearNow: { bestIds: [94, 188, 301] } }));
+      const mbs = $("mainBestSet");
+      ok("main best set renders one chip per item", mbs.querySelectorAll(".chip").length === 3,
+         String(mbs.querySelectorAll(".chip").length));
+      ok("main best set names items rather than showing bare ids",
+         /Edgy Helmet/.test(mbs.textContent), mbs.textContent);
+      ok("an item already worn is marked as worn",
+         /worn/.test(mbs.textContent), mbs.textContent);
+      ok("an item not yet worn is marked as swapping in",
+         /would swap in/.test(mbs.textContent), mbs.textContent);
+      send(baseSnapshot({ gearNow: { bestIds: [] } }));
+      ok("no best set -> nothing rendered", $("mainBestSet").innerHTML === "");
+
+      // ---- 12d. drag to reorder ------------------------------------------------------------------
+      // Reordering a long priority list one arrow-click at a time is the slow path this replaces.
+      send(baseSnapshot({ loadouts: { TitanLoadout: [94, 188, 301] } }));
+      const listEl = $("TitanLoadout");
+      const rows = () => Array.from(listEl.querySelectorAll(".le-row"));
+      ok("ordered rows are draggable", rows().every(r => r.getAttribute("draggable") === "true"));
+      ok("ordered rows show a grip", rows().every(r => !!r.querySelector(".le-grip")));
+      ok("the arrows are KEPT for keyboard users",
+         rows()[0].querySelectorAll('[data-lmove]').length === 2);
+      // An unordered list must not be draggable at all (order is meaningless there).
+      ok("unordered lists are not draggable",
+         !$("boostBlacklist") || !$("boostBlacklist").querySelector('.le-row[draggable="true"]'));
+
+      // The boost priority list is the one this was asked for — check it directly, not just by
+      // inference from the shared code path.
+      send(baseSnapshot({ boostLists: { priority: [94, 188, 301], blacklist: [] } }));
+      const bp = $("boostPriority");
+      ok("boost priority rows are draggable",
+         bp && bp.querySelectorAll('.le-row[draggable="true"]').length === 3,
+         bp && String(bp.querySelectorAll(".le-row").length));
+      ok("boost priority KEEPS its arrows (drag is pointer-only; this is the keyboard path)",
+         bp && bp.querySelector('[data-lmove="up"]') && bp.querySelector('[data-lmove="down"]'));
+      ok("the grip is decorative, not a control in the a11y tree",
+         bp && bp.querySelector(".le-grip") && bp.querySelector(".le-grip").getAttribute("aria-hidden") === "true");
+
+      // Drag row 0 and drop it below row 2 -> [188, 301, 94]
+      function dragRow(fromIdx, ontoIdx, lowerHalf) {
+        const src = rows()[fromIdx], dst = rows()[ontoIdx];
+        const dt = { data: {}, effectAllowed: "", dropEffect: "",
+                     setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k]; } };
+        const mk = (type, target, clientY) => {
+          const ev = new window.Event(type, { bubbles: true, cancelable: true });
+          ev.dataTransfer = dt;
+          Object.defineProperty(ev, "target", { value: target, enumerable: true });
+          ev.clientY = clientY;
+          return ev;
+        };
+        // jsdom has no layout, so getBoundingClientRect is all zeros: clientY 0 lands in the top half
+        // (before), clientY 1 in the bottom half (after). That is enough to exercise both branches.
+        src.dispatchEvent(mk("dragstart", src, 0));
+        dst.dispatchEvent(mk("dragover", dst, lowerHalf ? 1 : 0));
+        dst.dispatchEvent(mk("drop", dst, lowerHalf ? 1 : 0));
+        window.document.dispatchEvent(mk("dragend", src, 0));
+      }
+
+      // Re-establish the Titan fixture: the boost-priority checks above sent a snapshot whose
+      // TitanLoadout is the empty default, which would leave nothing to drag.
+      send(baseSnapshot({ loadouts: { TitanLoadout: [94, 188, 301] } }));
+      ok("titan list is back to three rows for the drag checks", rows().length === 3, String(rows().length));
+
+      SENT.length = 0;
+      dragRow(0, 2, true);
+      let sent = SENT.filter(m => m.cmd === "setSettingList" && m.key === "TitanLoadout");
+      ok("dropping below the last row moves the item to the end",
+         sent.length === 1 && JSON.stringify(sent[0].values) === JSON.stringify([188, 301, 94]),
+         JSON.stringify(sent.map(x => x.values)));
+
+      // Drag the (new) last row onto the top half of row 0 -> back to [94, 188, 301]
+      SENT.length = 0;
+      dragRow(2, 0, false);
+      sent = SENT.filter(m => m.cmd === "setSettingList");
+      ok("dropping above the first row moves the item to the front",
+         sent.length === 1 && JSON.stringify(sent[0].values) === JSON.stringify([94, 188, 301]),
+         JSON.stringify(sent.map(x => x.values)));
+
+      // Dropping an item back onto itself must not churn a write.
+      SENT.length = 0;
+      dragRow(1, 1, false);
+      ok("a no-op drop sends nothing", SENT.filter(m => m.cmd === "setSettingList").length === 0,
+         JSON.stringify(SENT));
+
+      // The 1 Hz snapshot must not rebuild the list mid-gesture, or the dragged element dies
+      // under the pointer and the drag silently fails.
+      const beforeDrag = listEl.querySelectorAll(".le-row")[0];
+      const srcRow = rows()[0];
+      const dt2 = { data: {}, setData(){}, getData(){ return ""; } };
+      const dsEv = new window.Event("dragstart", { bubbles: true, cancelable: true });
+      dsEv.dataTransfer = dt2;
+      Object.defineProperty(dsEv, "target", { value: srcRow, enumerable: true });
+      srcRow.dispatchEvent(dsEv);
+      send(baseSnapshot({ loadouts: { TitanLoadout: [301, 188, 94] } }));   // contradicting snapshot
+      ok("a snapshot mid-drag does not rebuild the dragged list",
+         listEl.querySelectorAll(".le-row")[0] === beforeDrag);
+      window.document.dispatchEvent(new window.Event("dragend", { bubbles: true }));
+      ok("drag cues are cleared on dragend",
+         listEl.querySelectorAll(".dragging, .drop-before, .drop-after").length === 0);
+
+      // ---- 12e. boost "time to cap" --------------------------------------------------------------
+      // Every number here is computed by the advisor's existing 60s boost pump and was previously
+      // written only to inject.log.
+      send(baseSnapshot({
+        boostLists: { priority: [94, 188, 301], blacklist: [] },
+        boostEta: { total: 1200, perMinute: 10, etaSec: 7200, power: 700, toughness: 400, special: 100,
+                    etaByItem: { "94": 1800, "188": 4200 } }
+      }));
+      const beta = $("boostEta").textContent;
+      ok("eta chip shows a duration", /2h/.test(beta), beta);
+      ok("eta chip states the unit as stat points, never 'boosts'",
+         /stat points/.test(beta) && !/\bboosts to go\b/.test(beta), beta);
+      ok("eta chip shows the measured rate", /per minute/.test(beta), beta);
+
+      const bpRows = Array.from($("boostPriority").querySelectorAll(".le-row"));
+      ok("each boost row carries its own cumulative ETA",
+         /at cap in/.test(bpRows[0].textContent) && /at cap in/.test(bpRows[1].textContent),
+         bpRows.map(r => r.textContent).join(" | "));
+      ok("the second row's ETA is LATER than the first (cumulative, not per-item)",
+         /30m/.test(bpRows[0].textContent) && /1h/.test(bpRows[1].textContent),
+         bpRows.map(r => r.textContent).join(" | "));
+      ok("an item with no remaining need reads 'at cap', not blank",
+         /at cap/.test(bpRows[2].textContent) && !/at cap in/.test(bpRows[2].textContent),
+         bpRows[2].textContent);
+
+      // Rate not yet measurable -> must NOT invent a duration.
+      send(baseSnapshot({
+        boostLists: { priority: [94], blacklist: [] },
+        boostEta: { total: 1200, perMinute: 0, etaSec: -1, power: 0, toughness: 0, special: 0, etaByItem: {} }
+      }));
+      const measuring = $("boostEta").textContent;
+      ok("no rate yet -> says it is measuring", /measuring/.test(measuring), measuring);
+      ok("no rate yet -> shows no fabricated duration", !/\d+h|\d+m\b/.test(measuring.replace(/stat points/,"")), measuring);
+      ok("no rate yet -> rows carry no ETA",
+         !/at cap in/.test($("boostPriority").textContent), $("boostPriority").textContent);
+
+      // Nothing left to do.
+      send(baseSnapshot({ boostEta: { total: 0, perMinute: 12, etaSec: 0, power: 0, toughness: 0, special: 0, etaByItem: {} } }));
+      ok("everything at cap is reported as such", /All at cap/.test($("boostEta").textContent),
+         $("boostEta").textContent);
+
+      // ---- 12g. what is steering the run, on Current stage ---------------------------------------
+      // The segment plan was WinForms timeline chips lost in the 2.0.0 port; since then the page only
+      // said "Farming / idle" and the segment was discoverable only in inject.log.
+      send(baseSnapshot({
+        autoProfile: { on: true, profile: "24hr-EarlyEvil", segment: "NGU MARATHON", phase: "push",
+                       index: 3, runHours: 15.6,
+                       chain: ["TM HOUR", "AT HOUR", "RECOVERY", "NGU MARATHON"] }
+      }));
+      const plan = $("stagePlan");
+      ok("the whole segment chain is shown", plan.querySelectorAll(".chip").length >= 4,
+         String(plan.querySelectorAll(".chip").length));
+      ok("the chain reads in order", /TM HOUR[\s\S]*AT HOUR[\s\S]*RECOVERY[\s\S]*NGU MARATHON/.test(plan.textContent),
+         plan.textContent);
+      ok("the current segment is marked", /NGU MARATHON\s*now/.test(plan.textContent.replace(/\s+/g," ")),
+         plan.textContent);
+      const chipsIn = Array.from(plan.querySelectorAll(".chip"));
+      ok("the current segment is the accented chip",
+         chipsIn[3] && chipsIn[3].className.indexOf("max") >= 0, chipsIn.map(c => c.className).join(" | "));
+      ok("future segments are muted, not accented",
+         chipsIn[0] && chipsIn[0].className.indexOf("max") < 0);
+      ok("the run clock and phase are shown", /push phase/.test(plan.textContent) && /15\.6h/.test(plan.textContent),
+         plan.textContent);
+
+      // A manual profile has no segments — name the profile instead of inventing a plan.
+      send(baseSnapshot({ autoProfile: { on: false, profile: "24hr-EarlyEvil.json" } }));
+      ok("manual profile is named as such", /Manual profile/.test($("stagePlan").textContent),
+         $("stagePlan").textContent);
+      ok("manual profile shows the profile name without the extension",
+         /24hr-EarlyEvil/.test($("stagePlan").textContent) && !/\.json/.test($("stagePlan").textContent),
+         $("stagePlan").textContent);
+      ok("manual profile offers a route to its breakpoints",
+         !!$("stagePlan").querySelector('[data-view="profileEditor"]'));
+      ok("manual profile shows NO segment chain",
+         !/NGU MARATHON|TM HOUR/.test($("stagePlan").textContent), $("stagePlan").textContent);
+
+      // Auto profile that hasn't computed a chain yet must not render an empty strip.
+      send(baseSnapshot({ autoProfile: { on: true, profile: "x", segment: "", phase: "", index: -1, runHours: 0, chain: [] } }));
+      ok("auto profile with no chain yet says so", /working out the plan/.test($("stagePlan").textContent),
+         $("stagePlan").textContent);
+
+      // ---- 12h. the last swap explains itself ----------------------------------------------------
+      // Two of the three outcomes look identical on the paper doll and only one is a problem, so the
+      // readout has to separate them or a correct swap reads as a broken one.
+      send(baseSnapshot({
+        lastSwap: { mode: "Titan", swapped: 15, requested: 15, kept: [], missed: [], agoSec: 12,
+                    power: 1.2e6, toughness: 9.4e5 }
+      }));
+      ok("a clean swap says every slot went on", /Every slot the objective asked for went on/.test($("lastSwapWhy").textContent),
+         $("lastSwapWhy").textContent);
+      ok("the swap chip names the mode and the count",
+         /Titan/.test($("lastSwap").textContent) && /15 of 15/.test($("lastSwap").textContent),
+         $("lastSwap").textContent);
+      ok("the worn Power/Toughness is shown", /P\s/.test($("lastSwap").textContent) && /T\s/.test($("lastSwap").textContent),
+         $("lastSwap").textContent);
+
+      // KEPT slots are correct behaviour and must never read as a failure.
+      send(baseSnapshot({
+        lastSwap: { mode: "Gold", swapped: 6, requested: 6, kept: [94, 188, 301], missed: [], agoSec: 3,
+                    power: 1.1e6, toughness: 9.0e5 }
+      }));
+      const keptWhy = $("lastSwapWhy").textContent;
+      ok("kept slots are explained as correct", /that is correct/.test(keptWhy), keptWhy);
+      ok("kept slots explain where Power/Toughness comes from",
+         /Power and Toughness/.test(keptWhy), keptWhy);
+      ok("kept slots are NOT reported as not fitting",
+         !/did not fit/.test($("lastSwap").textContent), $("lastSwap").textContent);
+
+      // MISSED is the real failure, and must name the items.
+      send(baseSnapshot({
+        lastSwap: { mode: "Titan", swapped: 12, requested: 15, kept: [], missed: [94, 188, 301], agoSec: 5,
+                    power: 1.0e6, toughness: 8.0e5 }
+      }));
+      ok("missed items are flagged", /did not fit/.test($("lastSwap").textContent), $("lastSwap").textContent);
+      ok("missed items are named, not just counted",
+         /Edgy Helmet/.test($("lastSwapWhy").textContent), $("lastSwapWhy").textContent);
+      ok("missed items suggest the usual causes",
+         /unlocked slots/.test($("lastSwapWhy").textContent), $("lastSwapWhy").textContent);
+      ok("item names are not double-escaped",
+         !/&amp;quot;|&amp;lt;/.test($("lastSwapWhy").innerHTML), $("lastSwapWhy").innerHTML.slice(0,120));
+
+      send(baseSnapshot());
+      ok("no swap yet is handled", /No swap yet/.test($("lastSwap").textContent), $("lastSwap").textContent);
+
+      // ---- 12f. the page must not redeclare a shared helper --------------------------------------
+      // A second `function fmtNum(...)` in the same IIFE silently replaces the page-wide formatter for
+      // every existing caller — invisible in review, and invisible to any test that only checks one
+      // view. Guard the whole class of bug at source level.
+      // NOT esc(): the design layer and the live layer are separate IIFEs and each deliberately keeps
+      // its OWN private esc(). Two is correct there. These are all live-layer-only helpers.
+      const src = fs.readFileSync(FILE, "utf8");
+      ["fmtNum", "fmtSec", "writeHtml", "drawList", "applyList", "listSend", "renderSettings"].forEach(fn => {
+        const n = (src.match(new RegExp("function\\s+" + fn + "\\s*\\(", "g")) || []).length;
+        ok("exactly one declaration of " + fn + "()", n === 1, "found " + n);
+      });
+
+      // ---- 13. idempotence: same snapshot twice repaints nothing -------------------------------
+      const snap = baseSnapshot();
+      send(snap);
+      const before = $("lg-TitanLoadout").innerHTML;
+      const node = $("lg-TitanLoadout").firstChild;
+      send(snap);
+      ok("repeat snapshot leaves the DOM node identical", $("lg-TitanLoadout").firstChild === node);
+      ok("repeat snapshot leaves the markup identical", $("lg-TitanLoadout").innerHTML === before);
+
+      // ---- 14. a11y + design-system census ------------------------------------------------------
+      const controls = window.document.querySelectorAll("#view-loadouts input, #view-loadouts select, #view-loadouts button");
+      const unnamed = [];
+      controls.forEach(c => {
+        const hasAria = c.getAttribute("aria-label");
+        const wrapped = c.closest("label");
+        const labelled = c.id && window.document.querySelector('label[for="' + c.id + '"]');
+        const text = c.tagName === "BUTTON" && c.textContent.trim();
+        if (!hasAria && !wrapped && !labelled && !text) unnamed.push(c.outerHTML.slice(0, 90));
+      });
+      ok("no unnamed controls on the Loadouts view", unnamed.length === 0, unnamed.join(" | "));
+
+      const raw = fs.readFileSync(FILE, "utf8");
+      ok("no hard-coded hex colour was added in the new blocks",
+         !/id="lg-[^"]*"[^>]*style="[^"]*#[0-9a-f]{3}/i.test(raw));
+      ok("no third label class introduced", !/class="[^"]*\bnewlabel\b/.test(raw));
+
+      // ---- done ---------------------------------------------------------------------------------
+      done();
+    })();
+  }
+}));

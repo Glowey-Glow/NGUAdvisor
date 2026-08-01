@@ -10,6 +10,24 @@ namespace NGUAdvisor.Managers
         private static readonly Character _character = Main.Character;
         private static readonly InventoryController _ic = Main.InventoryController;
 
+        // The last swap, so the companion can explain a result that LOOKS wrong but isn't. Three
+        // distinct outcomes, and conflating them is what makes gear swaps confusing:
+        //   Equipped — went on as asked.
+        //   Kept     — a slot this objective scores nothing for, still holding what it held. BY DESIGN
+        //              (ChangeGear only swaps in); this is the Power/Toughness that survives a
+        //              Gold Drops swap. Not a failure.
+        //   Missed   — asked for and did NOT go on. The only one that is actually a problem.
+        public sealed class SwapOutcome
+        {
+            public string Mode;
+            public int[] Requested = new int[0];
+            public int[] Equipped = new int[0];
+            public int[] Missed = new int[0];
+            public int[] Kept = new int[0];
+            public DateTime At;
+        }
+        public static SwapOutcome LastSwap { get; private set; }
+
         private static int[] _savedLoadout;
         private static int[] _tempLoadout;
         private static int[] _savedDaycare;
@@ -40,9 +58,44 @@ namespace NGUAdvisor.Managers
             var weaponSlot = -5;
             var accSlot = 10000;
 
-            _character.removeMostEnergy();
-            _character.removeMostMagic();
-            _character.removeAllRes3();
+            // UNASSIGN EVERYTHING FIRST — and it has to be removeALL, not removeMOST.
+            //
+            // The game SILENTLY REVERTS an accessory swap when committed resources exceed the new cap.
+            // InventoryController.swapAcc does the swap, recomputes totalCapEnergy/Magic/Res3, and then:
+            //     if (curEnergy - idleEnergy > newCap) { showOverrideTooltip("You need to free up ...
+            //         Idle Energy before swapping these 2 accessories"); swapAccs(num, num2); }
+            // i.e. it swaps BACK and reports it through a tooltip an injected advisor never sees. The
+            // swap returns void, so nothing downstream can tell it failed. Symptom (user-reported
+            // 2026-07-31): a titan swap equips the weapons and armour but only some of the accessories,
+            // with no error anywhere in the log.
+            //
+            // removeMostEnergy is not enough because it deliberately omits Basic Training —
+            // allOffenseController/allDefenseController are in removeAllEnergy but NOT in
+            // removeMostEnergy (decomp Character.cs) — so training energy stays COMMITTED across the
+            // swap, keeps curEnergy - idleEnergy above zero, and trips the revert on any accessory that
+            // lowers the energy cap. The same applies to magic and R3.
+            //
+            // This is exactly what the game's own loadout swap does (InventoryController.equipLoadout),
+            // behind its `unassignWhenSwapping` setting. The advisor takes that branch unconditionally:
+            // a swap that half-applies is worse than a re-allocation, and the next allocation pass is at
+            // most one tick away.
+            // One call covers all three resources: it ends with allOffense/allDefense (Basic Training),
+            // hacksController.removeAllR3() and wishesController.removeAllRes3(), so a separate
+            // removeAllRes3() here would be a pure no-op.
+            _character.removeAllEnergyAndMagic();
+            // Mirror equipLoadout's instaTrain top-up. With instant training on, the game re-seeds 6/6
+            // right after unassigning so training keeps ticking; skipping it would stall instaTrain
+            // until the next allocation pass for no reason.
+            try
+            {
+                if (_character.arbitrary.instaTrain && _character.idleEnergy >= 12)
+                {
+                    _character.idleEnergy -= 12L;
+                    _character.training.attackEnergy[0] += 6L;
+                    _character.training.defenseEnergy[0] += 6L;
+                }
+            }
+            catch { }
 
             try
             {
@@ -144,7 +197,50 @@ namespace NGUAdvisor.Managers
 
             UpdateResources();
 
-            Log("Finished equipping gear");
+            // VERIFY. swapAcc/swapHead/... all return void, and swapAcc can silently revert itself (see
+            // the unassign note above), so "Finished equipping gear" was previously an unconditional
+            // claim that the swap had worked. A partial swap could not appear in the log even in
+            // principle — which is why a user-reported one had nothing to show for it.
+            //
+            // Compared as SETS: ChangeGear's own early-out uses the same distinct-sorted comparison, the
+            // caller's list can legitimately contain ids that do not fit (more accessories than unlocked
+            // slots), and slot ORDER is not something this method promises.
+            try
+            {
+                var want = gearIds.Where(x => x > 0).Distinct().ToArray();
+                var wornNow = GetCurrentGear().Where(x => x > 0).Distinct().ToArray();
+                var got = new HashSet<int>(wornNow);
+                var asked = new HashSet<int>(want);
+                var missed = want.Where(x => !got.Contains(x)).ToArray();
+                // KEPT is not a failure and must never be reported as one. ChangeGear only ever swaps
+                // IN — no path clears a slot the loadout does not name — so anything worn that the
+                // loadout did not ask for is a slot this objective had no opinion about, still holding
+                // what it held before. That is the hybrid that keeps Power/Toughness on during a
+                // Gold Drops swap and is why high-zone gold snipes survive. It LOOKS like a half-done
+                // swap, which is exactly why it is worth naming rather than leaving the user to guess.
+                var kept = wornNow.Where(x => !asked.Contains(x)).ToArray();
+
+                LastSwap = new SwapOutcome
+                {
+                    Mode = LockManager.GetLockTypeName(),
+                    Requested = want,
+                    Equipped = wornNow,
+                    Missed = missed,
+                    Kept = kept,
+                    At = DateTime.UtcNow
+                };
+
+                if (missed.Length == 0)
+                    Log(kept.Length == 0
+                        ? "Finished equipping gear"
+                        : $"Finished equipping gear — {want.Length} swapped in, {kept.Length} slot(s) kept " +
+                          "what they had (this objective scores nothing for them)");
+                else
+                    Log($"Finished equipping gear — {missed.Length} of {want.Length} did NOT go on: " +
+                        $"{string.Join(", ", missed.Select(x => x.ToString()).ToArray())}. " +
+                        "Usual causes: more accessories than unlocked slots, or the game refused the swap.");
+            }
+            catch { Log("Finished equipping gear"); }
         }
 
         public static void FillDaycare()

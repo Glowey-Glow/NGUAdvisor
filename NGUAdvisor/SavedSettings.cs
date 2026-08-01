@@ -153,6 +153,15 @@ namespace NGUAdvisor
         [SerializeField] private bool _yggdrasilObjectiveRespawn;
         [SerializeField] private string _cookingObjective;
         [SerializeField] private bool _cookingObjectiveRespawn;
+        // The MAIN (idle) gear objective — the user's standing pick, edited under Loadouts › Main.
+        // "" = follow the profile's gear timeline / the auto profile's segment, exactly as before.
+        // It is consulted LAST (see GearObjectiveResolver), so it can only fill a hole, never override.
+        [SerializeField] private string _gearObjective;
+        [SerializeField] private bool _gearObjectiveRespawn;
+        // Inverted (default false = trigger ENABLED), same reason as _companionLaunchDisabled above:
+        // JsonUtility.FromJson does not run field initializers, so an ABSENT bool loads as false and
+        // every existing settings.json must come out with this ON.
+        [SerializeField] private bool _gearDropTriggerDisabled;
         [SerializeField] private bool _manageConsumables;
         [SerializeField] private bool _autoBuyConsumables;
         [SerializeField] private bool _consumeIfAlreadyRunning;
@@ -503,6 +512,10 @@ namespace NGUAdvisor
             _yggdrasilObjectiveRespawn = other?.YggdrasilObjectiveRespawn ?? false;
             _cookingObjective = other?.CookingObjective ?? "";
             _cookingObjectiveRespawn = other?.CookingObjectiveRespawn ?? false;
+            _gearObjective = other?.GearObjective ?? "";
+            _gearObjectiveRespawn = other?.GearObjectiveRespawn ?? false;
+            // Default ON for everyone, including settings.json files written before this field existed.
+            _gearDropTriggerDisabled = !(other?.AdvisorGearOnDrop ?? true);
 
             _poolMajorQuests = other?.PoolMajorQuests ?? false;
             _questHoldForGear = other?.QuestHoldForGear ?? false;
@@ -2032,6 +2045,33 @@ namespace NGUAdvisor
         {
             get => _cookingObjective ?? "";
             set { var v = value ?? ""; if (v == (_cookingObjective ?? "")) return; _cookingObjective = v; SaveSettings(); }
+        }
+
+        // Main/idle gear objective — the standing pick. "" = follow the profile timeline / segment.
+        public string GearObjective
+        {
+            get => _gearObjective ?? "";
+            set { var v = value ?? ""; if (v == (_gearObjective ?? "")) return; _gearObjective = v; SaveSettings(); }
+        }
+
+        public bool GearObjectiveRespawn
+        {
+            get => _gearObjectiveRespawn;
+            set { if (value == _gearObjectiveRespawn) return; _gearObjectiveRespawn = value; SaveSettings(); }
+        }
+
+        // Re-check gear as soon as a drop/merge changes what you own, instead of waiting out the 120s
+        // window. A SPEED-UP, never a gate: with it off the behaviour is exactly what it was, and it
+        // can never make gear stop moving. Still fully subject to ManageGear + AdvisorGearRefresh.
+        public bool AdvisorGearOnDrop
+        {
+            get => !_gearDropTriggerDisabled;
+            set
+            {
+                if (value == !_gearDropTriggerDisabled) return;
+                _gearDropTriggerDisabled = !value;
+                SaveSettings();
+            }
         }
 
         // --- Advisor auto-apply opt-ins (Phase B). When on, the advisor's goal-aware set/OS choice

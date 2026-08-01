@@ -320,12 +320,39 @@ namespace NGUAdvisor.Managers
             _ic.changePage(curPage);
         }
 
+        // ---- Boost progress, published for the companion -------------------------------------------
+        // All of this was already computed here every 60s and written only to inject.log ("ETA: N
+        // minutes."). Capturing it costs nothing and lets the Boosts page answer the question the log
+        // was already answering: how long until the things I'm boosting are maxed?
+        //
+        // PerItem is keyed by gear id and holds the boosts THAT item still needs. Because GetBoostSlots
+        // returns the priority list first, a running total down that list is a per-item ETA — which is
+        // what makes reordering the list meaningful rather than a guess.
+        public static BoostsNeeded LastNeeded { get; private set; }
+        public static float LastBoostsPerMinute { get; private set; }
+        public static Dictionary<int, float> LastPerItem { get; private set; }
+        public static int[] LastBoostOrder { get; private set; }
+        public static DateTime LastBoostSampleAt { get; private set; } = DateTime.MinValue;
+
         public static void ShowBoostProgress(ih[] boostSlots)
         {
             var needed = new BoostsNeeded();
 
+            // Per-item, in the order the boosts are actually applied (priority list first).
+            var perItem = new Dictionary<int, float>();
+            var order = new List<int>();
             foreach (var item in boostSlots)
-                needed += item.equipment.GetNeededBoosts();
+            {
+                var n = item.equipment.GetNeededBoosts();
+                needed += n;
+                // Duplicate ids collapse: the same gear id can only occupy one boost target.
+                if (!perItem.ContainsKey(item.id)) { perItem[item.id] = n.Total(); order.Add(item.id); }
+            }
+            LastNeeded = needed;
+            LastPerItem = perItem;
+            LastBoostOrder = order.ToArray();
+            LastBoostsPerMinute = _invBoostAvg.Avg();
+            LastBoostSampleAt = DateTime.UtcNow;
 
             float current = needed.Total();
 

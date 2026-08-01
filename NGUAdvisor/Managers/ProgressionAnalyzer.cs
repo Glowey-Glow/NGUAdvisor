@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using NGUAdvisor.AllocationProfiles.RebirthStuff;
 
 namespace NGUAdvisor.Managers
@@ -126,6 +127,17 @@ namespace NGUAdvisor.Managers
         private static DateTime _focusTime = DateTime.MinValue;
         private const double FocusMs = 10000;
 
+        // The set the optimizer would equip for whatever objective is in force, and which objective that
+        // was. Captured from the Optimize() call THIS METHOD ALREADY MAKES — the companion can show the
+        // user what "optimal" actually means without a single extra optimizer run. Empty when nothing is
+        // in force, or while the Loot Hunter hybrid owns the gear (it has no single objective to score).
+        //
+        // This is the only place the answer exists at all: a profile gear breakpoint computes its ids
+        // live in PerformSwap, equips them and discards them — it writes neither the profile nor any
+        // loadout list — so before this there was no way to see the picks short of the F10 dump.
+        public static int[] BestGearIds { get; private set; } = new int[0];
+        public static string BestGearFor { get; private set; } = "";
+
         private static string GetOptimalFocus(int chapter)
         {
             if ((DateTime.UtcNow - _focusTime).TotalMilliseconds < FocusMs) return _focus;
@@ -143,18 +155,27 @@ namespace NGUAdvisor.Managers
                 // false, the old default here) reported that trade as a phantom "+N%" that the equip /
                 // Re-optimize-now path correctly calls "already optimal" (the persistent +11% NGUs). And
                 // when no gear objective is active, the advisor isn't managing gear — advertise no gap.
+                // Through the SHARED resolver, not GearBreakpoints directly: the profile timeline is only
+                // one of the sources (challenge rotation, gear hunt, auto-profile segment and the user's
+                // standing pick are the others). Reading the timeline alone would advertise "no gap" for
+                // every user whose objective comes from anywhere else — including anyone who set a pin.
                 string objName = null; bool forceRespawn = false;
                 try
                 {
-                    objName = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
-                    forceRespawn = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn;
+                    var resolved = GearObjectiveApply.Current();
+                    objName = resolved.Name;
+                    forceRespawn = resolved.ForceRespawn;
                 }
                 catch { }
-                if (string.IsNullOrEmpty(objName)) { _focus = ""; return _focus; }
+                if (string.IsNullOrEmpty(objName)) { _focus = ""; BestGearIds = new int[0]; BestGearFor = ""; return _focus; }
                 var obj = GearOptimizer.FindObjective(objName);
-                if (obj == null) { _focus = ""; return _focus; }
+                if (obj == null) { _focus = ""; BestGearIds = new int[0]; BestGearFor = ""; return _focus; }
                 double cur = GearOptimizer.CurrentScore(obj);
-                double opt = GearOptimizer.Optimize(obj, forceRespawn).Score;
+                var best = GearOptimizer.Optimize(obj, forceRespawn);
+                double opt = best.Score;
+                // Free: this Optimize already ran, and its picks were being thrown away.
+                BestGearIds = best.AllIds().Where(x => x > 0).Distinct().ToArray();
+                BestGearFor = obj.Name;
                 if (cur > 0 && opt > cur)
                 {
                     double pct = (opt / cur - 1.0) * 100.0;
