@@ -14,7 +14,13 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         protected override bool PerformSwap(Breakpoint bp)
         {
-            var temp = bp.priorities.Where(x => x.IsValid()).ToList();
+            // NULL FILTER (same defect as R3Breakpoints, same shared cause): ParseBreakpointArray ends
+            // in `yield return null` for any token it does not recognise, and the profile constructor
+            // above does not strip those (ChallengeOverlay's own parser does — that asymmetry is the
+            // bug). Without this, ONE typo'd or unsupported token in an Energy list NREs the lane on
+            // every tick BEFORE RemoveEnergy(), so nothing is ever reallocated; CustomAllocation.RunStep
+            // swallows it and throttles the log to one line per ten minutes.
+            var temp = bp.priorities.Where(x => x != null && x.IsValid()).ToList();
             // Challenge overlay: narrate dead-system filtering; inject fallback if the list is all-dead.
             temp = Managers.ChallengeOverlay.TransformPriorities(bp.priorities, temp, ResourceType.Energy);
             if (temp.Count == 0)

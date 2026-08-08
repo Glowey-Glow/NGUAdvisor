@@ -14,7 +14,10 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         protected override bool PerformSwap(Breakpoint bp)
         {
-            var temp = bp.priorities.Where(x => x.IsValid()).ToList();
+            // NULL FILTER: see EnergyBreakpoints.PerformSwap — same parser, same missing strip. One
+            // unrecognised token in a Magic list NREs the lane on every tick before RemoveMagic(), so
+            // magic is never reallocated and the failure is throttled to one log line per ten minutes.
+            var temp = bp.priorities.Where(x => x != null && x.IsValid()).ToList();
             // Challenge overlay: narrate dead-system filtering; inject fallback if the list is all-dead.
             temp = Managers.ChallengeOverlay.TransformPriorities(bp.priorities, temp, ResourceType.Magic);
             if (temp.Count == 0)
