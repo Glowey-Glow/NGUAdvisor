@@ -3,31 +3,32 @@
 NGU Advisor is an automation platform and advisor for the Steam version of NGU Idle. An injected DLL runs
 the automation in-game; a separate **companion window** is the configuration surface and live dashboard.
 
-**Version 2.2.0** — the Loadouts release.
+**Version 2.3.0** — the Allocation Safety release.
 
-### New in 2.2.0
+### New in 2.3.0
 
-Gear loadouts were configurable but not obviously *armed* — you could pick an objective, watch it save,
-and never see a swap. Four separate defects were swallowing them silently, and all four are fixed. What
-changed for you day to day:
+A single unusable entry in a profile's priority list used to stop that resource being allocated at all,
+for the rest of the run, with nothing in the log to say so. What changed for you day to day:
 
-- **Every loadout now shows what arms it**, inline, and names the switch that is off when nothing is
-  happening. See [Gear › Loadouts](#loadouts).
-- **Fill from objective** writes the optimiser's best set into a loadout — no more hunting for item IDs.
-- **A Main / idle gear objective** with the picks it would equip, so `Optimize:` in a profile timeline is
-  no longer invisible.
-- **Drag to reorder** every ordered list, including digger and beard breakpoints, which are now named
-  slots instead of a comma-separated field.
-- **Time-to-cap on priority boosts**, per item, and a chip naming the one being boosted right now.
-- **The auto profile's segment plan is back on Overview**, and **poop advice is back on the orchard** —
-  both were lost in the 2.0.0 rewrite.
+- **A typo in a priority list no longer costs you the resource.** An entry the advisor cannot recognise
+  — `NUG`, `CAPWANDOOS`, or an entry from a newer profile than your build — is now skipped, and the rest
+  of the list allocates normally.
+- **Energy and Magic** could previously be pulled out of every system each tick and left idle (with
+  **Manage Wishes** on), or frozen at whatever split was in place when the profile loaded (with it off)
+  — so later breakpoints in a timeline never took effect. Fixed.
+- **Hacks** could stop levelling permanently from the same cause, plus a second one: an unreadable hack
+  number emptied all sixteen hacks every pass and refilled none. Both fixed.
+- **The shipped files report the version you downloaded.** `NGUAdvisor.dll` and `Advisor Launcher.exe`
+  previously read 1.1.0.0 and 1.0.0.0 in File Properties whatever the release.
 
-Full detail in [CHANGELOG.md](CHANGELOG.md).
+A profile with no bad entries behaves exactly as before. Settings and profiles carry over.
+
+Full detail in [CHANGELOG.md](CHANGELOG.md), including the 2.2.0 Loadouts release.
 
 # Install & update
 
 1. Download the latest release from the [releases page](https://github.com/Glowey-Glow/NGUAdvisor/releases)
-   — grab the zip named for the version (`NGUAdvisor_2.2.0.zip`), **not** the source archive.
+   — grab the zip named for the version (`NGUAdvisor_2.3.0.zip`), **not** the source archive.
 2. Extract it anywhere.
 3. With **NGU Idle open**, run **`Advisor Launcher.exe`** (or the `Run NGU Advisor.bat` fallback).
 

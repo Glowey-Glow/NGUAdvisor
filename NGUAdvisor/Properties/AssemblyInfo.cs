@@ -41,11 +41,12 @@ using System.Runtime.InteropServices;
 // versions apart — the zip, the tag, the inject.log header, README and CHANGELOG all said 2.2.0 while
 // the DLL said 1.1.0.0.
 //
-// The '*' stays. It is live, not boilerplate: it expands to 2.2.<days since 2000-01-01>.<seconds since
-// midnight / 2> and it is the whole reason NGUAdvisor.csproj sets Deterministic=false. Keeping it is
+// The '*' stays. It is live, not boilerplate: it expands to <major>.<minor>.<days since 2000-01-01>.
+// <seconds since midnight / 2> and it is the whole reason NGUAdvisor.csproj sets Deterministic=false.
+// Keeping it is
 // free because nothing binds this assembly by version — it is unsigned (PublicKeyToken=null) and is
 // reached only by smi injection and Assembly.Load(byte[]) + reflection, never by assembly identity.
 // So AssemblyVersion agrees on major.minor; AssemblyFileVersion, the informational one a player reads,
 // agrees exactly.
-[assembly: AssemblyVersion("2.2.*")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.3.*")]
+[assembly: AssemblyFileVersion("2.3.0.0")]

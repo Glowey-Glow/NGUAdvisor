@@ -2,6 +2,38 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [2.3.0] - 2026-08-07 — Allocation safety
+
+One unusable entry in a profile's priority list used to stop that resource being allocated at all —
+for the rest of the run, with nothing in the log to say so. All three resource lanes were affected.
+Settings and profiles carry over — extract over your old copy.
+
+### Fixed
+
+- **One bad priority stopped a whole resource.** A priority the advisor cannot recognise — a typo
+  (`NUG`, `CAPWANDOOS`), or a newer profile's entry on an older build — was left in the list as an
+  empty slot, and reading it faulted the lane every tick. The failure was caught and throttled to one
+  log line per ten minutes, so nothing surfaced. What it cost, per resource:
+  - **Energy and Magic.** If **Manage Wishes** is on, the wish step clears energy and magic out of
+    every system *before* the allocation step runs — and the allocation step was the thing faulting,
+    so nothing went back. Every tick, energy and magic were pulled out of Wandoos, augments, the time
+    machine, advanced training, the NGUs and blood magic, and left idle. With Manage Wishes off it
+    froze instead: whatever split was in place when the profile loaded stayed there forever, so no
+    later breakpoint in the timeline ever took effect, and after a rebirth the whole pool sat idle for
+    the entire run.
+  - **R3.** Hacks stopped levelling permanently. The same list also had a second failure: a priority
+    with an unreadable hack number (`HACK-`, `HACK-x`) looked valid, so every pass emptied all sixteen
+    hacks and refilled none.
+
+  Unusable entries are now skipped and the rest of the list allocates normally. A profile with no bad
+  entries behaves exactly as before.
+
+### Changed
+
+- **The shipped files now report the version you downloaded.** `NGUAdvisor.dll` reported 1.1.0.0 and
+  `Advisor Launcher.exe` reported 1.0.0.0 in File Properties, regardless of the release. Cosmetic —
+  nothing in the advisor read those numbers — but they now track the release.
+
 ## [2.2.0] - 2026-07-31 — Loadouts
 
 Gear loadouts were configurable but not obviously *armed*: you could pick an objective, watch it save,
