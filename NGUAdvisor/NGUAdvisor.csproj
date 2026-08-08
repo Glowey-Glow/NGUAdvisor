@@ -24,7 +24,7 @@
     <AssemblyName>NGUAdvisor.r$([System.DateTime]::Now.ToString(yyMMddHHmmss))</AssemblyName>
     <!-- Properties/AssemblyInfo.cs provides the assembly attributes -->
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <!-- AssemblyVersion("1.0.*") wildcard requires non-deterministic builds -->
+    <!-- the AssemblyVersion("x.y.*") wildcard in Properties/AssemblyInfo.cs requires non-deterministic builds -->
     <Deterministic>false</Deterministic>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <!-- Keep the stale committed copy of the game assembly and old release zip out of the build -->
