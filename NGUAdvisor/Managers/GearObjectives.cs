@@ -84,6 +84,13 @@ namespace NGUAdvisor.Managers
             new Objective("NGUs", new[]{ Stat.EnergyCap, Stat.EnergyPower, Stat.MagicCap, Stat.MagicPower, Stat.NGUSpeed },
                 new[]{ 0.5, 0.5, 0.5, 0.5, 1.0 }),
             new Objective("Hacks", new[]{ Stat.Res3Cap, Stat.Res3Power, Stat.HackSpeed }),
+            // The other half of a hack day. Res3 BARS is flow into curRes3; hacks spend the STOCK, so bars
+            // are what matters while the bar is still filling and worth nothing once it is full — which is
+            // why the shipped HackDay profile wears one set for its first 90 minutes and another after.
+            // Cap rides along because dropping it mid-fill would clamp curRes3 down and destroy the excess.
+            // Res3Bars had no objective consuming it at all before this, despite being mapped from
+            // specTypes 28 and 48.
+            new Objective("Resource 3 Bars", new[]{ Stat.Res3Bars, Stat.Res3Cap }),
             new Objective("Wishes", new[]{ Stat.EnergyCap, Stat.EnergyPower, Stat.MagicCap, Stat.MagicPower, Stat.Res3Cap, Stat.Res3Power, Stat.WishSpeed },
                 new[]{ 0.17, 0.17, 0.17, 0.17, 0.17, 0.17, 1.0 }),
             new Objective("Energy Time Machine", new[]{ Stat.EnergyCap, Stat.EnergyPower }),

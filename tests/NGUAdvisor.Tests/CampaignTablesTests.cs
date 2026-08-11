@@ -36,7 +36,15 @@ namespace NGUAdvisor.Tests
         }
 
         // The shipped sample tree. This is the SOURCE of what the readme tells the player to copy into the
-        // profiles dir (and what NGU\sampleprofiles\ is a deployed copy of), so it is the right thing to pin.
+        // profiles dir, and what package-release.sh:42 zips into a release, so it is the right thing to pin.
+        //
+        // This comment used to say NGU\sampleprofiles\ "is a deployed copy of" it. That described a deploy
+        // that did not exist: SampleProfiles appears in no .csproj, and the copy was a human with a mouse
+        // who last made it 2026-07-02 (audit/42 §5). Measured a month later it was 30 files stale, missing
+        // one, and still holding nine the repo had deleted -- including the cblock4.json that CampaignTables
+        // names as broken. It is a real mirror NOW: build\deploy.ps1 runs build\deploy-sampleprofiles.ps1 as
+        // its last step, and SampleProfileMirrorTests covers that script. It remains the OPERATOR'S runtime
+        // tree, not an input to anything here, and no test in this project reads it.
         private static string SampleRoot() => Path.Combine(RepoRoot(), "NGUAdvisor", "SampleProfiles");
 
         // The EMBEDDED set. Everything here is compiled into the DLL by the csproj glob and written flat into

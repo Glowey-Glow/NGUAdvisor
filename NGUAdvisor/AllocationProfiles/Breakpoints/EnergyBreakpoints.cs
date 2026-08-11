@@ -14,17 +14,27 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         protected override bool PerformSwap(Breakpoint bp)
         {
-            // NULL FILTER (same defect as R3Breakpoints, same shared cause): ParseBreakpointArray ends
-            // in `yield return null` for any token it does not recognise, and the profile constructor
-            // above does not strip those (ChallengeOverlay's own parser does — that asymmetry is the
-            // bug). Without this, ONE typo'd or unsupported token in an Energy list NREs the lane on
-            // every tick BEFORE RemoveEnergy(), so nothing is ever reallocated; CustomAllocation.RunStep
-            // swallows it and throttles the log to one line per ten minutes.
+            // KILL SWITCH (SavedSettings.ConstraintAllocator, default ON): the four-pass constraint
+            // layer is the allocator — ConstraintLayerBridge builds fresh per-lane verdicts, composes
+            // the plan and fills through each lane's own Allocate(). Flag OFF runs the ORIGINAL
+            // prioCount share loop below, byte-unchanged (decision-G1-D3-V9 put it on REPLACE;
+            // removing it is a later job, not this commit's).
+            if (Managers.ConstraintLayerBridge.NewPathEnabled)
+                return Managers.ConstraintLayerBridge.PerformSwap(bp.priorities, ResourceType.Energy);
+
+            // NULL FILTER: ParseBreakpointArray ends in `yield return null` for any token it does not
+            // recognise, and the profile constructor above does not strip those (ChallengeOverlay's own
+            // parser does — that asymmetry is the bug). Without this, ONE typo'd or unsupported token in a
+            // profile NREs the whole lane on every tick, and CustomAllocation.RunStep swallows it and
+            // throttles the log to one line per ten minutes — i.e. silent, total loss of the resource.
             var temp = bp.priorities.Where(x => x != null && x.IsValid()).ToList();
             // Challenge overlay: narrate dead-system filtering; inject fallback if the list is all-dead.
             temp = Managers.ChallengeOverlay.TransformPriorities(bp.priorities, temp, ResourceType.Energy);
             if (temp.Count == 0)
                 return false;
+
+            var dbg = AllocDiagnostic.Begin(ResourceType.Energy);
+            long curEnergy = _character.curEnergy;
 
             var shouldRetry = true;
             while (shouldRetry)
@@ -32,13 +42,17 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 var successList = new List<ResourceBreakpoint>();
                 shouldRetry = false;
                 var prioCount = temp.Count(x => !x.IsCap);
+                if (dbg != null) dbg.Pass(prioCount);
 
                 RemoveEnergy(temp.Exists(x => x is BasicTrainingBP));
 
                 foreach (var prio in temp)
                 {
                     prio.UpdateMaxAllocation(prioCount);
-                    if (prio.Allocate())
+                    long before = _character.idleEnergy;
+                    var ok = prio.Allocate();
+                    if (dbg != null) dbg.Lane(prio, before - _character.idleEnergy);
+                    if (ok)
                         successList.Add(prio);
                     else
                         shouldRetry = true;
@@ -49,6 +63,8 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 temp = successList;
                 shouldRetry &= temp.Count > 0;
             }
+
+            if (dbg != null) dbg.Emit(curEnergy, _character.idleEnergy);
 
             _character.NGUController.refreshMenu();
             _character.wandoos98Controller.refreshMenu();

@@ -36,8 +36,9 @@
       },
       {
         "Time": { "h": 26 },
-        "Priorities": [ "CAPWAN:10", "BR:10", "CAPNGU-1:50", "WISH-0:5", "WISH-1:5", "WISH-2:6", "WISH-3:6", "ALLNGU" ],
-        "Note": "Return to normal allocation after R3 pots wear off, swap profiles when able"
+        "Priorities": [ "CAPWAN:10", "BR:10", "CAPNGU-1:50", "ALLNGU" ],
+        "Note": "Return to normal allocation after R3 pots wear off, swap profiles when able",
+        "Note2": "WISH-0:5..WISH-3:6 used to be listed here. There is no WISH token: the parser's tag set has 14 stems and WISH is not one of them, so all four fell out as nulls and were filtered before anything counted them. Wishes are funded by the Wishes steps in DoAllocations (Manage Wishes), which run before AND after this magic swap and already take the whole idle pool for the four wish slots - a token would be redundant even if one existed."
       }
     ],
     "R3": [

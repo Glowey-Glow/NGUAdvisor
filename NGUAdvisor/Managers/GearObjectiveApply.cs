@@ -21,6 +21,10 @@ namespace NGUAdvisor.Managers
             catch { }
 
             try { i.HuntActive = GearHunter.Active; } catch { }
+            // The advisor's own drop farm — the same demand that moves the DC digger (FarmVenue).
+            // A plain read: the flag is written by the zone pass on its 10-minute throttle, so it is
+            // already the slow-moving side of the pair while this runs every second.
+            try { i.DropFarmActive = FarmVenue.DropFarmActive; } catch { }
 
             // ChallengeOverlay publishes ONE field for two different things — the challenge push/growth
             // rotation and the auto profile's per-segment gear — so it also publishes which one it is,

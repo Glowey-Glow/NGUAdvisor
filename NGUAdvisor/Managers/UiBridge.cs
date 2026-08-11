@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Security.AccessControl;
@@ -231,6 +232,7 @@ namespace NGUAdvisor.Managers
             Binding.Int ("CombatMode",          s => s.CombatMode,          (s, v) => s.CombatMode = v, 0, 4),
             Binding.Bool("AdvisorFarmGear",     s => s.AdvisorFarmGear,     (s, v) => s.AdvisorFarmGear = v),
             Binding.Bool("AdvisorFarmBoost",    s => s.AdvisorFarmBoost,    (s, v) => s.AdvisorFarmBoost = v),
+            Binding.Bool("AdvisorFarmRares",    s => s.AdvisorFarmRares,    (s, v) => s.AdvisorFarmRares = v),
             Binding.Bool("GearHuntEnabled",     s => s.GearHuntEnabled,     (s, v) => s.GearHuntEnabled = v),
             Binding.Bool("AdventureTargetITOPOD", s => s.AdventureTargetITOPOD, (s, v) => s.AdventureTargetITOPOD = v),
             Binding.Bool("ITOPODAutoPush",      s => s.ITOPODAutoPush,      (s, v) => s.ITOPODAutoPush = v),
@@ -1051,6 +1053,210 @@ namespace NGUAdvisor.Managers
 
         // ------------------------------------------------------------- snapshot builder (MAIN THREAD)
 
+        // ── BUILD IDENTITY ────────────────────────────────────────────────────────────────────────
+        // Cached: the answers cannot change while this payload is loaded (a hot reload constructs a
+        // NEW UiBridge from a NEW assembly), and the companion read is a file stat that has no
+        // business running once a second.
+        private static DateTime? _advisorBuilt, _companionBuilt;
+        // The bootstrap answers a DIFFERENT question than the other two — not "was it deployed" but
+        // "is this session running the copy that is on disk". See BuildStamp's bootstrap section.
+        private static DateTime? _bootstrapOnDisk, _bootstrapInjected;
+        private static bool _buildsResolved;
+        // True only when the wwwroot on screen is established to be a copy OTHER than the deployed one
+        // (audit/42 §3.2). Unknown stays false — the same rule the stale gate uses.
+        private static bool _companionDevCopy;
+
+        // The advisor's own build time, from the stamped assembly identity NGUAdvisor.csproj bakes in
+        // (AssemblyName = "NGUAdvisor.r" + yyMMddHHmmss) — already there for hot reload, reused here.
+        private static DateTime? AdvisorBuiltAt()
+        {
+            ResolveBuilds();
+            return _advisorBuilt;
+        }
+
+        // The companion's build time, taken from the mtime of the index.html it actually serves.
+        // wwwroot is copied with PreserveNewest by DeployCompanion, so the deployed file keeps the
+        // source timestamp — which is exactly the number that reveals a UI that was never shipped.
+        private static DateTime? CompanionBuiltAt()
+        {
+            ResolveBuilds();
+            return _companionBuilt;
+        }
+
+        // Whether that timestamp belongs to a copy other than the deployed one (audit/42 §3.2).
+        private static bool CompanionIsDevCopy()
+        {
+            ResolveBuilds();
+            return _companionDevCopy;
+        }
+
+        // Where the RUNNING companion serves its wwwroot from, or null when that cannot be established.
+        //
+        // ⚠ ADVISOR-SIDE ON PURPOSE, and this keeps it that way. The page must not report its own build
+        // — a constant baked into a stale page would keep claiming to be current, which is the exact
+        // failure the gate exists to catch. So the advisor LOCATES the copy instead of asking for it:
+        // MainForm maps AppContext.BaseDirectory\wwwroot, and AppContext.BaseDirectory is the directory
+        // of the running exe. One process enumeration, once per payload load, off the cached path.
+        //
+        // Every failure mode here answers null (unknown), never a guess: Mono can refuse MainModule
+        // across a bitness boundary, the process can exit mid-enumeration, and neither is evidence
+        // about the UI.
+        private static string RunningCompanionDir()
+        {
+            string dir = null;
+            try
+            {
+                var procs = System.Diagnostics.Process.GetProcessesByName(
+                    Path.GetFileNameWithoutExtension(BuildStamp.CompanionExe));
+                foreach (var p in procs)
+                {
+                    try
+                    {
+                        if (dir == null)
+                        {
+                            var mod = p.MainModule;
+                            var exe = mod == null ? null : mod.FileName;
+                            // Belt and braces: a process NAME match is not a path match, and Mono has
+                            // historically handed back the caller's own module for a foreign process.
+                            if (!string.IsNullOrEmpty(exe) &&
+                                string.Equals(Path.GetFileName(exe), BuildStamp.CompanionExe,
+                                              StringComparison.OrdinalIgnoreCase))
+                                dir = Path.GetDirectoryName(exe);
+                        }
+                    }
+                    catch { }
+                    try { p.Dispose(); } catch { }
+                }
+            }
+            catch { }
+            return dir;
+        }
+
+        private static void ResolveBuilds()
+        {
+            if (_buildsResolved) return;
+            _buildsResolved = true;
+
+            try { _advisorBuilt = BuildStamp.Parse(Assembly.GetExecutingAssembly().GetName().Name); }
+            catch { _advisorBuilt = null; }
+
+            // Same locator the auto-launch uses: <injectorDir>, taken from injector-path.txt. Missing
+            // file or missing path = unknown, which is NOT stale. Hoisted out of the companion read
+            // because the bootstrap lives in that same directory.
+            string injectorDir = null;
+            try
+            {
+                var pathFile = Path.Combine(Main.GetSettingsDir(), "injector-path.txt");
+                if (File.Exists(pathFile))
+                {
+                    var dir = (File.ReadAllText(pathFile) ?? "").Trim();
+                    if (dir.Length > 0) injectorDir = dir;
+                }
+            }
+            catch { injectorDir = null; }
+
+            // The DEPLOYED copy: <injectorDir>\companion\, the folder the auto-launch starts the
+            // companion from. An unknown injectorDir leaves it unknown, which is NOT stale.
+            string deployedDir = null, deployedHtml = null;
+            try
+            {
+                if (injectorDir != null)
+                {
+                    deployedDir = Path.Combine(injectorDir, "companion");
+                    deployedHtml = BuildStamp.IndexHtmlIn(deployedDir);
+                }
+            }
+            catch { deployedDir = null; deployedHtml = null; }
+
+            // The copy ON SCREEN. audit/42 §3.2: these are the same file when the companion is the
+            // auto-launched one, and a DIFFERENT file whenever a developer runs it out of its own bin\,
+            // which is what NGUAdvisorCompanion.csproj tells them to do. Reading the deployed copy in
+            // that case reports a healthy pair while a six-day-old UI is on screen.
+            string servedDir = null, servedHtml = null;
+            try
+            {
+                servedDir = RunningCompanionDir();
+                servedHtml = BuildStamp.IndexHtmlIn(servedDir);
+            }
+            catch { servedDir = null; servedHtml = null; }
+
+            // Prefer what is on screen; fall back to the deployed copy (which is what the NEXT launch
+            // will serve, and the only answer available when the companion is not running).
+            string html = null;
+            try
+            {
+                if (servedHtml != null && File.Exists(servedHtml)) html = servedHtml;
+                else { html = (deployedHtml != null && File.Exists(deployedHtml)) ? deployedHtml : null; servedDir = null; }
+            }
+            catch { html = null; }
+
+            try { if (html != null) _companionBuilt = File.GetLastWriteTime(html); }
+            catch { _companionBuilt = null; }
+
+            try { _companionDevCopy = BuildStamp.IsDevCopy(html, deployedHtml); }
+            catch { _companionDevCopy = false; }
+
+            // The bootstrap. Both reads are cheap, happen once per payload load, and are independent
+            // of the pair above — a stale bootstrap says nothing about the UI and vice versa.
+            try
+            {
+                if (injectorDir != null)
+                {
+                    var boot = Path.Combine(injectorDir, BuildStamp.BootstrapFile);
+                    // Copy preserves the source timestamp, so this is the bootstrap's BUILD time.
+                    if (File.Exists(boot)) _bootstrapOnDisk = File.GetLastWriteTime(boot);
+                }
+                var bootLog = Path.Combine(Main.GetSettingsDir(), "logs", "bootstrap.log");
+                if (File.Exists(bootLog))
+                    _bootstrapInjected = BuildStamp.ParseInjectionTime(ReadTail(bootLog, 64 * 1024));
+            }
+            catch { _bootstrapOnDisk = null; _bootstrapInjected = null; }
+
+            // Say it once per payload load, and only when there is something to say. SEPARATE messages
+            // rather than one combined line: the three cases name three different fixes (re-deploy the
+            // UI, rebuild the dev companion, restart the game), and a gate that names the wrong fix is
+            // worse than no gate. A dev copy is always worth one line — it is invisible otherwise, and
+            // it changes what the fix is.
+            try
+            {
+                var msg = _companionDevCopy
+                    ? BuildStamp.DevCopyMessage(_advisorBuilt, _companionBuilt, servedDir, deployedDir)
+                    : BuildStamp.StaleMessage(_advisorBuilt, _companionBuilt);
+                if (msg != null) Main.Log("Advisor: " + msg);
+            }
+            catch { }
+
+            try
+            {
+                var msg = BuildStamp.BootstrapStaleMessage(_bootstrapInjected, _bootstrapOnDisk);
+                if (msg != null) Main.Log("Advisor: " + msg);
+            }
+            catch { }
+        }
+
+        // Last <maxBytes> of a file, opened SHARED — bootstrap.log is append-open by the bootstrap
+        // itself and a plain ReadAllText would contend with it. Bounded because the log spans every
+        // session since the machine was set up and only its tail is ever of interest; a partial first
+        // line is rejected by BuildStamp.ParseInjectionTime's exact-format parse.
+        private static string ReadTail(string path, int maxBytes)
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                var take = (int)Math.Min(fs.Length, maxBytes);
+                if (take <= 0) return "";
+                fs.Seek(-take, SeekOrigin.End);
+                var buf = new byte[take];
+                int read = 0;
+                while (read < take)
+                {
+                    int n = fs.Read(buf, read, take - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                return System.Text.Encoding.UTF8.GetString(buf, 0, read);
+            }
+        }
+
         private string BuildSnapshotJson(float nextLoopSeconds)
         {
             var c = Main.Character;
@@ -1059,6 +1265,22 @@ namespace NGUAdvisor.Managers
             root["v"] = ProtocolVersion;
             root["seq"] = (double)(++_seq);
             root["ts"] = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+
+            // --- which builds are actually running (nav footer + the stale-UI gate) ---
+            // Both sides are published so the footer never has to guess, and so a mismatch is visible
+            // in the panel and not only in the log. See BuildStamp for why this exists.
+            // The product version is what a public build shows INSTEAD of the two build stamps: it is
+            // the thing a player can quote in a bug report and compare against the releases page.
+            // Emitted on both channels — the page decides what to render, so the HTML stays identical
+            // across the two repos alongside the C#.
+            root["version"] = Main.DisplayVersion;
+            root["channel"] = Main.Channel;
+            root["advisorBuild"] = BuildStamp.Format(AdvisorBuiltAt());
+            // "(dev)" when the copy on screen is not the deployed one (audit/42 §3.2). Carried in the
+            // VALUE rather than a new field on purpose: renderBuildFoot writes s.companionBuild as text,
+            // so this reaches every page version — including the stale ones this gate exists to expose.
+            root["companionBuild"] = BuildStamp.FormatCompanion(CompanionBuiltAt(), CompanionIsDevCopy());
+            root["uiStale"] = BuildStamp.IsUiStale(AdvisorBuiltAt(), CompanionBuiltAt());
 
             // --- header ---
             bool automation = settings != null && settings.GlobalEnabled;
@@ -1634,7 +1856,9 @@ namespace NGUAdvisor.Managers
             {
                 var q = new JSONObject();
                 var st = Main.Settings;
-                q["managed"] = st != null && st.AutoQuest;
+                // `managed` (AutoQuest) is DELIBERATELY NOT PUBLISHED. The SystemControlBar already owns
+                // the AUTOMATION display for quests, and the quest page states the live plan when one is
+                // running, so a third carrier of the same fact is a thing to keep in sync for nothing.
                 q["allowMajors"] = st != null && st.AllowMajorQuests;
                 q["idleMinors"] = st != null && !st.ManualMinors;
                 q["pooling"] = st != null && st.PoolMajorQuests && !st.QuestBurstActive;
@@ -1669,8 +1893,13 @@ namespace NGUAdvisor.Managers
                 try { mp["ready"] = MoneyPitManager.MoneyPitReady(); } catch { }
                 try { mp["etaSec"] = Num(MoneyPitManager.TimeUntilReady()); } catch { }
                 try { mp["predicted"] = MoneyPitManager.PredictNext().ToString(); } catch { }
-                try { var plan = MoneyPitManager.AdvisorPlan(); mp["throw"] = plan.Throw; mp["verdict"] = plan.Verdict ?? ""; mp["detail"] = plan.Detail ?? ""; } catch { }
-                try { mp["runMode"] = Main.Settings != null && Main.Settings.MoneyPitRunMode; } catch { }
+                // `throw` and `runMode` are DELIBERATELY NOT PUBLISHED. The pit chip already carries what
+                // the operator acts on, and verdict/detail below say the same thing in words a person can
+                // read; the raw decision bool and the run-mode flag were extra state to keep in sync for
+                // no display. (`throw` is also a JS reserved word — legal as a property, but a name worth
+                // not having.) The pit's UI is unfinished on purpose, pending the AdvisorPit /
+                // AutoMoneyPit rival-paths decision — this shrinks its surface rather than growing it.
+                try { var plan = MoneyPitManager.AdvisorPlan(); mp["verdict"] = plan.Verdict ?? ""; mp["detail"] = plan.Detail ?? ""; } catch { }
                 try { var t = MoneyPitManager.ShockwaveTier(); if (t.HasValue) mp["targetTier"] = MoneyPitManager.TierName(t.Value); } catch { }
                 root["moneypit"] = mp;
             });

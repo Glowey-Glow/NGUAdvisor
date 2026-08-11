@@ -243,15 +243,16 @@ namespace NGUAdvisor.Managers
         // fruits at the 24h tier (seeds), banks ~24h beard growth, and spends the bulk of the day
         // in the NGU marathon. Normal-LRB (RebirthTime -1) is a deliberate one-shot push, only
         // recommended when the next titan kill is actually in reach (see TitanPushInReach).
-        // Evil/Sadistic default to NGU-focused until difficulty-specific presets are authored
-        // (they'll be added as the user reaches those stages, where they're testable).
         private static string RecommendProfile(difficulty diff, int chapter, out string reason)
         {
-            if (diff != difficulty.normal)
+            if (diff == difficulty.sadistic)
             {
-                reason = "Best-fit farm preset for your stage.";
+                reason = "No Sadistic-specific preset authored yet — NGU-focused default.";
                 return "Goal-NGU";
             }
+            if (diff == difficulty.evil)
+                return RecommendEvilProfile(out reason);
+
             if (TitanPushInReach(out var target))
             {
                 reason = $"{target} in reach — one long push, no auto-rebirth; rebirth manually after the kill.";
@@ -264,6 +265,49 @@ namespace NGUAdvisor.Managers
             }
             reason = "Daily cadence: number push + fruit/seed harvest + beard banking + NGU marathon.";
             return "Normal-24hr";
+        }
+
+        // Evil daily drivers, keyed on the guide's ch.5 re-unlock ladder (EV 58 -> PPPL 100 -> T7 125 ->
+        // Meta 158 -> IDP 166).
+        //
+        // Every non-Normal difficulty used to return "Goal-NGU" — one constant for the entire back half
+        // of the game — with a code comment deferring the real answer until "the user reaches those
+        // stages, where they're testable". They have. Worse, the constant was not merely unhelpful: on
+        // Evil, Goal-NGU carries NGUDiff Diff:0, which pins the NORMAL NGU level track for the whole run,
+        // and Rebirth Time 24h1m. Recommending it to someone running a hack day or a challenge block
+        // (RebirthTime -1) would flip them off the Evil track AND rebirth a profile deliberately written
+        // never to rebirth. Those Evil profiles existed all along in SampleProfiles/Evil — they were just
+        // never promoted into Presets/, so the installer could not deliver what the advisor named.
+        //
+        // TitanPushInReach runs here too. It reads NextObjective + ProjectedBestGear, both of which are
+        // already difficulty-correct, so it was only ever Normal-only by accident of the early return.
+        private static string RecommendEvilProfile(out string reason)
+        {
+            int boss = 0;
+            try { boss = ZoneHelpers.CurrentHighestBoss(Main.Character); } catch { }
+
+            if (TitanPushInReach(out var target))
+            {
+                reason = $"{target} in reach — one long push, no auto-rebirth; rebirth manually after the kill.";
+                return "LRB-Evil";
+            }
+            if (boss < 125)
+            {
+                reason = "Evil re-climb: short runs to re-unlock TM/AT/Wandoos and push the boss wall.";
+                return "24hr-EarlyEvil";
+            }
+            if (boss < 166)
+            {
+                reason = "T7 window: the guide's 24h Evil shape — TM, augments, NGU+AT, then the Evil-NGU tail.";
+                return "24hr-Evil";
+            }
+            if (boss < 250)
+            {
+                reason = "Post-IDP: 24h Evil cadence with the Evil NGU track carrying the run.";
+                return "24hr-MidEvil";
+            }
+            reason = "Late Evil: 24h cadence into the T9 push.";
+            return "24hr-EndEvil";
         }
 
         // Kill-readiness gate for the LRB recommendation. In reach = we CAN'T clear the next

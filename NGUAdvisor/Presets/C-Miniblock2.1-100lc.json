@@ -47,7 +47,11 @@
       {
         "Type": "Number",
         "Target": 100
-      }
+      },
+        {
+          "Type": "Time",
+          "Time": { "m": 32 }
+        }
     ],
     "Challenges": [ "100LC-1", "100LC-2", "100LC-3", "100LC-4", "100LC-5" ]
   }

@@ -34,6 +34,33 @@ namespace NGUAdvisor.Managers
             new KeyValuePair<int, string>(6, "GPS"),
         };
 
+        // Hack slot indices -> name. Indices 0-14 are the real hacks; index 15 ("THE END") takes no R3,
+        // only unlocks once every other hack is hard-capped, and is deliberately absent — the priority
+        // grammar tops out at HACK-14 (PriorityCatalog.R3), and HackBP rejects anything above it.
+        //
+        // Names are the community vocabulary from reference/blaze-junkyard/Hackalc.tsv column F, which is
+        // also what the game's own HackProperties.hackName renders. They are the ONE source of truth: the
+        // companion's SYS_META.r3 slot list mirrors this table, per the "the C# tables win" rule that
+        // already governs DIGGER_SLOTS / BEARD_SLOTS.
+        public static readonly IReadOnlyList<KeyValuePair<int, string>> Hacks = new List<KeyValuePair<int, string>>
+        {
+            new KeyValuePair<int, string>(0, "Attack/Defense"),
+            new KeyValuePair<int, string>(1, "Adventure"),
+            new KeyValuePair<int, string>(2, "Time Machine"),
+            new KeyValuePair<int, string>(3, "Drop Chance"),
+            new KeyValuePair<int, string>(4, "Augment Speed"),
+            new KeyValuePair<int, string>(5, "Energy NGU"),
+            new KeyValuePair<int, string>(6, "Magic NGU"),
+            new KeyValuePair<int, string>(7, "Blood"),
+            new KeyValuePair<int, string>(8, "QP"),
+            new KeyValuePair<int, string>(9, "Daycare"),
+            new KeyValuePair<int, string>(10, "EXP"),
+            new KeyValuePair<int, string>(11, "NUMBER"),
+            new KeyValuePair<int, string>(12, "PP"),
+            new KeyValuePair<int, string>(13, "Hack Hack"),
+            new KeyValuePair<int, string>(14, "Wish"),
+        };
+
         public static readonly IReadOnlyList<KeyValuePair<int, string>> WandoosOS = new List<KeyValuePair<int, string>>
         {
             new KeyValuePair<int, string>(0, "Wandoos 98"),

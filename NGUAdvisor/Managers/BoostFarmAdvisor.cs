@@ -137,7 +137,14 @@ namespace NGUAdvisor.Managers
 
                 double dc = c.lootFactor();
                 double dcRoot = Math.Pow(dc, 1.0 / 3.0);
-                double attack = c.totalAdvAttack();
+                // BEAST-FREE attack, matching every other consumer of the OPower one-shot threshold
+                // (GearFarmAdvisor, ZoneStatHelper.ZoneFightType/GetBestZone, CombatManager,
+                // AtHourPlanner). This was the ONE site still using the raw totalAdvAttack(), which
+                // includes the Beast Mode multiplier — so this advisor could call a zone one-shottable
+                // that the gear advisor and the combat helper both refused, park the player there on
+                // idle attack that does not actually one-shot, and then value it with a per-kill model
+                // that assumes it does.
+                double attack = ZoneStatHelper.EffectiveAdvAttack();
 
                 double bestRate = 0;
                 int bestZone = -1;
@@ -148,10 +155,15 @@ namespace NGUAdvisor.Managers
                         // Unlocked = boss requirement met (ZoneHelpers.ZoneUnlocks, indexed by zone).
                         // Gate is single-sourced + headless-tested in BossScale (audit M5).
                         if (!BossScale.IsZoneUnlocked(c.effectiveBossID(), z.Zone, ZoneHelpers.ZoneUnlocks)) continue;
-                        if (ZoneStatHelper.UserOverrides != null && ZoneStatHelper.UserOverrides.TryGetValue(z.Zone, out var st))
-                        {
-                            if (st.OPower > 0 && attack < st.OPower) continue;   // not one-shottable idle
-                        }
+                        // FAIL CLOSED: an unknown zone is NOT one-shottable. See ZoneGate for the three
+                        // silent fail-open paths this replaces.
+                        var table = ZoneStatHelper.UserOverrides;
+                        ZoneStats st = null;
+                        bool rowFound = table != null && table.TryGetValue(z.Zone, out st);
+                        var gate = ZoneGate.Evaluate(table != null, rowFound, rowFound ? st.OPower : 0, attack);
+                        if (!gate.Known && ZoneGate.ShouldAnnounce("BoostFarm", z.Zone))
+                            Main.LogDebug($"BoostFarmAdvisor: zone {z.Zone} treated as NOT one-shottable — {gate.Reason}");
+                        if (!gate.OneShottable) continue;
                         double factor = z.Rooted ? dcRoot : dc;
                         double rate = 0;
                         foreach (var roll in z.Rolls)
@@ -172,6 +184,18 @@ namespace NGUAdvisor.Managers
                 // ITOPOD at the OPTIMAL floor: tier = floor/50, laddered into the boost-value table.
                 double idleAttack = attack * c.idleAttackPower();
                 int optFloor = idleAttack > ItopodConstants.FloorHpNormalizer ? (int)Math.Floor(Math.Log(idleAttack / ItopodConstants.FloorHpNormalizer, ItopodConstants.FloorGrowthBase)) : 0;
+                // CLAMP to the floor the player has actually REACHED, the way ITOPODManager does at every
+                // one of its own sites and OptimizationAdvisor does for its ITOPOD row. Unclamped, this
+                // credits ITOPOD with the boost rate of a floor that is still locked — the normal state
+                // right after entering Evil, where attack has been re-multiplied but the ITOPOD climb has
+                // not. Every real zone then has to beat an inflated number, so the advisor over-routes to
+                // ITOPOD exactly when zone farming is the right call.
+                try
+                {
+                    int reached = Math.Min(c.adventureController.maxItopodLevel(), c.adventure.highestItopodLevel - 1);
+                    if (reached >= 0 && optFloor > reached) optFloor = reached;
+                }
+                catch { }
                 int tier = Math.Max(1, Math.Min(optFloor / 50 + 1, 24));
                 int idx = tier >= 24 ? 13 : tier >= 18 ? 12 : tier >= 15 ? 11 : tier > 10 ? 10 : tier;
                 v.ItopodRate = 0.14 * BoostValues[idx - 1];

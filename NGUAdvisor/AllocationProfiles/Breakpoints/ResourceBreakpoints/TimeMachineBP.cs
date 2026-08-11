@@ -8,12 +8,15 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         protected override bool Unlocked() => _character.buttons.brokenTimeMachine.interactable && !_character.challenges.timeMachineChallenge.inChallenge;
 
+        // ONE class, TWO targets on two different pools — energy funds levelSpeed toward speedTarget,
+        // magic funds levelGoldMulti toward multiTarget. 05 §6.4 flags this as an open structural
+        // question (is TM one consumer or two?); the extraction records it, it does not resolve it.
         protected override bool TargetMet()
         {
             long target = Type == ResourceType.Energy ? _character.machine.speedTarget : _character.machine.multiTarget;
             long level = Type == ResourceType.Energy ? _character.machine.levelSpeed : _character.machine.levelGoldMulti;
 
-            return target != 0 && level >= target;
+            return Managers.LaneTargets.TimeMachineTargetMet(target, level);
         }
 
         public override bool Allocate()
@@ -64,60 +67,41 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
         }
 
         #region Hidden
-        private CapCalc CalculateEnergyTM(int offset)
+        // Live reads only — the arithmetic is Managers.LaneCapMath.TimeMachineCap, under
+        // characterisation test. The two halves resolve to the SAME function; only the divider, the
+        // level, the power and the pool differ.
+        private CapCalc CalculateEnergyTM(int offset) => TmCap(
+            _character.timeMachineController.baseSpeedDivider(),
+            _character.machine.levelSpeed,
+            _character.totalEnergyPower(),
+            _character.idleEnergy,
+            offset);
+
+        private CapCalc CalculateMagicTM(int offset) => TmCap(
+            _character.timeMachineController.baseGoldMultiDivider(),
+            _character.machine.levelGoldMulti,
+            _character.totalMagicPower(),
+            _character.magic.idleMagic,
+            offset);
+
+        private CapCalc TmCap(double baseDivider, float level, double power, long idlePool, int offset)
         {
-            var ret = new CapCalc(1, 0);
-
-            var formula = 50000.0 * _character.timeMachineController.baseSpeedDivider() * (1f + _character.machine.levelSpeed + offset);
-            formula /= _character.totalEnergyPower();
-            formula /= _character.hacksController.totalTMSpeedBonus();
-            formula /= _character.allChallenges.timeMachineChallenge.TMSpeedBonus();
-            formula /= _character.cardsController.getBonus(cardBonus.TMSpeed);
-
-            if (_character.settings.rebirthDifficulty >= difficulty.sadistic)
-                formula *= _character.timeMachineController.sadisticDivider();
-            formula = Math.Ceiling(formula);
-            if (formula < 1.0)
-                formula = 1.0;
-
-            var num1 = Math.Ceiling(formula / Math.Ceiling(formula / MaxAllocation) * 1.00000202655792);
-            long num;
-            if (num1 > _character.idleEnergy)
-                num = _character.idleEnergy;
-            else
-                num = (long)num1;
-
-            ret.Num = num;
-            ret.PPT = num1 / formula;
-            return ret;
-        }
-
-        private CapCalc CalculateMagicTM(int offset)
-        {
-            var ret = new CapCalc(1, 0);
-
-            var formula = 50000.0 * _character.timeMachineController.baseGoldMultiDivider() * (1f + _character.machine.levelGoldMulti + offset);
-            formula /= _character.totalMagicPower();
-            formula /= _character.hacksController.totalTMSpeedBonus();
-            formula /= _character.allChallenges.timeMachineChallenge.TMSpeedBonus();
-            formula /= _character.cardsController.getBonus(cardBonus.TMSpeed);
-
-            if (_character.settings.rebirthDifficulty >= difficulty.sadistic)
-                formula *= _character.timeMachineController.sadisticDivider();
-            formula = Math.Ceiling(formula);
-            if (formula < 1.0)
-                formula = 1.0;
-
-            var num1 = Math.Ceiling(formula / Math.Ceiling(formula / MaxAllocation) * 1.00000202655792);
-            long num;
-            if (num1 > _character.magic.idleMagic)
-                num = _character.magic.idleMagic;
-            else
-                num = (long)num1;
-
-            ret.Num = num;
-            ret.PPT = num1 / formula;
-            return ret;
+            bool sadistic = _character.settings.rebirthDifficulty >= difficulty.sadistic;
+            var r = Managers.LaneCapMath.TimeMachineCap(new Managers.LaneCapMath.TimeMachineCapInputs
+            {
+                BaseDivider = baseDivider,
+                Level = level,
+                Offset = offset,
+                Power = power,
+                HackTmSpeed = _character.hacksController.totalTMSpeedBonus(),
+                ChallengeTmSpeed = _character.allChallenges.timeMachineChallenge.TMSpeedBonus(),
+                CardTmSpeed = _character.cardsController.getBonus(cardBonus.TMSpeed),
+                Sadistic = sadistic,
+                SadisticDivider = sadistic ? _character.timeMachineController.sadisticDivider() : 1.0,
+                MaxAllocation = MaxAllocation,
+                IdlePool = idlePool
+            });
+            return new CapCalc(r.PPT, r.Num);
         }
         #endregion
 

@@ -171,6 +171,16 @@
   .navgroup.collapsed .gh .chev { transform: rotate(-90deg); }
   .navgroup.collapsed .navitem { display: none; }
 
+  /* Build footer: which advisor DLL and which UI are actually running. Deliberately quiet —
+     it is reference material, not a status readout, so it sits below every group in muted type
+     and only raises its voice (#buildWarn) when the two builds disagree. */
+  .buildfoot { margin-top: auto; padding: 10px 12px 4px; border-top: 1px solid var(--border); }
+  .bf-row { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; line-height: 1.6; }
+  .bf-k { color: var(--text-dim); }
+  .bf-v { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bf-warn { margin-top: 6px; font-size: 11px; line-height: 1.4; color: var(--warn, #f5a524); }
+  .bf-warn[hidden] { display: none; }
+
   /* ---- main column ---- */
   .main { min-width: 0; display: flex; flex-direction: column; }
   .topbar {
@@ -1038,6 +1048,28 @@
       <button class="navitem" data-view="profiles"><span class="ni-dot" aria-hidden="true"></span>Profiles</button>
       <button class="navitem" data-view="profileEditor"><span class="ni-dot" aria-hidden="true"></span>Profile Editor</button>
     </div>
+
+    <!-- WHICH BUILDS ARE RUNNING. The advisor DLL and this page are deployed by two SEPARATE
+         Release-only targets, and only the DLL's project is in NGUAdvisor.sln — so building the
+         advisor ships nothing here, and F5 reloads the payload without touching wwwroot. They drift
+         silently. A setting once went missing from this panel because the deployed UI was six days
+         and seven commits stale, and the only symptom was a control that did not exist.
+         Both stamps are published by UiBridge; #buildWarn appears only when they disagree. -->
+    <div class="buildfoot" id="buildFoot">
+      <div class="bf-row"><span class="bf-k">version</span><span class="bf-v" id="advisorVersion">—</span></div>
+      <!-- The payload's own clock (root["ts"], stamped when the snapshot was built). It sits with the
+           version because together they answer "what is running, and is it still running" — a frozen
+           value here means the pipe stalled, which no other element on the page can show. Both
+           channels: a stalled advisor is exactly as worth seeing to a player as to a developer. -->
+      <div class="bf-row"><span class="bf-k">runtime</span><span class="bf-v" id="advisorTs">—</span></div>
+      <!-- Dev-only rows. Hidden outright on the public channel: a player has no companion to rebuild,
+           so two build stamps and a "UI is stale" banner are noise they cannot act on. The rows stay in
+           the markup rather than being stripped at port time, so this file is byte-identical in both
+           repos and the port has nothing to remember. See <AdvisorChannel> in NGUAdvisor.csproj. -->
+      <div class="bf-row bf-dev" hidden><span class="bf-k">advisor</span><span class="bf-v" id="advisorBuild">—</span></div>
+      <div class="bf-row bf-dev" hidden><span class="bf-k">companion</span><span class="bf-v" id="companionBuild">—</span></div>
+      <div class="bf-warn" id="buildWarn" hidden>UI is stale — rebuild the companion</div>
+    </div>
   </nav>
 
   <!-- ================= MAIN =================
@@ -1564,7 +1596,8 @@
           { label:"Zone source", controls:[
             {t:"dd", key:"SnipeZone", label:"Farm zone (manual mode)", dyn:"zones", itopod:true},
             {t:"toggle", key:"AdvisorFarmGear", label:"Advisor: farm gear zones"},
-            {t:"toggle", key:"AdvisorFarmBoost", label:"Advisor: farm best boost"} ]},
+            {t:"toggle", key:"AdvisorFarmBoost", label:"Advisor: farm best boost"},
+            {t:"toggle", key:"AdvisorFarmRares", label:"Advisor: farm rare accessories (off = set gear only)"} ]},
           { label:"Gear hunt", controls:[
             {t:"toggle", key:"GearHuntEnabled", label:"Gear hunt (camp a stage)"},
             {t:"dd", key:"GearHuntZone", label:"Hunt stage", dyn:"zones"} ]},
@@ -2450,10 +2483,18 @@
     var pp=cu.powerPct, tp=cu.toughPct;
     writeHtml(row, "cubeRow", resRow("Pow", pp, pp>=100?"ok":"") + resRow("Tuf", tp, tp>=100?"ok":""));
     var h=$("cubeHint"); if(!h) return;
+    // The bars are percentages OF the softcap; powerSoftcap/toughSoftcap are the softcaps themselves,
+    // published alongside them and never shown. They are the same two numbers the advisor writes to
+    // inject.log every minute ("Cube Power: X (Y softcap)"), so having to read the log to find out
+    // what the bar was a percentage of was the whole gap.
+    var caps=[];
+    if(typeof cu.powerSoftcap==="number" && cu.powerSoftcap>0) caps.push("Pow "+fmtNum(cu.powerSoftcap,true));
+    if(typeof cu.toughSoftcap==="number" && cu.toughSoftcap>0) caps.push("Tuf "+fmtNum(cu.toughSoftcap,true));
+    var capTxt = caps.length ? (" Softcaps: "+caps.join(" · ")+".") : "";
     var n=(pp>=100?1:0)+(tp>=100?1:0);
-    setText(h, n>=2 ? "Cube is at its softcap — extra boosts add nothing here." :
+    setText(h, (n>=2 ? "Cube is at its softcap — extra boosts add nothing here." :
                     n===1 ? "One stat is at its softcap; boosts still help the other." :
-                    "Boosts stop helping the cube once it reaches its softcap.");
+                    "Boosts stop helping the cube once it reaches its softcap.") + capTxt);
   }
 
   // EXP page: base Energy:Magic value ratio (bars) + the balancer's on/off-ratio verdict (NOT derived
@@ -2530,7 +2571,14 @@
     var q=s.quests; if(!q) return; var st=$("questStatus"), chips=$("questChips");
     if(st){
       var line;
-      if(q.inQuest){ var pct=(q.progressPct==null)?"":(" ("+Math.round(q.progressPct)+"%)"); line=(q.type==="minor"?"Minor":"Major")+" quest"+(q.zoneName?(" · "+q.zoneName):"")+(q.drops!=null?(" · "+q.drops+"/"+q.targetDrops+" drops"+pct):""); }
+      // `zone` is the numeric id behind zoneName, published all along and never shown. It is the form
+      // that cross-references a profile's zone targets and the advisor's own routing lines, so it goes
+      // beside the name rather than replacing it.
+      if(q.inQuest){
+        var pct=(q.progressPct==null)?"":(" ("+Math.round(q.progressPct)+"%)");
+        var zn = q.zoneName ? (" · "+q.zoneName+(typeof q.zone==="number" && q.zone>=0 ? (" (z"+q.zone+")") : "")) : "";
+        line=(q.type==="minor"?"Minor":"Major")+" quest"+zn+(q.drops!=null?(" · "+q.drops+"/"+q.targetDrops+" drops"+pct):"");
+      }
       else line="No active quest right now.";
       writeHtml(st, "questStatus", '<span class="hint">'+esc(line)+'</span>');
     }
@@ -2550,7 +2598,14 @@
   // state (active/maxxed/inactive/purchasable/locked). Adapts the retired WinForms orchard to the theme.
   function renderFruits(s){
     var wrap=$("fruitTiles"); if(!wrap) return;
-    var seedEl=$("yggSeeds"); if(seedEl) setText(seedEl, s.yggSeeds!=null ? ("Seeds: "+s.yggSeeds) : "");
+    // yggCap is yggdrasilController.capTier() and rides in beside the seeds it is emitted next to.
+  // It was the other never-rendered key: the orchard grid shows per-fruit tiers with nothing saying
+  // what the ceiling on them is, which is the one number that tells you whether a fruit is maxxed
+  // or merely unfunded.
+  var seedEl=$("yggSeeds");
+  if(seedEl) setText(seedEl, s.yggSeeds!=null
+    ? ("Seeds: "+s.yggSeeds+(s.yggCap!=null ? ("  ·  Cap tier "+s.yggCap) : ""))
+    : "");
     var list=s.fruits||[];
     // key = the whole tile grid; state/tier/frac/cost all feed the markup, so all of them are in it.
     if(!list.length){ writeHtml(wrap, "fruitTiles", '<span class="hint">No fruit data yet.</span>'); return; }
@@ -2561,6 +2616,13 @@
       else if(f.state==="inactive"){ cls+=" inactive"; meta="idle · T"+f.tier+"/"+f.maxTier; }
       else if(f.state==="purchasable"){ cls+=" buy"; meta=(f.cost!=null?f.cost+" seeds":"unlock"); }
       else { cls+=" lock"; meta=(f.cost!=null?f.cost+" seeds":"locked"); }
+      /* `affordable` turns a price into a decision: the tiles have always shown "N seeds" with no way
+         to tell which of them you can actually pay for right now.
+         ⚠ IT IS EMITTED ONLY WHEN TRUE (`if (affordable) o["affordable"] = true`), so an ABSENT key is
+         not the same as "cannot afford" — it can equally mean the advisor did not compute it. Read as
+         a positive marker only; never render the negative from its absence. */
+      var afford = (f.affordable===true);
+      if(afford && f.cost!=null) meta += " ✓";
       /* POOP. Two independent facts, and the pair is the whole point — one alone tells you nothing
          actionable. A brown dot is "the advisor would put poop here"; a faint dot is "poop IS here".
          Together: brown-only = move some here, faint-only = this one is not worth it, both = correct.
@@ -2635,6 +2697,33 @@
     if(s.action) _actionTitle = "Action — " + s.action;
     paintConn();
     if(typeof s.nextLoopSec==="number") setCountdown(s.nextLoopSec);
+    renderBuildFoot(s);
+  }
+
+  // WHICH BUILDS ARE RUNNING (nav footer). Both stamps come from the advisor: it knows its own from
+  // its stamped assembly identity, and reads the companion's from the mtime of the index.html it is
+  // actually serving. Doing BOTH reads on the advisor side is deliberate — this page cannot see its
+  // own deploy timestamp, and a page that reported its build from a constant would keep claiming to
+  // be current no matter how stale the deployed copy was, which is the exact failure being caught.
+  function renderBuildFoot(s){
+    // The version is the whole footer on the public channel, and the first row on dev.
+    if($("advisorVersion")) $("advisorVersion").textContent = s.version ? ("v"+s.version) : "—";
+    // ⚠ THIS IS THE SNAPSHOT'S WALL CLOCK, not elapsed uptime — root["ts"] is DateTime.Now at the
+    // moment the payload was built. Its value is that it TICKS: a number that stops moving is a
+    // stalled pipe, which is the one failure this footer can show and nothing else can.
+    if($("advisorTs")) $("advisorTs").textContent = s.ts || "—";
+
+    // ANYTHING BUT AN EXPLICIT "public" IS DEV. Same direction as the advisor-side default: an absent
+    // or unrecognised channel keeps the stamps, so the worst case is a player seeing two extra rows,
+    // never a developer silently losing the stale-UI warning. An older advisor that does not send
+    // `channel` at all therefore behaves exactly as it did before this row existed.
+    var dev = (s.channel !== "public");
+    var rows = document.querySelectorAll(".bf-dev");
+    for(var i=0;i<rows.length;i++) rows[i].hidden = !dev;
+
+    if($("advisorBuild")) $("advisorBuild").textContent = s.advisorBuild || "—";
+    if($("companionBuild")) $("companionBuild").textContent = s.companionBuild || "—";
+    var w=$("buildWarn"); if(w) w.hidden = !(dev && s.uiStale);
   }
 
   function renderStage(s){
@@ -2653,10 +2742,14 @@
   }
 
   /* What is steering the run, on the card that answers "where am I".
-     Under the AUTO PROFILE this is the segment plan — TM HOUR › AT HOUR › RECOVERY › NGU MARATHON —
-     with the current step marked. That readout existed as timeline chips on the old WinForms autopilot
-     panel and was lost in the 2.0.0 port; since then "Farming / idle" was all the page said, and the
-     segment was only discoverable in inject.log.
+     Under the AUTO PROFILE this is the segment plan with the current step marked. The chain differs by
+     difficulty and is published by the advisor, NOT enumerated here — Normal runs
+     TM HOUR › AT HOUR › RECOVERY › NGU MARATHON, while Evil runs the guide's four-phase day
+     TM HOUR › AUGMENTATION › NGU+AT › EVIL NGU. Render whatever arrives; hardcoding either list would
+     blank the plan for the other half of the game.
+     That readout existed as timeline chips on the old WinForms autopilot panel and was lost in the 2.0.0
+     port; since then "Farming / idle" was all the page said, and the segment was only discoverable in
+     inject.log.
      Under a MANUAL profile the segments do not apply at all (the auto profile is what computes them),
      so it names the profile and points at its breakpoints rather than inventing a plan. */
   function renderAutoProfile(s){
@@ -2678,8 +2771,18 @@
       var cls = i===idx ? "chip max" : (idx>=0 && i<idx ? "chip" : "chip lock");
       return '<span class="'+cls+'"><b>'+esc(seg)+'</b>'+(i===idx?'<span class="sub">now</span>':'')+'</span>';
     }).join("");
-    if(!out) out='<span class="chip lock"><b>Auto profile</b><span class="sub">working out the plan…</span></span>';
+    // `segment` is ChallengeOverlay.Segment — the segment the advisor is ACTUALLY in, as opposed to
+    // `chain[idx]`, which is where it believes it is in the plan. Normally they agree and the
+    // highlighted chip above already says it, so this is not repeated for its own sake. It earns its
+    // place in the two cases the chain cannot cover:
+    //   1. an empty chain, where it is the only thing that knows the current segment at all;
+    //   2. a DISAGREEMENT with chain[idx] — worth surfacing rather than hiding, because the segment is
+    //      what actually selects the generated lane program, and the chain is only the plan for it.
+    var seg = a.segment ? String(a.segment) : "";
+    if(!out) out='<span class="chip lock"><b>Auto profile</b><span class="sub">'+(seg?esc(seg):"working out the plan…")+'</span></span>';
     var sub=[];
+    if(seg && idx>=0 && chain[idx] && String(chain[idx])!==seg)
+      sub.push("running "+esc(seg));
     if(a.phase) sub.push(esc(a.phase)+" phase");
     if(a.runHours>0) sub.push(esc(a.runHours)+"h into the run");
     writeHtml(el, "aplan", out + (sub.length?'<span class="chip"><span class="sub">'+sub.join(" · ")+'</span></span>':''));
@@ -2687,7 +2790,16 @@
 
   function renderGoal(s){
     var g=s.goal||{}, tit=(s.instruments||{}).titan||{};
-    if($("goalLine")) $("goalLine").textContent = g.text || "—";
+    // Where you ARE, beside where you are going. bossNow was emitted by UiBridge from the very first
+    // companion commit and never rendered, so the goal card said "B125 -> kill T7" with no way to see
+    // how far off that was. It is difficulty-aware advisor-side (ZoneHelpers.CurrentHighestBoss picks
+    // highestBoss / highestHardBoss / highestSadisticBoss), so it is already the same number the goal
+    // text's own boss references are counted in. 0 is its read-failed sentinel, so it is not shown.
+    if($("goalLine")){
+      var goalText = g.text || "—";
+      if(typeof g.bossNow==="number" && g.bossNow>0) goalText += "  ·  now B"+g.bossNow;
+      $("goalLine").textContent = goalText;
+    }
     if($("g1lbl")) $("g1lbl").textContent = "Titan readiness";
     if(tit.known && (typeof tit.atk==="number" || typeof tit.def==="number")){
       var atk=(typeof tit.atk==="number")?tit.atk:100, def=(typeof tit.def==="number")?tit.def:100, m=Math.min(atk,def);
@@ -2707,7 +2819,7 @@
   var SYS2VIEW = { Power:"titans", Gear:"gear", Wandoos:"wandoos", ITOPOD:"adventure",
     Diggers:"diggers", Beards:"beards", Yggdrasil:"yggdrasil", EXP:"exp",
     Gold:"gold", Blood:"blood", NGUs:"ngu", LSC:"challenges",
-    Perks:"perks", Quirks:"perks" };
+    Perks:"perks", Quirks:"perks", Hacks:"resources" };
   function actionsSorted(s){
     var acts=(s.actions||[]).filter(function(a){ return !a.optimal && (a.severity||0)>=1; });
     acts.sort(function(a,b){ return (b.severity||0)-(a.severity||0); });
@@ -2896,6 +3008,12 @@
                        : 'Farm <b>ITOPOD</b> — ~<b>'+fmtRate(bf.itopodRate)+'</b> boost-value/kill beats every one-shottable zone.')
         : (bfCompliant ? 'On <b>'+bnm+'</b> ('+bzn+') — already farming the best boost zone (~<b>'+fmtRate(bf.bestRate)+'</b>/kill vs ITOPOD ~'+fmtRate(bf.itopodRate)+').'
                        : 'Farm <b>'+bnm+'</b> ('+bzn+') — ~<b>'+fmtRate(bf.bestRate)+'</b> boost-value/kill vs ITOPOD ~'+fmtRate(bf.itopodRate)+'.');
+      // `currentZone` is the OTHER half of `compliant`, published beside it and never rendered: the
+      // recommendation said where to go, and the badge said you were not there, with nothing saying
+      // where "there" currently is. Only shown when they differ — repeating it while compliant would
+      // restate the sentence directly above.
+      if(!bfCompliant && typeof bf.currentZone==="number")
+        recHtml += ' <span class="hint">Currently in '+(bf.currentZone===-1000?"ITOPOD":("zone "+bf.currentZone))+'.</span>';
       writeHtml(br, "boostRec", recHtml);
       writeHtml(bc, "boostCmp", '<div class="row"><span class="who"><span class="win">▲ '+bnm+'</span> ('+bzn+')</span><span class="rate">~'+fmtRate(bf.bestRate)+' / kill</span></div>'
                           + '<div class="row"><span class="who">ITOPOD · optimal floor</span><span class="rate">~'+fmtRate(bf.itopodRate)+' / kill</span></div>');
@@ -2948,7 +3066,7 @@
   // System View readouts come from the advisor Rec array (actions[]) keyed by Rec.System.
   var RECSYS = { titans:"Power", gear:"Gear", wandoos:"Wandoos", adventure:"ITOPOD",
     diggers:"Diggers", beards:"Beards", yggdrasil:"Yggdrasil", exp:"EXP",
-    gold:"Gold", blood:"Blood", ngu:"NGUs", challenges:"LSC" };
+    gold:"Gold", blood:"Blood", ngu:"NGUs", challenges:"LSC", resources:"Hacks" };
 
   var _pruned=false;
   function renderSystems(s){
@@ -4152,10 +4270,15 @@
      digger 8 was "Power" and beard 6 "GPS". The C# tables win.) */
   var DIGGER_SLOTS = ["Drops","Wandoos","Stats","Adv","E-NGU","M-NGU","E-Beard","M-Beard","PP","Daycare","Blood","EXP"];
   var BEARD_SLOTS  = ["Stats","Drops","Number","NGU","Wandoos","Adv","Golden"];
+  /* Mirrors SystemCatalog.Hacks (0-14). Hack 15 "THE END" takes no R3 and is not addressable, so the
+     grammar stops at 14 — same bound as PriorityCatalog.R3. Used for the R3 hint only: R3 payloads are
+     TOKENS (HACK-13, CAPHACK-1:10), not bare slot ids, so `slots:` (which parses bare ints) doesn't apply. */
+  var HACK_SLOTS   = ["Attack/Defense","Adventure","Time Machine","Drop Chance","Augment Speed","Energy NGU",
+                      "Magic NGU","Blood","QP","Daycare","EXP","NUMBER","PP","Hack Hack","Wish"];
   var SYS_META = {
     energy:{hint:'Comma-separated priority tokens, in order — e.g. NGU-3, WAN, CAPAUG-10:50', chal:true},
     magic:{hint:'Comma-separated tokens — e.g. NGU-2, WAN, BR-3600, RIT-5', chal:true},
-    r3:{hint:'Comma-separated tokens — e.g. HACK-3, ALLHACK', chal:true},
+    r3:{hint:'Comma-separated tokens — e.g. HACK-13, ALLHACK, CAPHACK-1:10. Hacks: '+HACK_SLOTS.map(function(n,i){return i+' '+n;}).join(', '), chal:true},
     gear:{hint:'Item IDs (e.g. 326, 100) — or "Optimize: <objective>" / "Optimize+Respawn: <objective>"', chal:true},
     // `slots` names the vocabulary AND switches the editor from a free-text payload to the drag list.
     // The hint stays for the edit-the-.json-by-hand case, which the text form still supports.
@@ -4636,9 +4759,15 @@
           tn = "T"+(i+1)+(ver ? (" "+ver) : (x.v ? (" v"+x.v) : ""));
       var far = (maxI!=null && i>maxI);
       var parts=[];
-      if(typeof x.atk==="number")   parts.push("attack "+akPct(x.atk)+"%");
-      if(typeof x.def==="number")   parts.push("defence "+akPct(x.def)+"%");
-      if(typeof x.regen==="number") parts.push("regen "+akPct(x.regen)+"%");
+      // The percentages say how CLOSE you are; reqAtk/reqDef/reqRegen say close to WHAT. Both have
+      // been published per row by BuildTitanAk since it was written, but only the percentage was ever
+      // rendered — so a chip could report "attack 87%" with no way to see the number it was 87% of.
+      // Emitted through Exact() advisor-side precisely so these keep the game's own clean magnitudes
+      // (1E+23, not 9.9999999999999992E+22), which is why they are worth showing verbatim-ish.
+      function akReq(r){ return (typeof r==="number" && isFinite(r) && r>0) ? (" of "+fmtNum(r,true)) : ""; }
+      if(typeof x.atk==="number")   parts.push("attack "+akPct(x.atk)+"%"+akReq(x.reqAtk));
+      if(typeof x.def==="number")   parts.push("defence "+akPct(x.def)+"%"+akReq(x.reqDef));
+      if(typeof x.regen==="number") parts.push("regen "+akPct(x.regen)+"%"+akReq(x.reqRegen));
       // `wordHtml` overrides the escaped `word` for the ONE case that needs markup inside the state
       // slot (Walderp's menu name, which is clipped by CSS rather than by JS). `bucket` overrides
       // which counter the hint line increments when the word no longer matches `state`.
@@ -5097,6 +5226,15 @@
         var g=s.gearNow;
         html = (g && g.sentence) ? esc(g.sentence)
              : '<b>Armed</b> &mdash; the advisor is managing your gear.';
+        // `source` is GearObjectiveResolver.Src — WHICH rule won this objective (NOEC beats everything,
+        // then the challenge rotation, then gear hunt, then the profile timeline, then the user's
+        // standing pick). The sentence says what is equipped; this says why, and the precedence chain
+        // is exactly what you need when the answer is surprising. `forceRespawn` rides with it because
+        // it is the other half of the resolution and equally unrendered.
+        if(g && g.source){
+          var prov = esc(g.source) + (g.forceRespawn ? " · forces respawn" : "");
+          html += ' <span class="hint">(' + prov + ')</span>';
+        }
       } else {
         html='<b>Armed</b> &mdash; the advisor will swap to this set when it fires.';
       }

@@ -7,7 +7,7 @@ namespace NGUAdvisor.Managers
 {
     public static class LoadoutManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly InventoryController _ic = Main.InventoryController;
 
         // The last swap, so the companion can explain a result that LOOKS wrong but isn't. Three
@@ -39,12 +39,51 @@ namespace NGUAdvisor.Managers
         public static void RestoreGear()
         {
             Log($"Restoring original loadout");
-            ChangeGear(_savedLoadout);
+            // Cause.Restore: this UNDOES a swap and must never be gated — see GearChangeGate.Cause.
+            ChangeGear(_savedLoadout, GearChangeGate.Cause.Restore);
         }
 
-        public static void ChangeGear(int[] gearIds, bool shockwave = false)
+        // Whether the No Equipment refusal has already been narrated, so the line fires once per
+        // transition rather than once per attempted swap. Session state by design; the DECISION is
+        // GearChangeGate.TransitionLine and is pure (same split as AugmentBP's _noAugsSurfaced latch).
+        private static bool _noecSurfaced;
+
+        // The gated entry point. Every caller that does not name a cause is the advisor acting on its
+        // own initiative, which is the case F3 is about — so the default is the gated one.
+        public static void ChangeGear(int[] gearIds, bool shockwave = false) =>
+            ChangeGear(gearIds, GearChangeGate.Cause.Advisor, shockwave);
+
+        public static void ChangeGear(int[] gearIds, GearChangeGate.Cause cause, bool shockwave = false)
         {
             if (gearIds?.Length > 0 == false)
+                return;
+
+            // F3. THE ONE PREDICATE, at the ONE entry point — deliberately not at the fifteen external
+            // call sites, which is how a rule like this rots (38 §E7 inverted). During No Equipment,
+            // gear contributes 0f to every spec ([DECOMP] InventoryController.cs:647) while every swap
+            // still pays removeAllEnergyAndMagic() below, so an advisor-initiated swap is pure cost.
+            //
+            // Read LIVE and never latched: the gate lifts the instant the challenge ends, with no
+            // cached state, exactly like the Pass 1 predicates (constraint-layer-spec §4.5).
+            bool inNoec;
+            try { inNoec = ChallengeDetector.Current() == "NOEC"; }
+            catch { inNoec = false; }   // fail OPEN: an unreadable challenge state must not strand gear
+
+            try
+            {
+                var line = GearChangeGate.TransitionLine(inNoec, _noecSurfaced);
+                if (line != null) Log(line);
+                _noecSurfaced = inNoec;
+
+                // The ignored keypress gets its own line, EVERY time, and is deliberately not folded
+                // into the latch above: the user pressed F8 and the gear did not move, which without a
+                // line is indistinguishable from a broken hotkey. [OPERATOR] ruling.
+                var keyed = GearChangeGate.IgnoredHotkeyLine(inNoec, cause);
+                if (keyed != null) Log(keyed);
+            }
+            catch { }
+
+            if (GearChangeGate.Blocks(inNoec, cause))
                 return;
 
             if (GetCurrentGear().Where(x => x > 0).Distinct().OrderBy(x => x).SequenceEqual(gearIds.Where(x => x > 0).Distinct().OrderBy(x => x)))
@@ -560,6 +599,8 @@ namespace NGUAdvisor.Managers
                 Log($"Saved Temp Loadout {string.Join(", ", _tempLoadout)}");
         }
 
-        public static void RestoreTempLoadout() => ChangeGear(_tempLoadout);
+        // Cause.Restore: the other half of the Quick Loadout hotkey — it puts back what the user had
+        // before the temp swap. Gating it would strand that loadout for the rest of the challenge.
+        public static void RestoreTempLoadout() => ChangeGear(_tempLoadout, GearChangeGate.Cause.Restore);
     }
 }

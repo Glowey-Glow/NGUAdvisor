@@ -7,35 +7,58 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
     {
         protected override bool CorrectResourceType() => Type == ResourceType.Energy;
 
+        // D1 REVERSED (amendment 30): the advisor honours the No Augs challenge and refuses to fund
+        // augments for its duration. The two refusals that used to sit here —
+        // `!buttons.augmentation.interactable` and `!noAugsChallenge.inChallenge` — were the SAME
+        // lock twice: the button is set false by exactly that challenge flag ([DECOMP]
+        // ButtonShower.cs:199-203). They are now ONE call to AugmentMath.AugmentMenuUnlocked, which
+        // is :199 in full. See its comment for why an unenforced rule is still obeyed.
         protected override bool Unlocked()
         {
-            if (!_character.buttons.augmentation.interactable)
-                return false;
+            // Read once and hand it to both the predicate and the surfacing, so the gate and the
+            // reason it reports can never disagree. Read directly, not through SurfaceNoAugs's
+            // try/catch: a swallowed exception there would default to FUNDING through the challenge.
+            bool inChallenge = _character.challenges.noAugsChallenge.inChallenge;
 
-            if (_character.challenges.noAugsChallenge.inChallenge)
+            // Before the gates, so the latch clears on the way out of the challenge no matter which
+            // gate the lane goes on to fail, and the line is one per challenge entry.
+            SurfaceNoAugs(inChallenge);
+
+            if (!AugmentMath.AugmentMenuUnlocked(_character.bossID, inChallenge))
                 return false;
 
             if (Index > 13)
                 return false;
 
-            if (Index % 2 == 0)
-                return _character.bossID > _character.augmentsController.augments[Index / 2].augBossRequired;
+            var pair = _character.augmentsController.augments[Index / 2];
+            return AugmentMath.AugmentIndexUnlocked(Index, _character.bossID, pair.augBossRequired, pair.upgradeBossRequired);
+        }
 
-            return _character.bossID > _character.augmentsController.augments[Index / 2].upgradeBossRequired;
+        // The refusal is surfaced — a lane that goes quiet is indistinguishable from a lane that
+        // broke (25 §4, at two hours' cost). Latched on the TRANSITION so it is one line per
+        // challenge entry rather than one per tick, and the latch clears when the challenge ends so
+        // a second No Augs run says it again. Static and protected — BestAug shares it, so the line
+        // is emitted once for the augment SYSTEM, not once per lane that happens to be refused.
+        private static bool _noAugsSurfaced;
+
+        protected void SurfaceNoAugs(bool inChallenge)
+        {
+            try
+            {
+                var line = AugmentMath.NoAugsSurfacingLine(inChallenge, _noAugsSurfaced);
+                if (line != null)
+                    Main.Log(line);
+                _noAugsSurfaced = inChallenge;
+            }
+            catch { }
         }
 
         protected override bool TargetMet()
         {
-            if (Index % 2 == 0)
-            {
-                long target = _character.augments.augs[Index / 2].augmentTarget;
-                return target != 0 && _character.augments.augs[Index / 2].augLevel >= target;
-            }
-            else
-            {
-                long target = _character.augments.augs[Index / 2].upgradeTarget;
-                return target != 0 && _character.augments.augs[Index / 2].upgradeLevel >= target;
-            }
+            var augs = _character.augments.augs[Index / 2];
+            return Index % 2 == 0
+                ? AugmentMath.AugmentTargetMet(Index, augs.augmentTarget, augs.augLevel)
+                : AugmentMath.AugmentTargetMet(Index, augs.upgradeTarget, augs.upgradeLevel);
         }
 
         public override bool Allocate()
@@ -84,70 +107,57 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             return calcA.Num;
         }
 
+        // Live reads only — the arithmetic is AugmentMath.AugCap, under characterisation test.
+        // `index` is the FLAT half-index: even = augment half of pair index/2, odd = its upgrade half.
         public CapCalc CalculateAugCapCalc(int offset, int index, float allocation)
         {
-            int augIndex;
-            var ret = new CapCalc(1, 0);
-            double num1;
+            bool augHalf = index % 2 == 0;
+            int augIndex = augHalf ? index / 2 : (index - 1) / 2;
+            var ac = _character.augmentsController;
+            var diff = _character.settings.rebirthDifficulty;
+            var noAugs = _character.allChallenges.noAugsChallenge;
 
-            if (index % 2 == 0)
+            // The difficulty branch is resolved here, not in the core: normal and evil scale their
+            // divider by 50000.0 and sadistic does not, so the pair (scale, divider) carries the whole
+            // branch. Any difficulty outside the three leaves num1 unscaled, exactly as before.
+            double scale = 1.0, divider = 1.0;
+            if (diff == difficulty.normal)
             {
-                augIndex = index / 2;
-                num1 = 1 / (_character.totalEnergyPower() / (_character.augments.augs[augIndex].augLevel + 1.0 + offset));
-                if (_character.settings.rebirthDifficulty == difficulty.normal)
-                    num1 *= 50000.0 * _character.augmentsController.normalAugSpeedDividers[augIndex];
-                else if (_character.settings.rebirthDifficulty == difficulty.evil)
-                    num1 *= 50000.0 * _character.augmentsController.evilAugSpeedDividers[augIndex];
-                else if (_character.settings.rebirthDifficulty == difficulty.sadistic)
-                    num1 *= _character.augmentsController.sadisticAugSpeedDividers[augIndex];
+                scale = 50000.0;
+                divider = augHalf ? ac.normalAugSpeedDividers[augIndex] : ac.normalUpgradeSpeedDividers[augIndex];
             }
-            else
+            else if (diff == difficulty.evil)
             {
-                augIndex = (index - 1) / 2;
-                num1 = 1 / (_character.totalEnergyPower() / (_character.augments.augs[augIndex].upgradeLevel + 1.0 + offset));
-                if (_character.settings.rebirthDifficulty == difficulty.normal)
-                    num1 *= 50000.0 * _character.augmentsController.normalUpgradeSpeedDividers[augIndex];
-                else if (_character.settings.rebirthDifficulty == difficulty.evil)
-                    num1 *= 50000.0 * _character.augmentsController.evilUpgradeSpeedDividers[augIndex];
-                else if (_character.settings.rebirthDifficulty == difficulty.sadistic)
-                    num1 *= _character.augmentsController.sadisticUpgradeSpeedDividers[augIndex];
+                scale = 50000.0;
+                divider = augHalf ? ac.evilAugSpeedDividers[augIndex] : ac.evilUpgradeSpeedDividers[augIndex];
+            }
+            else if (diff == difficulty.sadistic)
+            {
+                divider = augHalf ? ac.sadisticAugSpeedDividers[augIndex] : ac.sadisticUpgradeSpeedDividers[augIndex];
             }
 
-            num1 /= 1.0 + _character.inventoryController.bonuses[specType.Augs];
-            num1 /= _character.inventory.macguffinBonuses[12];
-            num1 /= _character.hacksController.totalAugSpeedBonus();
-            num1 /= _character.adventureController.itopod.totalAugSpeedBonus();
-            num1 /= _character.cardsController.getBonus(cardBonus.augSpeed);
-            num1 /= 1.0 + _character.allChallenges.noAugsChallenge.evilCompletions() * 0.05;
+            var r = AugmentMath.AugCap(new AugmentMath.AugCapInputs
+            {
+                Level = augHalf ? _character.augments.augs[augIndex].augLevel : _character.augments.augs[augIndex].upgradeLevel,
+                Offset = offset,
+                TotalEnergyPower = _character.totalEnergyPower(),
+                SpeedDivider = divider,
+                DividerScale = scale,
+                AugsSpecBonus = _character.inventoryController.bonuses[specType.Augs],
+                MacguffinBonus = _character.inventory.macguffinBonuses[12],
+                HackAugSpeed = _character.hacksController.totalAugSpeedBonus(),
+                ItopodAugSpeed = _character.adventureController.itopod.totalAugSpeedBonus(),
+                CardAugSpeed = _character.cardsController.getBonus(cardBonus.augSpeed),
+                NoAugsEvilCompletions = noAugs.evilCompletions(),
+                NoAugsCompletedOnce = noAugs.completions() >= 1,
+                NoAugsEvilMaxed = noAugs.evilCompletions() >= noAugs.maxCompletions,
+                Sadistic = diff >= difficulty.sadistic,
+                SadisticDivider = diff >= difficulty.sadistic ? ac.augments[augIndex].sadisticDivider() : 1.0,
+                Allocation = allocation,
+                IdleEnergy = _character.idleEnergy
+            });
 
-            if (_character.allChallenges.noAugsChallenge.completions() >= 1)
-                num1 /= 1.1000000238418579;
-
-            if (_character.allChallenges.noAugsChallenge.evilCompletions() >= _character.allChallenges.noAugsChallenge.maxCompletions)
-                num1 /= 1.25;
-
-            if (_character.settings.rebirthDifficulty >= difficulty.sadistic)
-                num1 *= _character.augmentsController.augments[augIndex].sadisticDivider();
-
-            num1 = Math.Ceiling(num1);
-
-            if (num1 < 1.0)
-                num1 = 1.0;
-
-            double num = Math.Ceiling(num1 / Math.Ceiling(num1 / allocation) * 1.00000202655792);
-
-            long num2;
-            if (num > _character.idleEnergy)
-                num2 = _character.idleEnergy;
-            else
-                num2 = (long)num;
-
-            double ppt = num / num1;
-
-            ret.Num = num2;
-            ret.PPT = ppt;
-
-            return ret;
+            return new CapCalc(r.PPT, r.Num);
         }
     }
 }

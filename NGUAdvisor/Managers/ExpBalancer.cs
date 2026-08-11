@@ -76,7 +76,12 @@ namespace NGUAdvisor.Managers
                 try { t6v = ZoneHelpers.TitanVersion(5); } catch { }
                 int t7v = 0;
                 try { t7v = ZoneHelpers.TitanVersion(6); } catch { }
-                t7Killed = t7v >= 1;                      // "post-T7" once Titan 7 has been killed (v1)
+                // ZoneHelpers.TitanVersion returns the HUMAN version number (titan7Version + 1), so it is
+                // never less than 1 and the old `t7v >= 1` was unconditionally TRUE. Because
+                // ExpRatio.Split tests t7Killed first, that short-circuited every Evil branch below it and
+                // the guide's pre-T7 "buy ONLY Energy" rule was unreachable for the whole of Evil ch.5.
+                // TitanTables.VersionsDefeated owns the conversion (see its comment).
+                t7Killed = TitanTables.VersionsDefeated(t7v) >= 1;   // "post-T7" once T7 v1 has been KILLED
 
                 // Evil ch.5 gate: energy-only begins only once the Ygg (magic NGU 0) and EXP (magic NGU 1)
                 // magic NGUs can be consistently capped — proxied by both reaching a positive target on the

@@ -72,7 +72,7 @@ namespace NGUAdvisor.Managers
             359, 401, 426, 459, 467, 467, 475, 483, 491, 491, 501,                                    // Evil
             727, 752, 777, 810, 818, 826, 826, 834, 842, 850, 850, 871, 897, 902};                    // Sadistic (idx38 ROCK LOBSTER=826)
 
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
 
         public static readonly int[] TitanZones = { 6, 8, 11, 14, 16, 19, 23, 26, 30, 34, 38, 42, 44, 45 };
         public const int TitanCount = 14;
@@ -339,6 +339,53 @@ namespace NGUAdvisor.Managers
 
             // Materialize once; this collection is read repeatedly (AnySpawningSoon/RunTitanLoadout/RunGoldLoadout) and would otherwise re-run the query each access
             _titanSnapshotSummary.TitansSpawningSoon = _titanDetails.Select(x => x.Value).Where(x => x.SpawnSoonTimestamp.HasValue && (x.ShouldUseGoldLoadout || x.ShouldUseTitanLoadout)).ToList();
+        }
+
+        // The LEVEL of an accessory that is equipped RIGHT NOW, or -1 if it is not worn. Mirrors
+        // [DECOMP] InventoryController.apathyCheck() exactly, which is the read the game itself makes:
+        // it walks `character.inventory.accs` — the equipped slots — and returns `accs[i].level`.
+        //
+        // ⚠ NOT `itemList.itemMaxxed[id]`. That is a flag meaning "you have levelled this item to max"
+        // and is what the AUTOKILL gate reads (AutokillAvailable case 3). Owning a maxxed ring and
+        // wearing it are different facts, and only the second one keeps UUG killable.
+        public static int EquippedAccessoryLevel(int itemId)
+        {
+            try
+            {
+                var accs = _character.inventory.accs;
+                if (accs == null) return -1;
+                for (int i = 0; i < accs.Count; i++)
+                    if (accs[i] != null && accs[i].id == itemId) return accs[i].level;
+            }
+            catch { }
+            return -1;
+        }
+
+        // "Would walking into this titan's zone be a fight we cannot win?"
+        //
+        // TRUE only when the titan has a required accessory, is NOT autokillable (an AK spawn never
+        // reaches the fight), and that accessory is not worn. The gear swap runs BEFORE routing
+        // (LockManager acquires the titan lock and calls ChangeGear, then Main routes), so by the time
+        // this is asked the optimizer has already pinned the item if it could. Reaching here therefore
+        // means it genuinely could not — not owned, or no accessory slot — and the fight is unwinnable
+        // rather than merely unequipped.
+        public static bool TitanFightBlocked(int titanIndex, out string reason)
+        {
+            reason = null;
+            try
+            {
+                int required = TitanTables.RequiredAccessoryFor(titanIndex);
+                if (required == 0) return false;
+                if (AutokillAvailable(titanIndex)) return false;
+                if (EquippedAccessoryLevel(required) >= 0) return false;
+
+                reason = $"item {required} is not equipped as an accessory";
+                if (required == TitanTables.ApathyRingId)
+                    reason = "the Ring of Apathy is not equipped — without it UUG is INVINCIBLE " +
+                             "([DECOMP] EnemyAI sets invincible=true when apathyCheck() returns -1)";
+                return true;
+            }
+            catch { return false; }
         }
 
         public static float? TimeTillTitanSpawn(int bossId)

@@ -62,6 +62,46 @@ namespace NGUAdvisor.Tests
             Assert.False(BossScale.IsZoneUnlocked(rawBoss, 21, unlocks));
         }
 
+        // The real shipped ZoneUnlocks table, so these pin the actual numbers the advisor runs on.
+        private static readonly int[] ShippedZoneUnlocks = {
+            0, 7, 17, 37, 48, 58, 58, 66, 66, 74, 82, 82, 90, 100, 100, 108, 116, 116, 124, 132, 137, // Normal
+            359, 401, 426, 459, 467, 467, 475, 483, 491, 491, 501,                                    // Evil
+            727, 752, 777, 810, 818, 826, 826, 834, 842, 850, 850, 871, 897, 902};                    // Sadistic
+
+        // The ceiling is the last ZONE unlock of the era, NOT the ceiling titan's zone. The old rule
+        // scanned 0..TitanZones[maxTitanIndex] and came up short in both playable eras:
+        //   Evil   stopped at THE EXILE (zone 30, 491) and missed The Rad-Lands (zone 31, 501).
+        //   Normal stopped at zone 19 (132) and missed Chocolate World (zone 20, 137).
+        // Short ceilings make IsPastBossCeiling flip true early — "unlocks done" while a zone is ahead.
+        [Theory]
+        [InlineData(GameDifficulty.Normal, 137)]     // Chocolate World, not 132
+        [InlineData(GameDifficulty.Evil, 501)]       // The Rad-Lands, not 491
+        [InlineData(GameDifficulty.Sadistic, 902)]   // THE TRAITOR
+        public void BossUnlockCeiling_is_the_last_zone_of_the_era(GameDifficulty difficulty, int expected)
+        {
+            Assert.Equal(expected, BossScale.BossUnlockCeiling(ShippedZoneUnlocks, difficulty));
+        }
+
+        // Each era's ceiling must sit inside that era's own band — this is what stops a Normal ceiling
+        // from picking up an Evil threshold (they are all in one flat table).
+        [Theory]
+        [InlineData(GameDifficulty.Normal)]
+        [InlineData(GameDifficulty.Evil)]
+        [InlineData(GameDifficulty.Sadistic)]
+        public void BossUnlockCeiling_stays_inside_its_own_difficulty_band(GameDifficulty difficulty)
+        {
+            int lo = BossScale.OffsetFor(difficulty);
+            int ceiling = BossScale.BossUnlockCeiling(ShippedZoneUnlocks, difficulty);
+            Assert.InRange(ceiling, lo, lo + BossScale.EvilStep - 1);
+        }
+
+        [Fact]
+        public void BossUnlockCeiling_handles_a_missing_table()
+        {
+            Assert.Equal(0, BossScale.BossUnlockCeiling(null, GameDifficulty.Evil));
+            Assert.Equal(0, BossScale.BossUnlockCeiling(new int[0], GameDifficulty.Evil));
+        }
+
         [Fact]
         public void PastBossCeiling_needs_a_positive_ceiling()
         {

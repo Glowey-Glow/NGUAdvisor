@@ -4,7 +4,7 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
 {
     public class TimeRebirth
     {
-        protected static readonly Character _character = Main.Character;
+        protected static Character _character => Main.Character;
 
         public double RebirthTime { get; set; }
 

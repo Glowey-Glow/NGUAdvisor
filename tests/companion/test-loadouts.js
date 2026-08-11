@@ -642,6 +642,29 @@ window.addEventListener("load", guard(() => {
       ok("the run clock and phase are shown", /push phase/.test(plan.textContent) && /15\.6h/.test(plan.textContent),
          plan.textContent);
 
+      // The EVIL chain is a different, longer set of segment names than the Normal one, and two of them
+      // (NGU+AT, EVIL NGU) did not exist until the guide's ch.5 phases 3-4 were authored. The strip is
+      // built from the published `chain` array rather than any hardcoded list, so this is a guard that it
+      // stays that way — a future edit that enumerates the Normal segments would silently blank the Evil
+      // plan for every Evil player.
+      send(baseSnapshot({
+        autoProfile: { on: true, profile: "24hr-Evil", segment: "NGU+AT", phase: "growth",
+                       index: 2, runHours: 8.4,
+                       chain: ["TM HOUR", "AUGMENTATION", "NGU+AT", "EVIL NGU"] }
+      }));
+      const evilPlan = $("stagePlan");
+      ok("the Evil four-phase chain is shown whole", evilPlan.querySelectorAll(".chip").length >= 4,
+         String(evilPlan.querySelectorAll(".chip").length));
+      ok("the Evil chain reads in guide order",
+         /TM HOUR[\s\S]*AUGMENTATION[\s\S]*NGU\+AT[\s\S]*EVIL NGU/.test(evilPlan.textContent),
+         evilPlan.textContent);
+      ok("the current Evil segment is marked", /NGU\+AT\s*now/.test(evilPlan.textContent.replace(/\s+/g," ")),
+         evilPlan.textContent);
+      const evilChips = Array.from(evilPlan.querySelectorAll(".chip"));
+      ok("the Evil-NGU tail renders as a future step, not as the current one",
+         evilChips[3] && evilChips[3].className.indexOf("max") < 0,
+         evilChips.map(c => c.className).join(" | "));
+
       // A manual profile has no segments — name the profile instead of inventing a plan.
       send(baseSnapshot({ autoProfile: { on: false, profile: "24hr-EarlyEvil.json" } }));
       ok("manual profile is named as such", /Manual profile/.test($("stagePlan").textContent),

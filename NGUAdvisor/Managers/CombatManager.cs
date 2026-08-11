@@ -8,7 +8,7 @@ namespace NGUAdvisor.Managers
 {
     public static class CombatManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AdventureController _ac = _character.adventureController;
         private static readonly PlayerController _pc = _ac.playerController;
         private static bool isFighting = false;

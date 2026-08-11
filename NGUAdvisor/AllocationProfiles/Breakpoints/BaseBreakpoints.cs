@@ -55,7 +55,8 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             }
         }
 
-        protected static readonly Character _character = Main.Character;
+        // Property, not a type-init capture — see ResourceBreakpoint._character for why.
+        protected static Character _character => Main.Character;
         protected Breakpoint[] breakpoints = new Breakpoint[0];
         protected Breakpoint current = null;
         protected bool swapped = false;

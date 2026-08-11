@@ -253,7 +253,22 @@ namespace NGUAdvisor.Managers
 
         private static void ApplyDiggers(Character c)
         {
+            // AUTOMATION ANDed with DECISIONS, same contract as ApplyBeards and the six appliers that
+            // already open this way. The caller tests AdvisorDiggers (:201); this is the other half.
+            // Without it, AUTOMATION OFF + DECISIONS ADVISOR kept reconciling membership and levelling
+            // every tick while the panel said the tool was not operating diggers.
+            //
+            // ManageDiggers is the whole of it and there is no double-gate: UpgradeDiggers is a
+            // SEPARATE, narrower field covering the buy-the-next-tier path, and it already self-gates
+            // at DiggerManager.cs:378/:405 on UpdateCheapestDigger/UpgradeCheapestDigger — neither of
+            // which this method calls. ReconcileAdvisorDiggers and RecapDiggers have no gate of their
+            // own (RecapDiggers reads only Settings.DiggerCap, a tuning value, not a permission).
+            if (!Main.Settings.ManageDiggers) return;
+
             var set = OptimizationAdvisor.CurrentDiggerSet();
+            // ⚠ NULL AND EMPTY ARE FOLDED HERE, the shape that made the 100LC beard rule unenforceable
+            // (see BeardRule). Harmless today because no digger rule needs "equip none" — if one ever
+            // does, this needs the same tri-state split rather than a new flag.
             if (set == null || set.Length == 0) return;
 
             // Converge membership in place (obsolete off, affordable-missing on, correct left alone), then
@@ -281,13 +296,34 @@ namespace NGUAdvisor.Managers
 
         private static void ApplyBeards(Character c)
         {
+            // AUTOMATION ANDed with DECISIONS, which is the model's whole contract: AUTOMATION
+            // (ManageBeards) is "may the tool operate this system at all", DECISIONS (AdvisorBeards,
+            // tested by the caller at :202) is "who decides what it does". Six appliers already open
+            // this way — ApplyGearRefresh:1367, ApplyBoostPriority:240, ApplyBlood:338,
+            // ApplyTitanGold:409, ApplyTitans:552, ApplyZones:1051.
+            //
+            // ⚠ THIS ONE DID NOT, so AUTOMATION OFF + DECISIONS ADVISOR still equipped beards every
+            // tick — the panel says the tool is not operating beards while the tool operates beards.
+            // Same defect the money pit is already recorded as having (ApplyPit has no AutoMoneyPit
+            // gate); ApplyDiggers, ApplyWandoosOs and ApplyQuests share it and are NOT touched here.
+            if (!Main.Settings.ManageBeards) return;
+
+            // TRI-STATE, and the empty case is the one that had no handling. null = no opinion, leave
+            // the equipped set alone. Empty = a positive "wear none" (BeardRule.None, the 100LC rule) —
+            // which must CLEAR, because abstaining leaves the beards equipped before the challenge began
+            // still on for its whole duration. Folding the two together under `set.Length == 0` is what
+            // let seven beards ride through the 100 Level Challenge.
             var set = OptimizationAdvisor.CurrentBeardSet();
-            if (set == null || set.Length == 0) return;
+            if (set == null) return;
             var active = c.beards.activeBeards;
+            // Vacuously true for the empty set once the clear has landed, so the rule states itself
+            // once per challenge instead of once per tick.
             if (active.Count == set.Length && set.All(active.Contains)) return;
 
             if (BeardManager.EquipBeards(set))
-                Main.Log($"Advisor: equipped beards {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
+                Main.Log(set.Length == 0
+                    ? "Advisor: cleared beards — the 100 Level Challenge is run without them; the game does not enforce it ([DECOMP] only TrollChallengeController.cs:650 sets beards.disabled), so the advisor honours the stated rule"
+                    : $"Advisor: equipped beards {string.Join(", ", set.Select(i => i.ToString()).ToArray())}");
         }
 
         // Guide-ordered spending (SpendPlanner): buy the next perk/quirk/fruit-tier in the guide's
@@ -725,6 +761,318 @@ namespace NGUAdvisor.Managers
         // those modes drive SnipeZone dynamically and must win.
         private static DateTime _lastZoneCheck = DateTime.MinValue;
 
+        // The gear-farm challenge pause's surfacing latch: the challenge code currently holding the
+        // farm, or null while it runs. GearFarmPause owns the decision; this is the state it needs.
+        // Statics wipe on payload reload, which re-announces once — the correct side to fail on.
+        private static string _gearFarmPauseSignature;
+
+        // The three-phase machine's surfacing latch: the phase+zone last announced. The DECISION is
+        // stateless by construction (ZonePhase is a pure classifier — a phase must not stay entered
+        // after its condition lifts); this is the one piece of state, and it exists only so a
+        // transition is announced once instead of every pass. Statics wipe on payload reload, which
+        // re-announces once — the correct side to fail on.
+        private static string _zonePhaseSignature;
+
+        // The gear farm's own verdict text, latched so its state changes surface once each.
+        private static string _gearFarmTextSignature;
+
+        // The rare-farm target, latched on item+zone so a change of target surfaces once.
+        private static string _rareFarmSignature;
+
+        // The set-farm target, latched on zone.
+        private static string _setFarmSignature;
+
+        // The "rares are available" offer, latched on count+target so it states the position once and
+        // again only when the position actually changes.
+        private static string _raresOfferSignature;
+
+        // THE HYSTERESIS INSTRUMENT'S STATE — audit/41 §6, RouteChurn. Statics wipe on payload
+        // reload, so the first route after a reload records as "first route since load" rather than
+        // as a change with a fabricated elapsed time. That is the correct side to fail on: this
+        // instrument's whole output is the elapsed field, and a made-up one is worse than a missing
+        // one. Not readonly-by-accident — RouteChurn.State is a class precisely so Observe cannot be
+        // handed a copy and lose the history.
+        private static readonly RouteChurn.State _routeChurn = new RouteChurn.State();
+
+        // ⚠ IT MEASURES, IT NEVER DECIDES. Called from each routing site AFTER that site has already
+        // chosen, with a value copy of the decision. Nothing it computes is read back by any routing
+        // path, and a RouteChurn.Route has no way to reach Settings.SnipeZone — so "the instrument
+        // does not change routing" is a property of the call shape, not a promise. 41 §6 records
+        // hysteresis as a RISK nobody has observed; building the margin now would be fitting a
+        // constant to no data (audit/35). This builds the thing that would size it.
+        //
+        // ⚠ AND IT IS NOT STATE-CHANGE THROTTLED. Every other surfacing latch in this file suppresses
+        // until a signature moves, because there the change IS the news and the metric between
+        // changes is noise. Here the change is the event, so a throttle would delete the signal
+        // entirely. What keeps it readable is the run-length counter in the header.
+        //
+        // DEBUG CHANNEL, the AllocTelemetry precedent (ConstraintLayerBridge.cs:550-554): the route
+        // lines this accompanies are already on the operator channel, and this is the measurement
+        // depth underneath them. Unconditional — debug.log is always written, so the instrument
+        // cannot go quiet in the state it exists for (the 41 §7.4 pattern).
+        private static void Churn(RouteChurn.Route r)
+        {
+            try
+            {
+                var block = RouteChurn.Format(RouteChurn.Observe(_routeChurn, r, DateTime.UtcNow));
+                if (block != null) Main.LogDebug(block);
+            }
+            catch (Exception e) { try { Main.LogDebug($"RouteChurn: {e.Message}"); } catch { } }
+        }
+
+        // THE OFFER, shown when Farm Rare Accessories is OFF and eligible rares exist. The advisor is
+        // declining to spend the hours and saying what it declined, which is the whole point of the
+        // opt-out: silence here would be indistinguishable from "there is nothing to farm".
+        private static void SurfaceRaresAvailable(GearFarmAdvisor.Verdict g)
+        {
+            if (g == null || g.RareCount <= 0) return;
+
+            // ⚠ FALLS BACK TO NearestRare. Gating this on an ELIGIBLE rare made the offer silent in
+            // the one state it exists for: with the farm OFF the DC digger is benched and the Loot
+            // Hunter gear is not worn, so drop chance is at its lowest and nothing clears the cadence
+            // bar — while switching the farm ON is exactly what seats them. The offer must describe
+            // the work, not only the work that already qualifies at the worst drop chance available.
+            var best = g.Rare ?? g.NearestRare;
+            if (best == null) return;
+
+            var sig = g.RareCount + "@" + best.ItemId + "#" + best.Zone;
+            if (!GearFarmPause.ShouldSurface(sig, _raresOfferSignature)) return;
+            _raresOfferSignature = sig;
+
+            var what = best.ChainLabel == null ? best.ItemName : $"{best.ItemName} [{best.ChainLabel}]";
+            var line = $"{g.RareCount} rare accessor{(g.RareCount == 1 ? "y" : "ies")} uncapped "
+                     + $"— nearest {what} in {best.ZoneName} "
+                     + $"(a drop every ~{FmtH(best.HoursPerDrop)}, ~{FmtH(best.HoursToFinish)} to finish)"
+                     + (g.RareCount > 1 ? $", ~{FmtH(g.RareHoursAll)} for all {g.RareCount}" : "")
+                     + $". Turn on Farm Rare Accessories to chase {(g.RareCount == 1 ? "it" : "them")}"
+                     // The numbers above are measured with the farm OFF, so they are the pessimistic
+                     // end: turning it on seats the DC digger and the DC/Respawn gear.
+                     + (g.RareEligible == 0
+                        ? " — drop chance improves once it does (DC digger + Loot Hunter gear)."
+                        : $" ({g.RareEligible} already within the {3:0}h cadence bar).");
+            Main.Log($"Advisor: {line}");
+            ChallengeOverlay.Record("GEAR", line, "set gear is capped; rares are opt-in");
+        }
+
+        // Route to a zone whose own SET gear is still uncapped and dropping at a workable cadence.
+        // Outranks the rare track: a set pays a completion bonus that a set-less stray does not.
+        // `runnerUp` is second place in the SAME ranking, for the churn log's "by how much did it
+        // win?" — read only by the instrument, never by this method's decision.
+        private static bool ApplySetFarm(GearFarmAdvisor.ZonePlan p, GearFarmAdvisor.ZonePlan runnerUp)
+        {
+            if (p == null || p.Zone < 0) return false;
+            if (!Main.Settings.AdvisorZones) return false;
+
+            // Same demand as every other farm: standing in a zone collecting drops.
+            FarmVenue.DropFarmActive = true;
+
+            var sig = "set@" + p.Zone;
+            if (GearFarmPause.ShouldSurface(sig, _setFarmSignature))
+            {
+                _setFarmSignature = sig;
+                var line = $"set farm -> {p.ZoneName} ({p.MissingItems.Count} set item(s) left, "
+                         + $"a drop every ~{FmtH(p.SlowestSetCadence)}, ~{FmtH(p.HoursToCap)} to finish)"
+                         + ItopodOverrideNote()
+                         + OwnerOverrideNote(p.Zone, p.ZoneName);
+                Main.Log($"Advisor: {line}");
+                ChallengeOverlay.Record("GEAR", line, "set completion outranks set-less accessories");
+            }
+
+            // OUTSIDE the latch above: a route change is the churn event even when the announcement
+            // is suppressed, and BEFORE the SnipeZone guard, because a track change that keeps the
+            // zone number is still a ChangeGear + a digger re-level.
+            Churn(RouteChurn.Of("SET", p.Zone, p.ZoneName, "set completion outranks set-less accessories",
+                score: p.HoursToCap, scoreLabel: "cap", cadence: p.SlowestSetCadence,
+                bar: GearFarmAdvisor.TargetHours, barOnCadence: true,
+                runnerUp: runnerUp?.HoursToCap ?? double.NaN, runnerUpName: runnerUp?.ZoneName));
+
+            if (Main.Settings.SnipeZone != p.Zone)
+                Main.Settings.SnipeZone = p.Zone;
+            return true;
+        }
+
+        // Route to an eligible ultra-rare / chain item. Returns true when it took routing.
+        private static bool ApplyRareFarm(GearFarmAdvisor.RareTarget r, GearFarmAdvisor.RareTarget runnerUp)
+        {
+            if (r == null || r.Zone < 0) return false;
+            if (!Main.Settings.AdvisorZones) return false;
+
+            // DECLARE THE DROP-CHANCE DEMAND. The digger pass reads this to run the DC/PP venue law
+            // (FarmVenue): standing in a zone waiting on drops is exactly when digger 0 earns and
+            // digger 8 has nothing to collect — [DECOMP] AdventureController.cs:2919 gates the whole
+            // perk-point block on `zone == 1000`. Raised here rather than inferred from SnipeZone
+            // because only this path knows the zone was chosen FOR its drop rate.
+            FarmVenue.DropFarmActive = true;
+
+            // Hoisted so the overlay's reason and the churn log's reason are provably one string.
+            var why = r.DcWontHelp ? "flat drop rate — more drop chance will not speed this up"
+                                   : "drops arrive regularly at the current drop chance";
+
+            var sig = r.ItemId + "@" + r.Zone;
+            if (GearFarmPause.ShouldSurface(sig, _rareFarmSignature))
+            {
+                _rareFarmSignature = sig;
+                var what = r.ChainLabel == null ? r.ItemName : $"{r.ItemName} [{r.ChainLabel}]";
+                var line = $"rare farm -> {r.ZoneName} for {what} "
+                         + $"(a drop every ~{FmtH(r.HoursPerDrop)}, {r.DropsNeeded} merges left "
+                         + $"= ~{FmtH(r.HoursToFinish)}){ItopodOverrideNote()}"
+                         + OwnerOverrideNote(r.Zone, r.ZoneName);
+                Main.Log($"Advisor: {line}");
+                ChallengeOverlay.Record("GEAR", line, why);
+            }
+
+            // RANKED ON ITS CADENCE, not on time-to-finish: "the point of an eligible rare is that
+            // drops arrive regularly enough to be worth standing there" (GearFarmAdvisor). So the
+            // score and the cadence are one number here, and the churn log prints it once.
+            Churn(RouteChurn.Of("RARE", r.Zone, r.ZoneName, why,
+                score: r.HoursPerDrop, scoreLabel: "drop", cadence: r.HoursPerDrop,
+                bar: GearFarmAdvisor.TargetHours, barOnCadence: true,
+                runnerUp: runnerUp?.HoursPerDrop ?? double.NaN, runnerUpName: runnerUp?.ItemName));
+
+            if (Main.Settings.SnipeZone != r.Zone)
+                Main.Settings.SnipeZone = r.Zone;
+            return true;
+        }
+
+        private static string FmtH(double h)
+            => double.IsInfinity(h) ? "never" : h >= 1 ? $"{h:0.#}h" : $"{h * 60:0}m";
+
+        // A drop farm outranks Target ITOPOD (Main.cs, the tempZone resolution) — but an override the
+        // operator did not ask for must not be silent. That is the whole finding of audit/40 §3: the
+        // advisor wrote a farm zone, announced it, and the toggle discarded it one line later with
+        // nothing said, for an entire run.
+        private static string ItopodOverrideNote()
+        {
+            try
+            {
+                return Main.Settings.AdventureTargetITOPOD
+                    ? " — overriding Target ITOPOD, which is still on"
+                    : "";
+            }
+            catch { return ""; }
+        }
+
+        // THE SAME FINDING FROM THE OTHER SIDE — audit/40 §3 item 2, still live per §6.4.
+        // ItopodOverrideNote above answers "is this line overriding the operator's toggle". This
+        // answers the opposite question: "is this line's target going to be adventured at all".
+        // ApplyZones stands down for exactly two of the six layer-2 contenders (:988,
+        // GoldCBlockMode || MoneyPitRunMode). The other four — §7's corrected membership: R4 the
+        // empty Time Machine, R5 the gold snipe, R6 titans, R7 quests — own routing for as long as
+        // their condition holds, and the advisor writes, announces and quotes an ETA straight
+        // through them.
+        //
+        // ⚠ IT DOES NOT STAND DOWN, ON PURPOSE, AND IT DOES NOT RE-RANK. A return here would freeze
+        // SnipeZone on whatever was last written — the challenge pause's reasoning verbatim (audit/40
+        // §1.2, and the fall-through note at the pause below) — and it would be a precedence change,
+        // which audit/40 §2 records as deliberate on every row. The write, the ranking and the
+        // routing are untouched; only the sentence moves.
+        //
+        // THE CAUSE IS THE RESOLVER'S OWN, NEVER RE-DERIVED. ZoneRouting.Last is what Main.SnipeZone
+        // latched on its most recent pass, and that runs from LateUpdate (~60/s) while this runs on a
+        // 30s tick, so it is at most one frame old. ONE state can leave it stale: adventure being
+        // uninteractable, where SnipeZone() returns above every gate (Main.cs:1337) and nothing is
+        // adventured at all. A note naming an owner from before that would name the wrong cause, and
+        // this campaign's own rule is that a line naming the wrong thing is worse than none.
+        private static string OwnerOverrideNote(int target, string targetName)
+        {
+            try
+            {
+                if (!Main.Character.buttons.adventure.interactable) return "";
+                return ZoneRouting.OwnerNote(ZoneRouting.Last, target, targetName);
+            }
+            catch { return ""; }
+        }
+
+        // PHASES IDLE AND ITOPOD. Returns true when the machine took routing.
+        //
+        // ⚠ IT MUST NOT SWALLOW THE BOOST FARM. Returning false hands routing to the boost/ITOPOD
+        // path below, exactly as the challenge pause does (see the fall-through note in ApplyZones)
+        // and for the same reason: this branch is reached when the gear farm has nothing to say, and
+        // a machine with no ladder to climb must leave the advisor behaving as it would with Farm
+        // Gear Zones off. It takes routing only when there is a real phase to be in.
+        //
+        // The pause itself is upstream of this: a paused farm never reaches here (the call site sits
+        // inside `if (gfSig == null)`), so the pause still falls through to the boost path untouched.
+        private static bool ApplyZonePhase()
+        {
+            ZonePhase.PlanReport r;
+            try { r = ZonePhase.Explain(ZonePhaseReader.Candidates()); }
+            catch (Exception ex) { Main.LogDebug($"ZonePhase: {ex.Message}"); return false; }
+            var d = r.Chosen;
+
+            if (d.Phase == ZonePhase.Phase.None)
+            {
+                // ⚠ A DECLINE MUST SAY SO ONCE. Falling through to the boost farm is legitimate and
+                // common, but it emits nothing — so "correctly declining" and "silently broken" read
+                // identically, which is the 25 §4 failure one level up. Latched on the COUNTS, so a
+                // steady state costs one line and a change in what the machine sees costs one more.
+                var declineSig = "None#" + r.Candidates + "/" + r.FarmReady + "/" + r.Idle + "/" + r.Parked + "/" + r.Declined;
+                if (ZonePhase.ShouldSurface(declineSig, _zonePhaseSignature))
+                {
+                    _zonePhaseSignature = declineSig;
+                    Main.Log($"Advisor: zone phase -> none, boost farm keeps routing ({r.Summary()})");
+                }
+                return false;
+            }
+
+            // P2e: behind AdvisorZones. Reaching here already implies it is on (:753 returns above),
+            // so this is the rule stated where it is enforced rather than only in a comment.
+            if (!ZonePhase.WritesZone(d, Main.Settings.AdvisorZones))
+                return false;
+
+            var sig = ZonePhase.Signature(d);
+            if (ZonePhase.ShouldSurface(sig, _zonePhaseSignature))
+            {
+                _zonePhaseSignature = sig;
+                // IDLE RAISES THE DROP-FARM DEMAND, SO IDLE OVERRIDES Target ITOPOD — and audit/40
+                // §6.1 requires an override to say so. The set, rare and FARM lines have carried this
+                // note since 271f5f8; IDLE, added by the same campaign, did not, so the one phase
+                // that exists to stand in a zone silently beat the operator's own toggle. Asked of
+                // ZonePhase, not re-derived, so this and the demand below cannot drift apart.
+                //
+                // ⚠ BOTH NOTES, AND IN THIS ORDER. They are not alternatives and they are not
+                // mutually exclusive — the toggle being on does not stop a titan owning routing, so
+                // one line can legitimately carry both. They answer different questions: the toggle
+                // note says WHAT THIS LINE BEAT, the owner note says WHETHER THE TARGET IS BEING
+                // ADVENTURED AT ALL (see both helpers' headers above).
+                //
+                // The order is the one already established at the three sibling lines (:839-840,
+                // :882-883, :1108-1109) and pinned by ZoneOwnerNoteTests'
+                // The_note_composes_with_the_Target_ITOPOD_note: toggle note first, owner note LAST.
+                // The owner note has to be terminal because it qualifies everything before it — put
+                // it first and "…is not being adventured while it holds — overriding Target ITOPOD"
+                // dangles the override clause off the end of a negation and reads as nonsense.
+                var line = ZonePhase.Message(d, ZonePhaseReader.ZoneName(d.TargetZone))
+                         + (ZonePhase.RaisesDropFarmDemand(d) ? ItopodOverrideNote() : "")
+                         + OwnerOverrideNote(d.TargetZone, ZonePhaseReader.ZoneName(d.TargetZone));
+                Main.Log($"Advisor: {line}");
+                // P3b. The transition line is the only line this phase gets, and ITOPOD can park on
+                // it indefinitely — so it also goes to the FEED, where it stays visible without
+                // re-emitting. A farm that stops without saying so is indistinguishable from a farm
+                // that broke (amendment 25 §4, found at two hours' cost).
+                ChallengeOverlay.Record("GEAR", line,
+                    d.Parked ? ZonePhase.GapText(d) : d.Reason);
+            }
+
+            // IDLE is a drop farm by definition — "idle in the zone until you collect at least one
+            // copy of the accessories". ITOPOD is the opposite venue and gives the demand back. The
+            // SAME expression the line above announced with: the demand and the sentence describing
+            // it are one rule (ZonePhase.RaisesDropFarmDemand), not two that agree today.
+            FarmVenue.DropFarmActive = ZonePhase.RaisesDropFarmDemand(d);
+
+            // ⚠ DELIBERATELY UNRANKED. The phase machine picks the HIGHEST qualifying zone number
+            // (ZonePhase.Explain), not the best value of a continuous metric — it has no score to
+            // report, and reporting the one-hit gap as if it were one would put an attack-power
+            // figure in a column every other track fills with hours. Its half of a churn line is the
+            // elapsed time and the reason, both of which are the real content anyway.
+            Churn(RouteChurn.Of(d.Phase.ToString().ToUpperInvariant(), d.TargetZone,
+                ZonePhaseReader.ZoneName(d.TargetZone), d.Parked ? ZonePhase.GapText(d) : d.Reason));
+
+            if (Main.Settings.SnipeZone != d.TargetZone)
+                Main.Settings.SnipeZone = d.TargetZone;
+            return true;
+        }
+
         private static void ApplyZones()
         {
             if (!Main.Settings.CombatEnabled) return;
@@ -737,11 +1085,17 @@ namespace NGUAdvisor.Managers
             {
                 if (!GearHunter.ZoneReachable()) return;
                 int hz = Main.Settings.GearHuntZone;
+                string hn = ZoneHelpers.ZoneList.TryGetValue(hz, out var n) ? n : $"Zone {hz}";
+                // Unranked: this stage was picked by the user, not by a score. Instrumented anyway —
+                // hunt is above the 10-minute throttle, so it is the one track that can time a
+                // transition to the minute, and entering/leaving it is a ChangeGear like any other.
+                Churn(RouteChurn.Of("HUNT", hz, hn, "gear hunt — the user-picked stage outranks the automatic farms"));
                 if (Main.Settings.SnipeZone != hz)
                 {
                     Main.Settings.SnipeZone = hz;
-                    string hn = ZoneHelpers.ZoneList.TryGetValue(hz, out var n) ? n : $"Zone {hz}";
-                    Main.Log($"Advisor: farm zone -> {hn} (gear hunt)");
+                    // The hunt is the TOP row of ResolveIntentZone (Main.cs), so nothing inside the
+                    // R10 chain takes it — but the six gates that return ABOVE the chain still do.
+                    Main.Log($"Advisor: farm zone -> {hn} (gear hunt)" + OwnerOverrideNote(hz, hn));
                 }
                 return;
             }
@@ -754,17 +1108,137 @@ namespace NGUAdvisor.Managers
             // bonus, and only zones that finish inside the advisor's time budget qualify.
             if (Main.Settings.AdvisorFarmGear)
             {
-                var g = GearFarmAdvisor.Analyze();
-                if (g.Known && g.Best != null)
+                // THE CHALLENGE PAUSE (amendment 25 §5). This gates an EXISTING writer — amendment 26
+                // §3 corrected 25 §2's "reaches a text string and nothing else": the SnipeZone write
+                // below is live, so without this gate gear farming has been overriding the adventure
+                // zone mid-challenge all along. Laser Sword is the sole exception (GearFarmPause).
+                //
+                // IT FALLS THROUGH, IT DOES NOT RETURN. A return would freeze SnipeZone on whatever
+                // the gear farm last set it to — the very placement the pause exists to undo. Falling
+                // through hands routing back to the boost/ITOPOD path, i.e. the advisor behaves
+                // exactly as it would with Farm Gear Zones switched off. Re-engagement is automatic
+                // when the challenge clears; §5 assumes that, and its open item 3 leaves "or wait for
+                // the user" undecided, so nothing here decides it either.
+                string gfChallenge = null;
+                try { gfChallenge = ChallengeDetector.Current(); } catch { }
+                var gfSig = GearFarmPause.Signature(gfChallenge);
+                if (GearFarmPause.ShouldSurface(gfSig, _gearFarmPauseSignature))
                 {
-                    if (Main.Settings.SnipeZone != g.Best.Zone)
+                    _gearFarmPauseSignature = gfSig;
+                    var line = GearFarmPause.Message(gfSig);
+                    Main.Log($"Advisor: {line}");
+                    ChallengeOverlay.Record("GEAR", line, GearFarmPause.Reason(gfSig));
+                }
+                if (gfSig == null)
+                {
+                    var g = GearFarmAdvisor.Analyze();
+                    if (g.Known && g.Best != null)
                     {
-                        Main.Settings.SnipeZone = g.Best.Zone;
-                        Main.Log($"Advisor: farm zone -> {g.Best.ZoneName} (gear: {g.Best.MissingItems.Count} uncapped, ~{g.Best.HoursToCap:0.#}h to cap)");
+                        // PHASE: FARM. The gear farm ranks farm targets by HoursToCap against a time
+                        // budget (GearFarmAdvisor.cs:396, :421); the phase machine does not second-
+                        // guess that ranking, it only labels the phase so the transition line is
+                        // continuous with IDLE and ITOPOD.
+                        //
+                        // ⚠ SURFACED ON THE PHASE, NOT ON THE ZONE. This used to log only when
+                        // SnipeZone changed, which is silent for the transition that matters most:
+                        // IDLE on zone N becomes FARM on zone N the moment one-hit is reached, and
+                        // the zone number does not move. That is a phase change with no line — the
+                        // 25 §4 shape. The latch below fires on phase+zone, so it says so.
+                        var farmSig = "Farm#" + g.Best.Zone;
+                        if (ZonePhase.ShouldSurface(farmSig, _zonePhaseSignature))
+                        {
+                            _zonePhaseSignature = farmSig;
+                            var fline = $"zone phase -> FARM {g.Best.ZoneName} "
+                                      + $"(gear: {g.Best.MissingItems.Count} uncapped, ~{g.Best.HoursToCap:0.#}h to cap)"
+                                      + ItopodOverrideNote()
+                                      + OwnerOverrideNote(g.Best.Zone, g.Best.ZoneName);
+                            Main.Log($"Advisor: {fline}");
+                            ChallengeOverlay.Record("GEAR", fline, "one-hit met, set not capped");
+                        }
+                        // Same demand as the rare track: FARM stands in a zone collecting drops.
+                        FarmVenue.DropFarmActive = true;
+                        // FARM's admission bar is on HoursToCap (Viable), NOT on cadence — the one
+                        // track of the three where that is true, which is why the bar names the
+                        // quantity it tests instead of assuming it.
+                        Churn(RouteChurn.Of("FARM", g.Best.Zone, g.Best.ZoneName, "one-hit met, set not capped",
+                            score: g.Best.HoursToCap, scoreLabel: "cap", cadence: g.Best.SlowestSetCadence,
+                            bar: GearFarmAdvisor.TargetHours, barOnCadence: false,
+                            runnerUp: g.BestRunnerUp?.HoursToCap ?? double.NaN,
+                            runnerUpName: g.BestRunnerUp?.ZoneName));
+                        if (Main.Settings.SnipeZone != g.Best.Zone)
+                            Main.Settings.SnipeZone = g.Best.Zone;
+                        return;
                     }
-                    return;
+
+                    // ⚠ THE GEAR FARM'S REASON WAS COMPUTED AND THROWN AWAY. Verdict.Text says which
+                    // of three very different states this is — "All farmable zone gear is capped",
+                    // "No gear zone caps within 3h — closest is X (needs ~N% drop chance)", or "roll
+                    // caps hold them past 3h" (GearFarmAdvisor.cs:426-443) — and ApplyZones read only
+                    // .Best, so the log could not distinguish "nothing left to do" from "everything
+                    // is out of budget". Both produce the same silence, and they want opposite
+                    // responses. Latched, so it is one line per change of state, not one per pass.
+                    if (g.Known && !string.IsNullOrEmpty(g.Text)
+                        && GearFarmPause.ShouldSurface(g.Text, _gearFarmTextSignature))
+                    {
+                        _gearFarmTextSignature = g.Text;
+                        Main.Log($"Advisor: {g.Text}");
+                        // [OPERATOR] asked for the per-zone missing items by name. Without it the
+                        // only way to learn WHY a zone was rated as it was, was to read the drop
+                        // table by hand — which is how "why does it even consider Chocolate World"
+                        // went unanswered for a whole run.
+                        // EVERY candidate, not just Best/Nearest — on the "roll caps hold them past
+                        // 3h" path both of those are null, which is precisely the path where the
+                        // question "which item is holding this zone" gets asked. Bounded by the
+                        // number of zones with uncapped gear, and latched to the text above.
+                        foreach (var p in g.Plans)
+                            Main.Log($"Advisor:   {p.ZoneName}: {GearFarmAdvisor.DescribeMissing(p)}");
+                    }
+
+                    // SET COMPLETION FIRST [OPERATOR 2026-08-05]: "weigh capping a new set for the
+                    // bonus above non set accessories. once the sets are maxxed, go back and farm the
+                    // non set accessories." A set pays a completion bonus on top of the per-item
+                    // list bonuses; a set-less stray pays only the latter. Above the rare track by
+                    // rank, so the two are no longer decided by which time bar each was measured by.
+                    // When every set is capped, SetTarget is null and routing falls through to Rare.
+                    if (g.Known && g.SetTarget != null && ApplySetFarm(g.SetTarget, g.SetRunnerUp)) return;
+                    if (g.Known && g.SetTarget == null) _setFarmSignature = null;
+
+                    // THE ULTRA-RARE / CHAIN TRACK [OPERATOR 2026-08-05], BELOW the gear farm and
+                    // ABOVE the boost farm. Reached only when the gear farm has no in-budget zone, so
+                    // baseline set gear always wins when there is any; below that, a rare whose drops
+                    // arrive regularly beats boost farming, because most of both chains is Looting and
+                    // every merge compounds into all later farming.
+                    // OPT-OUT [OPERATOR 2026-08-05]. Off = set gear only; the advisor still says what
+                    // is on the table so the choice to spend the hours is the user's, not a silent
+                    // commitment. Defaults OFF because these are long: measured on this save the
+                    // cheapest eligible rare was ~35h and the dearest 642h.
+                    if (g.Known && Main.Settings.AdvisorFarmRares)
+                    {
+                        _raresOfferSignature = null;   // re-offer if it is switched back off
+                        if (g.Rare != null && ApplyRareFarm(g.Rare, g.RareRunnerUp)) return;
+                    }
+                    else if (g.Known)
+                    {
+                        // OFF, or on with nothing eligible. Either way say what is outstanding —
+                        // gated on RareCount (any uncapped rare), NOT on one being eligible.
+                        SurfaceRaresAvailable(g);
+                        _rareFarmSignature = null;     // re-announce the route if it is switched on
+                        if (g.RareCount == 0) _raresOfferSignature = null;
+                    }
+
+                    // THE THREE-PHASE RULE'S OTHER TWO PHASES. Reached only when the gear farm has no
+                    // target — which is exactly the state in which they apply, because Analyze
+                    // discards every zone that is not already one-shottable (GearFarmAdvisor.cs:375)
+                    // and those are the zones IDLE and ITOPOD are about. Before this, ApplyZones fell
+                    // straight through to the boost farm here and the two phases did not exist.
+                    if (ApplyZonePhase()) return;
                 }
             }
+
+            // Routing reached the boost/ITOPOD path, so no drop farm owns it — hand the demand back.
+            // Cleared HERE rather than at the top of ApplyZones: the 10-minute throttle returns early
+            // on most ticks, so clearing up there would drop the demand seconds after raising it.
+            FarmVenue.DropFarmActive = false;
 
             var v = BoostFarmAdvisor.Analyze();
             if (!v.Known) return;
@@ -778,10 +1252,18 @@ namespace NGUAdvisor.Managers
                 name = "ITOPOD";
                 detail = $"no boost demand — {why}";
             }
+            // ⚠ RANKED IN boost-value/kill, WHERE HIGHER WINS AND THE UNIT IS NOT HOURS. The only
+            // track of the seven for which both are true; the churn log carries both facts with the
+            // number so a rate is never printed as a time or subtracted from one.
+            Churn(RouteChurn.Of("BOOST", target, name, detail,
+                score: v.BestRate, scoreLabel: "boost-value/kill", scoreInHours: false, higherWins: true));
+
             if (Main.Settings.SnipeZone != target)
             {
                 Main.Settings.SnipeZone = target;
-                Main.Log($"Advisor: farm zone -> {name} ({detail})");
+                // Silent when target is 1000 — that is the ITOPOD, the fallback venue itself, and no
+                // owner "takes it away" (ZoneRouting.OwnerNote's second silence).
+                Main.Log($"Advisor: farm zone -> {name} ({detail})" + OwnerOverrideNote(target, name));
             }
         }
 
@@ -995,6 +1477,18 @@ namespace NGUAdvisor.Managers
 
         private static void ApplyWandoosOs(Character c)
         {
+            // AUTOMATION ANDed with DECISIONS. Every return below this line is FEASIBILITY or
+            // hysteresis — installed, a 10-minute cooldown, a 1.25x advantage floor — and not one of
+            // them is permission, so with AdvisorWandoosOS on there was nothing a user could switch
+            // off to stop this writing.
+            //
+            // ⚠ THE MOST EXPENSIVE OF THE THREE TO GET WRONG. Changing the OS WIPES wandoos levels;
+            // CustomAllocation.cs:181-189 records that as a user-reported incident ("every advisor
+            // reload re-applied the profile's wandoos breakpoint, and the OS change WIPES wandoos
+            // levels - hours of progress gone"). An automation switch that does not actually stop it
+            // is the version of this bug that costs a run.
+            if (!Main.Settings.ManageWandoos) return;
+
             if (!c.wandoos98.installed && c.wandoos98.OSlevel <= 0) return;
             if ((DateTime.UtcNow - _lastOsSwitch).TotalMinutes < 10) return;
 

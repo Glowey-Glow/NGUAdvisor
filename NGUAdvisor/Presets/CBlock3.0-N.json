@@ -57,7 +57,11 @@
       {
         "Type": "Number",
         "Target": 1000
-      }
+      },
+        {
+          "Type": "Time",
+          "Time": { "m": 32 }
+        }
     ],
     "Challenges": [
       "NOTM-6", "NOTM-7", "NOTM-8", "NOTM-9", "NOTM-10",

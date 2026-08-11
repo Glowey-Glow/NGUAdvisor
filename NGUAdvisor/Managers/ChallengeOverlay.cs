@@ -210,12 +210,29 @@ namespace NGUAdvisor.Managers
         }
 
         // ---- Slice 2: allocation strips. The per-system challenge guards already exist (AugmentBP/
-        // BestAug refuse NOAUG, TimeMachineBP refuses NOTM, NGUBP dies with the disabled NGU button),
+        // BestAug refuse NOAUG via AugmentMath.AugmentMenuUnlocked, TimeMachineBP refuses NOTM at
+        // TimeMachineBP.cs:9's Unlocked(), and NGU lanes are refused by the CONSTRAINT LAYER —
+        // ConstraintLayerBridge.cs:300 -> FeasibilityPass.NguLane on character.NGU.disabled),
         // and PerformSwap filters IsValid() BEFORE computing shares — so redistribution is free. The
         // hole this closes: a profile breakpoint whose priorities are ALL dead in the active challenge
         // used to bail out and leave the resource idle for the whole challenge. Now the overlay
         // (1) narrates the filter in the feed, and (2) injects a generic fallback priority list in the
         // all-dead case — itself IsValid-filtered, so whatever the challenge kills drops here too. ----
+        //
+        // ⚠ THIS COMMENT USED TO READ "NGUBP dies with the disabled NGU button". THAT WAS FALSE, and it
+        // mattered, because the NONGU template below was designed around it (39 §F1; amendment 32 §4).
+        // [DECOMP] ButtonShower.cs:329-346 is the COMPLETE gate on buttons.ngu.interactable and it reads
+        // character.settings.nguOn — the player's "On Vacation" toggle — and nothing else; :199 is that
+        // file's only inChallenge term and it belongs to No Augs. So NGUBP.Unlocked() (NGUBP.cs:8-14)
+        // stays TRUE for the whole NGU Challenge and the lanes survive the IsValid() filter at :99.
+        //
+        // What actually refuses them is one layer later and keyed on the EFFECT FLAG, not the challenge:
+        // [DECOMP] Rebirth.cs:521-523 — engageNGUChallenge() sets nguChallenge.inChallenge = true and,
+        // two lines later, character.NGU.disabled = true. That second flag is what the ~30
+        // `if (character.NGU.disabled) return 1.0;` sites in AllNGUController.cs read, and it is what
+        // FeasibilityPass.NguLane refuses on. ONE predicate therefore covers both the Troll challenge
+        // and the NGU Challenge — which is why searching this tree for `nguChallenge` finds no gate and
+        // the gate exists anyway. Cleared at NGUChallengeController.cs:146 / :230, NOT at rebirth.
         private static bool _lscSwordOn;   // narration flag for the LSC sword-first injection
         private static readonly Dictionary<ResourceType, int> _lastActive = new Dictionary<ResourceType, int>();
         private static readonly Dictionary<ResourceType, List<ResourceBreakpoint>> _fallbackParsed = new Dictionary<ResourceType, List<ResourceBreakpoint>>();
@@ -228,6 +245,42 @@ namespace NGUAdvisor.Managers
         // which is survival, not strategy. When a strip challenge has gutted the profile list (half
         // or more entries inactive), the challenge's template takes over the shape instead. Untouched
         // outside these three challenges; a lightly-degraded list stays the user's own.
+        //
+        // ⚠ THE NONGU TEMPLATE IS NOT DEAD CODE, AND A DELETE DECISION TAKEN ON THAT PREMISE IS VOID.
+        // 39 §F1 inferred "the list is never gutted, so the template can never fire" from the fact that
+        // NGUBP.IsValid() stays true during the challenge. That inference does not follow. `gutted` is
+        // `valid.Count * 2 <= origCount` (below) and `valid` is filtered by IsValid() =
+        // correctResourceType && unlocked && !targetMet (LaneTargets.cs:177-178) — so EVERY finished or
+        // locked lane shrinks it, whatever the cause. The block comment two lines above the check says
+        // so outright: "the count includes finished-target entries, an acceptable over-trigger".
+        //
+        // Let N = NGU entries (all survive) and K = origCount. Gutting needs valid.Count <= K/2, hence
+        // N <= K/2. So the template fires whenever NGU entries are at most HALF the list and enough of
+        // the remainder has hit target or locked — e.g. ["NGU-0","CAPTM:10","BESTAUG","ALLBT"] with the
+        // TM at its cap and augments under the bossID<17 lock: valid = 2, orig = 4, 2*2 <= 4. TRUE.
+        // The second door is independent: `valid.Count == 0` fires the template regardless of `gutted`.
+        //
+        // The real defect is the INVERSE of the one reported: the template is unreachable exactly in the
+        // case it was written for — the 70%-NGU profile named on the line above, where N > K/2 always —
+        // and reachable in cases it was not designed for. Reported, not fixed (amendment 32 §7).
+        //
+        // ⚠ AND IT IS NOT REDUNDANT EITHER — the SECOND delete premise, also false. The reading that
+        // "FeasibilityPass.NguLane already refuses the NGU lanes, so the template has no NGU work left
+        // to do" fails on two independent grounds:
+        //
+        //   1. THE NONGU TEMPLATE CONTAINS NO NGU TOKENS AT ALL. Read it: energy is
+        //      CAPTM:10 / CAPWAN:60 / BESTAUG / CAPALLAT / ALLBT and magic is CAPTM:10 / CAPWAN:60 /
+        //      BR-30. It does not reshape NGU lanes — it is entirely NON-NGU allocation policy, and
+        //      specifically it is the answer to "what should the freed pool do INSTEAD", carrying cap
+        //      PERCENTAGES (grammar [CAP]BASE[-index][:percent], ResourceBreakpoint.cs:12) and a
+        //      priority ORDER that exist nowhere else. Contrast the NOTM and NOAUG templates on the
+        //      lines below, which DO carry ALLNGU: the omission here is deliberate, not vestigial.
+        //      Deleting it would delete that policy, which is why the delete was refused — the
+        //      operator's ruling is about NGU allocation and this is not that.
+        //   2. THE TEMPLATE RUNS BEFORE THE REFUSAL, so it cannot be downstream of it.
+        //      ConstraintLayerBridge.cs:99 builds `valid`, :100 calls TransformPriorities (here), and
+        //      the NguLane refusal is not reached until :316. The template therefore sees the NGU
+        //      lanes still live, and when it fires it REPLACES membership wholesale.
         private static readonly Dictionary<string, Dictionary<ResourceType, string[]>> Templates =
             new Dictionary<string, Dictionary<ResourceType, string[]>>
             {
@@ -451,7 +504,27 @@ namespace NGUAdvisor.Managers
         // slice of the surplus, not all of it) + a seconds gate scaled to that percent so the same
         // rituals still qualify. See the reasoning at the marathon branch in AutoTokens — the three
         // parts are load-bearing together and must be retuned together.
+        //
+        // ⚠ TWO OF THOSE THREE PARTS NO LONGER DECIDE ANYTHING on the default (constraint-layer) path:
+        // there is no divisor for CAP to escape, and a CAP-with-percent budget was min(ceil(cur×pct),
+        // idle) — a percent of the resource CAP, which a mature account's cap exceeds the pool by, so
+        // it never binds. The MARATHON is deliberately NOT stripped here: only the three programs on
+        // amendment 01's REPLACE path are in scope (see SegmentRitual below and the AutoTokens
+        // branches). Retuning `:10` is not a lever; it never was one.
         private const string MarathonRitual = "CAPBR-300:10";
+
+        // The SAME blood lane and the SAME 300s duration filter, with the share semantics stripped:
+        // the three programs on amendment 01's REPLACE path (AUGMENTATION / NGU+AT / EVIL NGU) emit
+        // this instead of MarathonRitual. `-300` is BR's Index = secondsToRun, a MEMBERSHIP filter
+        // deciding which rituals qualify (RitualMath.RitualDecide) — it is kept, unchanged, because
+        // dropping it would change which rituals run. `CAP` and `:10` are the share semantics and
+        // they decide nothing under the constraint layer (amendment 28); see AutoTokens.
+        //
+        // ⚠ THE TAIL GUARD MUST TEST FOR THIS TOKEN. It tests `!list.Contains(...)` by exact string,
+        // so a segment emitting "BR-300" while the guard only knew "CAPBR-300:10" would look
+        // ritual-less and get a SECOND blood lane appended — the exact duplicate-lane trap the guard
+        // was written to stop.
+        private const string SegmentRitual = "BR-300";
 
         public static string Segment { get; private set; } = "";
 
@@ -507,21 +580,61 @@ namespace NGUAdvisor.Managers
             // rebirths + the first Evil Basic entry are profile-owned (EvilStart: Number/100 + BASIC-1).
             // Chapter-gated so Normal is untouched; hands back to the normal chain at Boss 125 / T7 unlock
             // (later slices add the guide's full 24h Evil shape past T7).
+            // GATED ON DIFFICULTY, NOT CHAPTER. These used to require StageDetector.Chapter == 5, which
+            // ends at Evil boss 166 — the boss that unlocks Interdimensional Party. So the moment the
+            // player reached IDP, every Evil-specific segment switched off and the run silently reverted
+            // to the NORMAL 24h shape (TM HOUR -> AT HOUR -> RECOVERY -> NGU MARATHON) on an Evil
+            // character, with no warning and no log line. The guide's four-phase shape is the EVIL run
+            // shape — it "REPLACES the Normal 1h TM / 1h AT / 22h NGU" for the whole difficulty, not for
+            // one chapter of it — so difficulty is the correct gate and the boss thresholds below carry
+            // the progression. Chapter() also falls back to 0 on any exception, which used to drop a
+            // healthy Evil run out of its own shape for up to 60s at a time.
+            bool isEvil = false;
+            try { isEvil = c.settings.rebirthDifficulty == difficulty.evil; } catch { }
+
             bool evilClimb = false;
-            try { evilClimb = Chapter() == 5 && ZoneHelpers.CurrentHighestBoss(c) < 125; } catch { }
+            try { evilClimb = isEvil && ZoneHelpers.CurrentHighestBoss(c) < 125; } catch { }
 
             // AUGMENTATION (guide ch.5 sub-mode B, phase 2) — once T7-capable (Boss 125+), the 24h run is
             // TM 0–0.5h → AUGMENTATION 0.5–3h → Normal-NGU+AT → Evil-NGU. This phase runs the best augment
             // (energy) and feeds blood for the Counterfeit-once → Blood Number spells (magic). Chapter+boss-
             // gated; preempts TM HOUR from 0.5h so TM keeps only the guide's first half-hour. Magic→blood
             // routing is tunable (untested until Boss 125+).
-            bool augPhase = false;
-            try { augPhase = Chapter() == 5 && ZoneHelpers.CurrentHighestBoss(c) >= 125
-                             && tmUnlocked && runSec >= 1800 && runSec < 10800; } catch { }
+            bool evilRun = false;
+            try { evilRun = isEvil && ZoneHelpers.CurrentHighestBoss(c) >= 125 && tmUnlocked; } catch { }
+
+            bool augPhase = evilRun && runSec >= 1800 && runSec < 10800;
+
+            // Guide ch.5 sub-mode B phases 3 and 4, which had no implementation at all: after the
+            // augment window the run was handed straight back to the NORMAL chain, so the guide's
+            // "3:00-23:00 Normal NGU **and** Advanced Training" became a single-system AT HOUR followed
+            // by an NGU marathon, and the "23:00-24:00 Evil NGU" tail existed only as a level-track
+            // switch in LevelPlanner with no matching allocation.
+            //
+            // The tail is sized the way the guide sizes it: N hours where N = T7 versions DEFEATED
+            // (1h after T7v1, 2h after T7v2...). That is the same rule and the same conversion
+            // LevelPlanner.TickNguTrack uses, read from the same places, so the allocation shape and the
+            // level track cannot disagree about when Evil NGUs start. With no time-based rebirth target
+            // (RebirthTime -1 / number-target profiles) there is no "last N hours" to compute, so the
+            // run simply stays in NGU+AT — which is what it did before this existed.
+            bool evilNguTail = false;
+            if (evilRun && runSec >= 10800)
+            {
+                try
+                {
+                    double target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
+                    int t7Defeated = TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6));
+                    if (target > 0 && t7Defeated >= 1)
+                        evilNguTail = runSec >= target - t7Defeated * 3600.0;
+                }
+                catch { }
+            }
 
             string seg;
             if (evilClimb) seg = "EVIL CLIMB";
             else if (augPhase) seg = "AUGMENTATION";
+            else if (evilNguTail) seg = "EVIL NGU";
+            else if (evilRun && runSec >= 10800) seg = "NGU+AT";
             else if (tmUnlocked && (tmEmpty || runSec < 3600)) seg = "TM HOUR";
             else if (atUnlocked && runSec < AtHourPlanner.EndSec(c, runSec)) seg = "AT HOUR";
             else if (numberCheap && runSec < 14400) seg = "RECOVERY";
@@ -534,10 +647,19 @@ namespace NGUAdvisor.Managers
             // absent rather than shown as skippable, because it was never part of this run's plan.
             var chain = new List<string>();
             if (evilClimb) chain.Add("EVIL CLIMB");
+            else if (evilRun)
+            {
+                // The guide's four-phase Evil 24h shape, shown whole so the companion timeline matches
+                // what the run will actually do. The Evil-NGU tail only appears when it can be computed
+                // (a time-based rebirth target and at least one T7 version down).
+                chain.Add("TM HOUR");
+                chain.Add("AUGMENTATION");
+                chain.Add("NGU+AT");
+                if (evilNguTail || CanPlanEvilNguTail()) chain.Add("EVIL NGU");
+            }
             else
             {
                 if (tmUnlocked) chain.Add("TM HOUR");
-                if (augPhase || (Chapter() == 5 && tmUnlocked)) chain.Add("AUGMENTATION");
                 if (atUnlocked) chain.Add("AT HOUR");
                 chain.Add("RECOVERY");
                 chain.Add("NGU MARATHON");
@@ -557,12 +679,28 @@ namespace NGUAdvisor.Managers
             }
         }
 
+        // Will the Evil-NGU tail be reachable this run? Used only to decide whether to SHOW it in the
+        // planned chain; the live decision is made in UpdateSegment from the same two facts.
+        private static bool CanPlanEvilNguTail()
+        {
+            try
+            {
+                double target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
+                return target > 0 && TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6)) >= 1;
+            }
+            catch { return false; }
+        }
+
         private static string SegmentGear()
         {
             switch (Segment)
             {
                 case "EVIL CLIMB": return "Adventure";   // re-climb: adventure stats push the boss wall
                 case "AUGMENTATION": return "Augments";  // guide ch5 phase 2: gear for augment speed
+                // Phase 3 runs NGUs and AT together; the NGU side is the one that compounds all run, so
+                // gear for NGU speed and let the bounded AT share ride on it.
+                case "NGU+AT": return "NGUs";
+                case "EVIL NGU": return "NGUs";
                 case "TM HOUR": return "Time Machine";
                 case "RECOVERY": return "Adventure";
                 // AT HOUR levels the trainings — gear for AT SPEED, not combat stats (user-compared
@@ -624,18 +762,24 @@ namespace NGUAdvisor.Managers
             return ids.Select(i => $"NGU-{i}").ToArray();
         }
 
-        // Surplus lanes: positive-value NGUs that didn't make the hot set, emitted as CAPNGU so
-        // they stay OUT of the equal-share divisor — a CAP token only drinks what's left when its
-        // turn comes, so the hot lanes' shares are untouched (allocation walks the list in order,
-        // recomputing idle/prioCount per non-cap token; caps take min(need, idle-at-turn)).
-        private static string[] ChapterNgusSurplus(ResourceType type)
+        // Surplus lanes: positive-value NGUs that didn't make the hot set. They are DISJOINT from the
+        // hot set by construction (NguValueMath.Surplus filters `!targets.Contains`), so emitting them
+        // with or without the CAP prefix cannot collide with, or de-duplicate away, a hot lane.
+        //
+        // `cap` exists only because the CAP prefix was share semantics: the absorbers were emitted as
+        // CAPNGU to stay OUT of the equal-share divisor so the hot lanes' shares were untouched. The
+        // three programs on amendment 01's REPLACE path pass false — under the constraint layer there
+        // is no divisor to stay out of and the prefix decides nothing (amendment 28). The segments not
+        // on that path (the NGU MARATHON) still pass true, deliberately: stripping them is a separate,
+        // separately-scoped decision, not a side effect of this one.
+        private static string[] ChapterNgusSurplus(ResourceType type, bool cap = true)
         {
             try
             {
                 var plan = NGUAdvisors.Compute(ChapterNguIds(ResourceType.Energy), ChapterNguIds(ResourceType.Magic));
                 var ids = type == ResourceType.Magic ? plan.MagicSurplus : plan.EnergySurplus;
                 if (plan.Known && ids != null)
-                    return ids.Select(i => $"CAPNGU-{i}").ToArray();
+                    return ids.Select(i => cap ? $"CAPNGU-{i}" : $"NGU-{i}").ToArray();
             }
             catch { }
             return new string[0];
@@ -686,11 +830,148 @@ namespace NGUAdvisor.Managers
                     break;
                 case "AUGMENTATION":
                     // Guide ch5 phase 2 (0.5–3h): energy → best augment (cheap stat caps first); magic →
-                    // blood (fuels the Counterfeit-once → Blood Number spells the BloodPlanner casts). The
-                    // BR-30 append in the tail is the same live-consumer-gated routing the marathon uses.
-                    if (e) { list.Add("CAPALLBT"); list.Add("BESTAUG"); }
-                    else list.Add("BR-30");
+                    // blood (fuels the Counterfeit-once → Blood Number spells the BloodPlanner casts).
+                    //
+                    // ---- SHARE SEMANTICS STRIPPED (amendment 11 §4.4 REPLACE · amendment 28 · 31 §Q4a) ----
+                    // This hunk used to emit CAPALLBT + CAPBESTAUG, and its own comment said exactly why
+                    // the CAP was there: IsCap is a substring test, so plain BESTAUG was a NON-cap lane
+                    // sitting inside the prioCount equal-share divisor, and the segment whose entire
+                    // purpose is the augment was handed 1/prioCount of the pool — a share measured falling
+                    // 1/3 → 1/6 in ten seconds as the NGU hot set grew (2026-08-01 log). The CAP was a
+                    // DIVISOR WORKAROUND by construction.
+                    //
+                    // THERE IS NO DIVISOR LEFT. Every seated destination is offered
+                    // min(capacity, remaining / destinations-not-yet-offered) (ConstraintLayer.FillSession),
+                    // so a lane's share no longer depends on how many other lanes are non-CAP, and CAP
+                    // buys nothing. The workaround's own stated bound was wrong anyway: "bounded by its
+                    // own need" (CalculateAugCap's stair-snap) holds only while ONE augment level costs
+                    // less than the pool — late-game it never does, so the effective bound was
+                    // min(need, pool) = pool, and audit 31 §Q1b measured 99.93% of the energy pool in
+                    // this one lane.
+                    //
+                    // What is left below is MEMBERSHIP and ORDER, which are still load-bearing: they are
+                    // the only thing deciding which lanes seat and in what sequence. The amounts belong
+                    // to the constraint layer.
+                    //
+                    // BR-30 is NOT added here. It used to be appended unconditionally by an `else` on this
+                    // line, which contradicted this block's own comment claiming it was the same
+                    // live-consumer-gated routing the marathon uses. It was not: the gated append is in
+                    // the tail below (`if (rituals && ...)`), and because that guard tests
+                    // `!list.Contains("BR-30")` it found the token already present and did nothing. Net
+                    // effect: when BloodPlanner.BloodMatters() was false — blood idle, nothing being cast —
+                    // every other segment correctly dropped rituals and this one still funded a ritual
+                    // with no sink. Falling through to the tail restores the gate; when blood does have a
+                    // live consumer the tail adds BR-30 exactly as before.
+                    //
+                    // ---- ⚠ WIDENING THIS MEMBERSHIP WAS PROPOSED, MEASURED, AND REFUSED ------------
+                    // (amendment 36 §3, 2026-08-08. Do not re-open it from the token list alone.)
+                    //
+                    // THE PROPOSAL was to seat the surplus sink (WAN), ALLAT, TM and the surplus-NGU
+                    // tail here, ordered after BESTAUG, because AUGMENTATION is the ONLY energy segment
+                    // with no WAN, no ALLAT and no TM, and its ticks logged `sink=absent`. Both halves
+                    // of that premise are true. THE CONCLUSION IS NOT, and the reason is arithmetic on
+                    // a conserved quantity: this segment's anchor lane is ALREADY TAKING THE WHOLE POOL,
+                    // so every lane added to it is subtracted from the augment, not from idle resource.
+                    //
+                    // MEASURED on the operator's own [AllocDbg] block — energy pool 1,728,134,347,235
+                    // at 9270s, replayed through the shipped ConstraintLayer.Waterfill, with every added
+                    // lane modelled as a hard CEILING at its measured `took=` from the 17-lane block 450
+                    // seconds later and BestAug given INFINITE appetite. Both assumptions favour the
+                    // augment, so these are UPPER BOUNDS on what widening could leave it:
+                    //
+                    //   today (BESTAUG + 6 hot NGUs)      BestAug 1,723,068,828,990   99.707%   idle 0
+                    //   + WAN, ALLAT, TM, surplus NGUs    BestAug   231,750,007,913   13.410%   idle 0
+                    //   + WAN only (closes sink=absent)   BestAug   861,534,414,495   49.853%   idle 13.7%
+                    //
+                    // The full widening costs the augment 7.44x. Even seating the sink ALONE halves it —
+                    // and makes the remainder WORSE, not better: Wandoos saturates at its per-tick
+                    // absorptive capacity (624,350,820,085 measured) and the reserve banked above that
+                    // is stranded, so a segment that idles NOTHING today would idle 237,183,594,410.
+                    // [OPERATOR]: gains across systems "without degrading the active 'farm' system" —
+                    // in this segment the augment IS the active farm system.
+                    //
+                    // AND THE REMAINDER THAT MOTIVATED IT IS ALREADY GONE. The 85% energy figure was the
+                    // pre-waterfill single pass (fixed by 3546670: this block now logs `remainder=0`),
+                    // and the 98% magic figure was the BR withdrawal (fixed by the re-offer gate —
+                    // ConstraintLayer.ReofferTable; magic returns to `remainder=401`-scale). There is no
+                    // idle pool here left for extra lanes to catch.
+                    //
+                    // ⚠ WHAT WAS STILL OPEN — AND IS NOW CLOSED, BY A CONDITIONAL SINK RATHER THAN BY
+                    // A TOKEN. This segment emits no WAN, so if its ANCHOR LANE DROPS OUT the pool had
+                    // no destination at all:
+                    //   · energy — BestAug refused (every pair at target, or the No Augs challenge) and
+                    //     ALLBT's twelve slots all at cap leaves six NGU ceilings, ~5.07 B of 1.728 T;
+                    //   · magic  — BloodPlanner.BloodMatters() false drops BR-30 and leaves five NGU
+                    //     ceilings, ~16.4 B of 1.026 T.
+                    // Both are ~99% idle with `sink=absent`. Neither was observed in the 2026-08-07 logs
+                    // (`rituals ON` throughout, BestAug seated every tick), so this was latent.
+                    //
+                    // ⚠ THE FIX IS NOT ON THIS LINE, AND MUST NOT BE MOVED ONTO IT. Adding "WAN" to the
+                    // tokens below is exactly the unconditional widening priced at 2.02x above — the
+                    // sink sits INSIDE the fill's divisor (proved from the operator's own 15-lane block
+                    // in ConstraintLayer.AnchorAbsentSink's header) and it also banks a share every
+                    // waterfill ROUND, so an unconditional WAN takes the augment from 99.707% to
+                    // 49.448% of the pool. The seat is instead made in WithAnchorAbsentSink, AFTER
+                    // IsValid() has run, and ONLY when the anchor is already gone — so in every tick
+                    // the operator has actually logged, the membership below is unchanged to the lane.
+                    if (e) { list.Add("ALLBT"); list.Add("BESTAUG"); }
                     foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    break;
+                case "NGU+AT":
+                    // Guide ch5 phase 3 (3:00-23:00): "BB Normal NGUs *while* raising AT for objectives",
+                    // explicitly SIMULTANEOUS. That combination is the thing the old shape could not
+                    // express: it ran a single-system AT HOUR and then an NGU marathon, so for most of the
+                    // run exactly one of the two systems the guide wants funded together was getting
+                    // anything.
+                    //
+                    // ---- SHARE SEMANTICS STRIPPED (amendment 11 §4.4 REPLACE · amendment 28 · 31 §Q4a) ----
+                    // Removed from the tokens below, and from this comment: CAPTM:5, CAPWAN:40,
+                    // CAPALLBT, CAPALLAT:15, CAPBR-300:10 and the CAPNGU surplus absorbers. Every one of
+                    // those decorations existed to steer the prioCount share model — CAP to leave the
+                    // divisor, :percent to bound what leaving it then let a lane take, absorber-ordering
+                    // to decide who drank the residue. That model is gone: the fill offers every seated
+                    // destination min(capacity, remaining / destinations-not-yet-offered).
+                    //
+                    // AND THE PERCENTS NEVER BOUND WHAT THEY CLAIMED. A CAP-with-percent budget was
+                    // min(ceil(cur × pct), idle) — a percent of the resource CAP, not of the idle pool —
+                    // so on a mature account it exceeds the pool and the percent simply never binds.
+                    // Live evidence: CAPTM:5 took 867B where the old model gave it 43.3B. The
+                    // "CAPALLAT:15 is the bound / tune here" note this comment used to carry was
+                    // therefore describing a knob that did not turn, and the guide's own bound ("AT with
+                    // <40% of Energy cap") is a TARGET-side statement that no token percent can express.
+                    //
+                    // ORDER IS KEPT EXACTLY: TM, Wandoos, the cheap BT caps, the five AT slots, the hot
+                    // NGU lanes, the ritual, then the surplus NGUs. It is still load-bearing — it is the
+                    // sequence the fill walks — even though the reasons the old comment gave for it
+                    // (self-limiting caps first, absorbers below the ritual) were share-model reasons.
+                    list.Add("TM");
+                    list.Add("WAN");
+                    if (e) { list.Add("ALLBT"); list.Add("ALLAT"); }
+                    foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    if (rituals) list.Add(SegmentRitual);
+                    foreach (var t in ChapterNgusSurplus(type, cap: false)) if (!list.Contains(t)) list.Add(t);
+                    break;
+                case "EVIL NGU":
+                    // Guide ch5 phase 4 (the last N hours, N = T7 versions defeated): "switch to Evil
+                    // NGUs ... focus NGU Augments + NGU Ygg/EXP toward T7". Pure NGU growth, so no AT
+                    // lane here — AT had phase 3 — and the surplus NGUs are seated in this window
+                    // because it is the one the whole run was built to feed.
+                    //
+                    // The LEVEL TRACK itself is not switched here: LevelPlanner.TickNguTrack (or the
+                    // profile's own NGUDiff timeline, which now wins when it has one) owns that, and both
+                    // size the window from the same T7-versions-defeated rule this segment does.
+                    //
+                    // ---- SHARE SEMANTICS STRIPPED (amendment 11 §4.4 REPLACE · amendment 28 · 31 §Q4a) ----
+                    // Same strip as NGU+AT above, same reasons: CAPTM:5 / CAPWAN:40 / CAPALLBT /
+                    // CAPBR-300:10 / CAPNGU absorbers → the bare lanes. "Absorber" was a share-model
+                    // role, not a lane kind: what made the surplus NGUs absorb was being LAST in the
+                    // list, and they still are.
+                    list.Add("TM");
+                    list.Add("WAN");
+                    if (e) list.Add("ALLBT");
+                    foreach (var t in ngus) if (!list.Contains(t)) list.Add(t);
+                    if (rituals) list.Add(SegmentRitual);
+                    foreach (var t in ChapterNgusSurplus(type, cap: false)) if (!list.Contains(t)) list.Add(t);
                     break;
                 case "TM HOUR":
                     // The guide's hour-0 shape (24hr profiles): cap the cheap BTs, fund TM, wandoos,
@@ -819,11 +1100,12 @@ namespace NGUAdvisor.Managers
             // with nothing below it to starve, taking the remainder is the intent, and those segments
             // are not the ones whose stated goal is NGU growth.
             //
-            // The marathon uses MarathonRitual instead, so this guard MUST test for both. Testing only
-            // "BR-30" would find the marathon's token absent and append a SECOND blood lane — an
-            // uncapped one, straight back into the equal-share divisor, which is worse than the bug
-            // this replaced.
-            if (rituals && !list.Contains("BR-30") && !list.Contains(MarathonRitual)) list.Add("BR-30");
+            // The marathon uses MarathonRitual and the three stripped programs use SegmentRitual, so
+            // this guard MUST test for all three spellings. Testing only "BR-30" would find the other
+            // token absent and append a SECOND blood lane — a duplicate destination that both
+            // allocators would then feed, which is worse than the bug this replaced.
+            if (rituals && !list.Contains("BR-30") && !list.Contains(MarathonRitual)
+                && !list.Contains(SegmentRitual)) list.Add("BR-30");
             return list.ToArray();
         }
 
@@ -834,7 +1116,7 @@ namespace NGUAdvisor.Managers
             // The NGU picks vary with live value math — the token list itself is the cache key.
             string key = $"auto|{Segment}|{Chapter()}|{type}|{string.Join(",", tokens)}";
             if (_templateParsed.Count > 64) _templateParsed.Clear();   // bound the variant cache
-            var list = ParsedList(key, tokens, type);
+            var list = WithAnchorAbsentSink(ParsedList(key, tokens, type), type);
             if (list.Count > 0 && (!_lastGenKey.TryGetValue(type, out var last) || last != key))
             {
                 _lastGenKey[type] = key;
@@ -846,6 +1128,79 @@ namespace NGUAdvisor.Managers
                 Record($"{type} → auto profile", $"{AutoStatus()} · {string.Join(" → ", tokens)}");
             }
             return list;
+        }
+
+        // Per-pool latch for the line below — the sink's arrival and departure are STATE CHANGES and
+        // get one line each, never a per-tick repeat (spec §3.4, the _templateOn/_fallbackOn shape).
+        private static readonly Dictionary<ResourceType, bool> _anchorSinkOn =
+            new Dictionary<ResourceType, bool>();
+
+        // THE ANCHOR-ABSENT SURPLUS SINK, wired. The decision itself is
+        // ConstraintLayer.AnchorAbsentSink — read its header for why this is conditional, for the
+        // 1,758,030,099,891 / 15 arithmetic that proves the sink sits INSIDE the fill's divisor, and
+        // for the no-flap proof. This method is only the two membership reads it needs and the seat.
+        //
+        // ⚠ IT RUNS HERE, AFTER ParsedList, AND THAT IS THE POINT. ParsedList has just applied
+        // IsValid() — correctResourceType && Unlocked() && !TargetMet() — so "the anchor is not
+        // absorbing" is already decided and is simply the anchor's ABSENCE from `list`. Asking the
+        // question in AutoTokens instead would mean re-deriving the No Augs lock and the seven pair
+        // targets from live state, a second copy of a predicate the lane already owns.
+        //
+        // ⚠ AND THE SINK IS SUBJECT TO THE SAME IsValid() AS EVERYTHING ELSE. ParsedList filters the
+        // WAN lane too, so a Wandoos that is re-locked (Evil re-locks it) or at target yields NOTHING
+        // and the list goes back unchanged — a segment with no valid sink available is left exactly
+        // as it was rather than handed an empty lane.
+        //
+        // ⚠ AN EMPTY LIST IS LEFT EMPTY. AutoGenerated's caller falls back to the operator's own
+        // profile on `gen.Count == 0` (TransformPriorities:322); returning a Wandoos-only list would
+        // silently take that fallback away, which is a different decision than this one.
+        private static List<ResourceBreakpoint> WithAnchorAbsentSink(List<ResourceBreakpoint> list, ResourceType type)
+        {
+            try
+            {
+                if (list == null || list.Count == 0) return list;
+                bool energy = type == ResourceType.Energy;
+                var anchor = ConstraintLayer.SinkAnchorFor(Segment, energy);
+                if (anchor == null) return list;      // segment not on the allowlist — no-op
+
+                // Named by GetType().Name, exactly as ConstraintLayerBridge.BuildSpec keys a lane,
+                // so the table and the membership cannot drift over what "BestAug" means.
+                bool anchorSeated = list.Any(x => x != null &&
+                    string.Equals(x.GetType().Name, anchor, StringComparison.Ordinal));
+                bool sinkSeated = list.Any(x => x is WandoosBP);
+
+                var d = ConstraintLayer.AnchorAbsentSink(Segment, energy, anchorSeated, sinkSeated);
+                if (!d.Seat)
+                {
+                    if (_anchorSinkOn.TryGetValue(type, out var was) && was)
+                    {
+                        _anchorSinkOn[type] = false;
+                        Record($"{type} → {anchor} back, surplus sink released",
+                            $"{Segment}: the anchor is absorbing again — Wandoos dropped");
+                    }
+                    return list;
+                }
+
+                var wan = ParsedList($"anchorsink|{type}", new[] { "WAN" }, type);
+                if (wan.Count == 0) return list;      // Wandoos locked or at target — nothing to seat
+
+                if (!_anchorSinkOn.TryGetValue(type, out var on) || !on)
+                {
+                    _anchorSinkOn[type] = true;
+                    Record($"{type} → surplus sink seated", d.Reason);
+                }
+
+                // LAST. The sink is never handed to FillSession.Offer in any round, so its list
+                // position decides nothing — appending keeps every other lane's order byte-identical.
+                var widened = new List<ResourceBreakpoint>(list);
+                widened.AddRange(wan);
+                return widened;
+            }
+            catch (Exception e)
+            {
+                Main.LogDebug($"WithAnchorAbsentSink: {e.Message}");
+                return list;
+            }
         }
 
         // ---- Block model: every challenge with live completions, in game-menu order. ----
@@ -860,6 +1215,9 @@ namespace NGUAdvisor.Managers
         private static readonly string[][] Defs =
         {
             new[] { "BASIC", "standard rules" },
+            // D1 REVERSED (amendment 30): the advisor honours the No Augs challenge, so this note
+            // returns to the same form its NONGU/NOTM siblings use. Under D1 it briefly read
+            // "augments keep funding (UI-only lock — see log)"; that is no longer what happens.
             new[] { "NOAUG", "will strip augment priorities" },
             new[] { "24HR", "gear rotation: push/growth" },
             new[] { "100LC", "gear rotation: push/growth" },

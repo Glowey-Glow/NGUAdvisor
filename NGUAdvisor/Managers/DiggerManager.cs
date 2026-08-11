@@ -7,7 +7,7 @@ namespace NGUAdvisor.Managers
 {
     public static class DiggerManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AllGoldDiggerController _dc = _character.allDiggers;
 
         private static int[] _savedDiggers;
@@ -222,23 +222,124 @@ namespace NGUAdvisor.Managers
             if (!ignoreCap)
                 gps *= Settings.DiggerCap / 100.0;
 
-            // Greedy allocation in PRIORITY order (matches the game's own auto-level: each digger sized
-            // against the gold actually AVAILABLE, not an even gps/count share). The old even split
-            // collapsed every digger to level 1 on Evil, where per-level drains dwarf gross/count (user-
-            // caught: 6-9 diggers all stuck at level 1 with 9e21 gross). Reset to the level-1 baseline, then
-            // level high-priority diggers first against (gps - everyone else's current drain); each digger's
-            // resulting drain <= its budget, so the running total can never exceed gps.
+            // VALUE-RANKED allocation across the whole active set (DiggerMath.AllocateLevels).
+            //
+            // This replaced a sequential residual greedy that walked `ordered` and gave each digger the
+            // most it could afford out of whatever the diggers above it had left. That made position #1
+            // mean "take everything", not "rank first": measured on a live Evil save, the top three
+            // diggers held 99.66% of gross (86.1 / 11.3 / 2.2) while the other eight shared 0.34% and
+            // several sat at level 1 — and because each budget was a `gross - sum(above)` cancellation,
+            // the ~0.03%/min drift in gross swung the tail through ~10 levels every tick.
+            //
+            // priorityOrder still matters, but for what it was written for: MEMBERSHIP and tie-breaks.
+            // It no longer decides budget share, so reordering the profile list no longer silently moves
+            // 86% of the gold economy from one digger to another.
             var ordered = ActiveDiggers?.OrderFrom(priorityOrder).ToArray() ?? new int[0];
-            foreach (var d in ordered)
-                Diggers[d].curLevel = 1;
-            foreach (var d in ordered)
-                SetLevelMaxAffordable(d, gps - (_character.totalGPSDrain() - _dc.drain(d, 0, true)));
+            if (ordered.Length == 0)
+                return;
+
+            var levels = DiggerMath.AllocateLevels(gps, BuildSpecs(ordered));
+            for (int i = 0; i < ordered.Length && i < levels.Length; i++)
+                Diggers[ordered[i]].curLevel = levels[i];
+
+            // AllocateLevels guarantees sum(drain) <= budget from the game's own tables, so an overshoot
+            // here means something is out of sync (a table read failed, or a digger drains outside the
+            // consumesGPS accounting). SAY SO rather than silently reverting: the old per-digger revert
+            // restored `curLevel`, but curLevel had already been reset to 1 two lines above it, so a
+            // one-ulp overshoot cost that digger its entire allocation instead of one level.
+            try
+            {
+                double liveDrain = _dc.totalGPSDrain(), liveGross = _character.grossGoldPerSecond();
+                if (liveGross < liveDrain)
+                    Main.LogDebug($"[DiggerDbg] WARNING: allocated drain {liveDrain:0.##e0} exceeds gross {liveGross:0.##e0}");
+            }
+            catch { }
 
             UpgradeCheapestDigger();
             _dc.refreshMenu();
 
             LogRecap(ordered, gps);
         }
+
+        // The running levels RecapDiggers WOULD set right now, keyed by digger id.
+        //
+        // Exists so the advisor's digger readout and the applier answer the same question from the same
+        // code. They used to disagree structurally: the readout computed its own per-digger
+        // affordability against `netGps + that digger's drain`, which at DiggerCap 100 (net GPS ~0) is
+        // just the digger's own current drain — so its "can run higher" count was identically zero and
+        // the row was pinned to "Ideal set is running" no matter how skewed the allocation actually was
+        // (user-confirmed 2026-08-01, while one digger held 86% of gross).
+        //
+        // Returns empty when the recap could not run at all (menu locked, no gold income), which the
+        // caller should read as "no plan to compare against", not as "nothing to do".
+        public static Dictionary<int, long> PlannedLevels(int[] priorityOrder)
+        {
+            var result = new Dictionary<int, long>();
+            try
+            {
+                if (!_character.buttons.diggers.interactable)
+                    return result;
+
+                var gps = _character.grossGoldPerSecond();
+                if (gps <= 0.0)
+                    return result;
+                gps *= Settings.DiggerCap / 100.0;
+
+                var ordered = ActiveDiggers?.OrderFrom(priorityOrder).ToArray() ?? new int[0];
+                if (ordered.Length == 0)
+                    return result;
+
+                var levels = DiggerMath.AllocateLevels(gps, BuildSpecs(ordered));
+                for (int i = 0; i < ordered.Length && i < levels.Length; i++)
+                    result[ordered[i]] = levels[i];
+            }
+            catch { }
+            return result;
+        }
+
+        // Digger 2 (Stats) is the one digger whose level enters its bonus cubed
+        // (AllGoldDiggerController.totalStatBonus: Math.Pow(curLevel, 3.0)). Everything else is linear.
+        private const int StatsDiggerId = 2;
+
+        // POLICY KNOB, deliberately flat. Multiplies a digger's log-value in the allocator — "how much
+        // do we care about this digger's growth relative to the others". All 1.0 states no opinion, so
+        // the allocator simply equalises marginal growth, which is the defensible default when the twelve
+        // bonuses buy genuinely different things (adventure power, raw stats, NGU speed, EXP, blood...).
+        // Tune HERE if a run wants a bias. Do NOT express that bias by reordering the priority list:
+        // order is membership and tie-breaks, weight is budget share, and conflating the two is what the
+        // old allocator did.
+        private static readonly double[] DiggerWeights = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+
+        private static double DiggerWeight(int id)
+            => id >= 0 && id < DiggerWeights.Length ? DiggerWeights[id] : 1.0;
+
+        // Live read of the game's own digger tables — baseGPSDrain / gpsGrowthRate / startingBoost /
+        // boostPerLevel are all public Lists on AllGoldDiggerController, so nothing here is transcribed
+        // data that can drift from the game. A short/missing list degrades that digger to "no growth
+        // value" rather than throwing, which keeps a bad read from killing the whole recap.
+        private static DiggerMath.DiggerSpec[] BuildSpecs(int[] ids)
+        {
+            var specs = new DiggerMath.DiggerSpec[ids.Length];
+            for (int i = 0; i < ids.Length; i++)
+            {
+                int id = ids[i];
+                specs[i] = new DiggerMath.DiggerSpec
+                {
+                    Id = id,
+                    BaseDrain = Read(_dc.baseGPSDrain, id, 0.0),
+                    Growth = Read(_dc.gpsGrowthRate, id, 1.0),
+                    MaxLevel = id >= 0 && id < Diggers.Count ? Diggers[id].maxLevel : 0L,
+                    StartingBoost = Read(_dc.startingBoost, id, 0.0),
+                    BoostPerLevel = Read(_dc.boostPerLevel, id, 0.0),
+                    Cubic = id == StatsDiggerId,
+                    Weight = DiggerWeight(id)
+                };
+            }
+            return specs;
+        }
+
+        private static double Read(List<double> list, int i, double fallback)
+            => list != null && i >= 0 && i < list.Count ? list[i] : fallback;
 
         // Post-recap diagnostic (validation aid). Dumps the greedy PRIORITY ORDER and the resulting
         // running level + drain per active digger, so the ordering can be confirmed live from inject.log.
@@ -252,38 +353,25 @@ namespace NGUAdvisor.Managers
             _lastRecapDbg = DateTime.UtcNow;
             try
             {
+                // SHARE, not just drain. The failure this replaced was a DISTRIBUTION problem — one
+                // digger holding 86% of the budget while the tail sat at level 1 — and that is invisible
+                // in a list of absolute drains at these magnitudes. Printing each digger's percentage of
+                // the allocated total, plus how much of the budget was used, makes a skewed allocation
+                // obvious at a glance instead of requiring the numbers to be summed by hand.
+                double spent = 0.0;
+                foreach (var d in ordered) spent += _dc.drain(d, 0, true);
+
                 var parts = ordered
-                    .Select(d => $"{d}:L{Diggers[d].curLevel}/{Diggers[d].maxLevel}(drain {_dc.drain(d, 0, true):0.##e0})")
+                    .Select(d => $"{d}:L{Diggers[d].curLevel}/{Diggers[d].maxLevel}"
+                               + $"({_dc.drain(d, 0, true):0.##e0} · {(spent > 0 ? 100.0 * _dc.drain(d, 0, true) / spent : 0.0):0.0}%)")
                     .ToArray();
                 Main.LogDebug($"[DiggerDbg] gross={_character.grossGoldPerSecond():0.##e0} budget={budget:0.##e0} "
+                            + $"spent={spent:0.##e0} ({(budget > 0 ? 100.0 * spent / budget : 0.0):0.0}% of budget) "
                             + $"order=[{string.Join(" ", ordered.Select(d => d.ToString()).ToArray())}] -> {string.Join(", ", parts)}");
             }
             catch { }
         }
 
-        private static void SetLevelMaxAffordable(int id, double cap)
-        {
-            if (id < 0 || id >= Diggers.Count)
-                return;
-            var curLevel = Diggers[id].curLevel;
-            Diggers[id].curLevel = 0L;
-            if (cap < _dc.drain(id, 1, true))
-                Diggers[id].curLevel = curLevel;
-            else
-            {
-                // Level number is pure math (game auto-level formula), extracted + headless-tested in
-                // DiggerMath.MaxAffordableLevel (audit M5). Structurally identical to the old inline
-                // floor(log)+clamps; only the arithmetic moved.
-                Diggers[id].curLevel = DiggerMath.MaxAffordableLevel(
-                    cap, _dc.baseGPSDrain[id], _dc.gpsGrowthRate[id], _dc.drain(id, 1, true),
-                    curLevel, Diggers[id].maxLevel);
-                // Levels only — membership belongs to EquipDiggers / ReconcileAdvisorDiggers. The
-                // overshoot revert stays here: it reads the whole active set's live drain, which is
-                // game-coupled and not part of the pure per-digger formula.
-                if (_character.grossGoldPerSecond() < _dc.totalGPSDrain())
-                    Diggers[id].curLevel = curLevel;
-            }
-        }
 
         public static void UpdateCheapestDigger()
         {
@@ -299,22 +387,40 @@ namespace NGUAdvisor.Managers
             }
         }
 
+        // Buys maxLevel upgrades with GOLD (distinct from the running levels RecapDiggers sets, which
+        // cost GPS drain). Target selection is deliberately the global cheapest across all twelve, even
+        // inactive ones: the upgrade's payoff is totalLevelBonus, which sums maxLevel over EVERY digger
+        // regardless of whether it runs (AllGoldDiggerController.sumOfAllLevels), so cheapest-first is
+        // genuinely optimal for that term.
+        //
+        // WHAT CHANGED: the reserve. This used to recurse until the gold pile was gone behind nothing but
+        // Settings.MoneyPitThreshold, which defaults to 1e5 — not a reserve at all past the early game.
+        // A level of totalLevelBonus is worth roughly +0.005% on the digger bonuses; the same gold in the
+        // augment / Time Machine / Money Pit ladder compounds. So this now yields whenever gold is not
+        // comfortably clear of the cheapest live augment purchase, which is the one competing sink the
+        // advisor can price. It matters most exactly when it used to be worst: the moment a titan gold
+        // bank lands, the old loop would have spent the whole bank here.
         public static void UpgradeCheapestDigger()
         {
             if (!Settings.UpgradeDiggers)
                 return;
-            if (_cheapestDigger == -1)
-                return;
             if (!_character.buttons.diggers.interactable)
                 return;
-            if (_dc.upgradeCost(_cheapestDigger) + Settings.MoneyPitThreshold > _character.realGold)
-                return;
 
-            Log("Upgrading Digger " + _cheapestDigger);
-            _dc.upgradeMaxLevel(_cheapestDigger);
+            // Iterative, not recursive: with a large bank this could previously recurse once per level.
+            for (int guard = 0; guard < 500; guard++)
+            {
+                if (_cheapestDigger == -1)
+                    return;
+                if (OptimizationAdvisor.GoldStarvedForAugs(_character, 2.0))
+                    return;
+                if (_dc.upgradeCost(_cheapestDigger) + Settings.MoneyPitThreshold > _character.realGold)
+                    return;
 
-            UpdateCheapestDigger();
-            UpgradeCheapestDigger();
+                Log("Upgrading Digger " + _cheapestDigger);
+                _dc.upgradeMaxLevel(_cheapestDigger);
+                UpdateCheapestDigger();
+            }
         }
     }
 }

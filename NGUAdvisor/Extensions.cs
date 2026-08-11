@@ -223,7 +223,7 @@ namespace NGUAdvisor
 
     public static class AugmentsExtensions
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
 
         public static float AugTimeLeftEnergy(this AugmentController aug, long energy)
         {

@@ -26,18 +26,12 @@ namespace NGUAdvisor.Managers
 
         public void Reset() => queue.Clear();
 
-        public float Avg()
-        {
-            try
-            {
-                return queue.Average();
-            }
-            catch (Exception e)
-            {
-                Log(e.Message);
-                return 0;
-            }
-        }
+        // An empty rolling window is the NORMAL state for the first minute after a load or a reset, not
+        // an error. Averaging it threw InvalidOperationException, which was caught and written to
+        // inject.log as a bare "Sequence contains no elements" — 27 times in 26 minutes in the
+        // 2026-08-01 log, with nothing naming the subsystem. Harmless in itself, but it is exactly the
+        // kind of recurring noise that hides a real fault, so answer the question instead of throwing.
+        public float Avg() => queue.Count == 0 ? 0f : queue.Average();
     }
 
     public class Cube
@@ -51,7 +45,7 @@ namespace NGUAdvisor.Managers
 
     public static class InventoryManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly InventoryController _ic = Main.InventoryController;
         // Pendants, Lootys, Wanderer's Cane, Lonely Flubber, A Giant Seed
         private static readonly int[] _convertibles = { 53, 67, 76, 92, 94, 120, 128, 142, 154, 169, 170, 229, 230, 295, 296, 388, 389, 430, 431, 504, 505 };
@@ -208,14 +202,23 @@ namespace NGUAdvisor.Managers
                 _ic.mergeAll(item.slot);
             }
 
+
             // Consume quest items that dont need to be merged
             var quest = Main.Character.beastQuest;
             if (quest.inQuest)
             {
-                int num = quest.curDrops;
-                _ic.dumpAllIntoQuest(quest.questID);
-                if (quest.curDrops > num)
-                    Log($"Turning in {quest.curDrops - num} quest items");
+				// dumpAllIntoQuest is unconditional on the game side: InventoryController.cs:4859
+                // shows "BLOOP! All applicable Quest Items have been deposited!" for 2s whether or
+                // not anything moved. Calling it with no quest item in inventory spams that tooltip
+                // on every pass. The curDrops delta below already detected the no-op — it only ever
+                // guarded the LOG LINE, not the call.
+                if (Array.Exists(ci, x => IsQuest(x) && x.id == quest.questID))
+                {
+                    int num = quest.curDrops;
+                    _ic.dumpAllIntoQuest(quest.questID);
+                    if (quest.curDrops > num)
+                        Log($"Turning in {quest.curDrops - num} quest items");
+                }
 
                 // Surplus purge (user-reported: a FULL INVENTORY of Diploma 287 after a capstone
                 // hold). The game rolls quest drops on every manual-mode kill with NO at-target

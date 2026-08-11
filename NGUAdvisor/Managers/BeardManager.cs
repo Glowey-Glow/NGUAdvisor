@@ -5,7 +5,7 @@ namespace NGUAdvisor.Managers
 {
     public static class BeardManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AllBeardsController _bc = _character.allBeards;
 
         private static int[] _savedBeards;
@@ -45,6 +45,17 @@ namespace NGUAdvisor.Managers
         {
             if (!_character.buttons.beards.interactable)
                 return false;
+
+            // THE CHALLENGE RULE, at the one point every writer funnels through — the advisor set
+            // (AdvisorApply), the profile timeline (BeardBreakpoints), the QuickBeards hotkey
+            // (Main.cs:627), the three mode-lock swaps (LockManager.cs:190/:237/:279) and both
+            // restores all arrive here. Applying it once here is what makes it a RULE: a new writer
+            // cannot forget it, and the mode locks in particular would otherwise re-equip TitanBeards
+            // for the length of every titan window inside a 100LC run.
+            //
+            // Callers that FORM a set apply BeardRule themselves as well, so their log lines say what
+            // actually happened; this is the backstop under them, not a substitute for it.
+            beards = BeardRule.Apply(ChallengeDetector.Current(), beards);
 
             if (beards?.Length > 0 == false)
             {

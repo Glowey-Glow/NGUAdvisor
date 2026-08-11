@@ -158,5 +158,32 @@ namespace NGUAdvisor.Tests
                             $"Guide T{t + 1} col{col}: v{v + 1} must exceed v{v}");
             }
         }
+
+        // ZoneHelpers.TitanVersion returns the version you are currently ON (save field + 1), so it is
+        // never below 1. "Have I beaten one yet" is therefore version-1, and getting that wrong is not
+        // loud: ExpBalancer used `TitanVersion(6) >= 1`, which is a tautology, and it silently disabled
+        // the guide's whole pre-T7 Evil EXP rule because ExpRatio.Split tests that flag first.
+        //
+        // THE CASE THAT MATTERS is the first one: on a fresh Evil account titan7Version is 0, so
+        // TitanVersion returns 1, and "versions defeated" must be ZERO.
+        [Theory]
+        [InlineData(1, 0)]   // on v1, none beaten  <- the bug: this used to read as "post-T7"
+        [InlineData(2, 1)]   // v1 beaten
+        [InlineData(3, 2)]
+        [InlineData(4, 3)]
+        public void VersionsDefeated_is_one_less_than_the_version_you_are_on(int humanVersion, int expected)
+        {
+            Assert.Equal(expected, TitanTables.VersionsDefeated(humanVersion));
+        }
+
+        // TitanVersion returns 1 for a non-versioned titan and could in principle return 0 from a failed
+        // read; neither may produce a negative count, which would invert every `>= 1` test downstream.
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-5)]
+        public void VersionsDefeated_never_goes_negative(int humanVersion)
+        {
+            Assert.Equal(0, TitanTables.VersionsDefeated(humanVersion));
+        }
     }
 }

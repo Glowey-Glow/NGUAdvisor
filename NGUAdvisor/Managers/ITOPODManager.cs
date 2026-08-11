@@ -24,7 +24,7 @@ namespace NGUAdvisor.Managers
             MegaBuff
         }
 
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AdventureController _ac = _character.adventureController;
         private static bool isFighting;
         private static CombatMode mode;

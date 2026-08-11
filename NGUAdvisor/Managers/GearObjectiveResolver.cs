@@ -26,6 +26,7 @@ namespace NGUAdvisor.Managers
             public const string Noec = "noec";           // No-Equipment Challenge: nothing may be worn
             public const string Challenge = "challenge"; // the challenge overlay's push/growth rotation
             public const string Hunt = "hunt";           // gear hunt's hybrid Loot Hunter set
+            public const string DropFarm = "dropfarm";   // the advisor's own farm, same Loot Hunter set
             public const string Segment = "segment";     // the auto-profile's segment gear
             public const string Profile = "profile";     // the active profile's gear timeline
             public const string Pin = "pin";             // the user's standing pick (Loadouts -> Main)
@@ -36,7 +37,12 @@ namespace NGUAdvisor.Managers
         {
             public bool Noec;                  // ChallengeDetector.Current() == "NOEC"
             public bool ChallengeActive;       // ChallengeDetector.Current() != null
-            public bool HuntActive;            // GearHunter.Active
+            public bool HuntActive;            // GearHunter.Active — the MANUAL gear-hunt toggle
+            // FarmVenue.DropFarmActive — the ADVISOR's own gear/rare/IDLE farm is standing in a zone
+            // for its drops. Kept separate from HuntActive: it ranks lower (see Resolve) and it needs
+            // its own sentence, because "you armed this" and "the advisor chose this" are different
+            // things to tell someone whose gear just changed.
+            public bool DropFarmActive;
             public string Override;            // ChallengeOverlay.GearObjectiveOverride
             public bool OverrideIsSegment;     // true when the override is segment gear, not a challenge rotation
             public string ProfileObjective;    // GearBreakpoints.ActiveObjective
@@ -98,6 +104,35 @@ namespace NGUAdvisor.Managers
                     Name = LootHunter,
                     Source = Src.Hunt,
                     Sentence = "Running the Loot Hunter set — gear hunt is camping a stage."
+                };
+
+            // THE ADVISOR'S OWN DROP FARM gets the SAME Loot Hunter set, for the same reason: while
+            // routing is parked in a zone waiting on drops, DC and Respawn multiply exactly what that
+            // farm produces, and a stats/NGU objective contributes nothing to it. This is the gear
+            // half of the drop-chance demand that already moves the DC digger (FarmVenue).
+            //
+            // ⚠ ABOVE THE OVERRIDE, AND THE FIRST ATTEMPT PUT IT BELOW — which made it dead code.
+            // The reasoning for "below" was that a challenge rotation must not be re-geared around.
+            // That is already guaranteed by this row's OWN !ChallengeActive guard, so ranking below
+            // the override bought nothing and cost everything: with AutoProfile on and no challenge
+            // running, ChallengeOverlay.cs:186-189 sets the override to SegmentGear() on EVERY tick,
+            // so `Has(Override)` is permanently true and the farm row was never reached. Observed
+            // live: DropFarmActive true (the DC digger moved on it), the farm routing zone 20, and
+            // gear still on "NGUs" for the whole run.
+            //
+            // What the override actually is here is a PHASE plan. A drop farm is a concrete activity
+            // the advisor has committed the next several hours to, and it is the automatic twin of
+            // the manual gear hunt — which already sits above the override for exactly this reason.
+            // During a challenge the guard below hands the rotation back untouched.
+            if (!i.ChallengeActive && i.DropFarmActive)
+                return new Result
+                {
+                    Name = LootHunter,
+                    Source = Src.DropFarm,
+                    Sentence = "Running the Loot Hunter set — the advisor is farming a zone for drops."
+                        + (Has(i.Override) ? " \"" + i.Override + "\" resumes when the farm ends."
+                         : Has(i.ProfileObjective) ? " \"" + i.ProfileObjective + "\" resumes when the farm ends."
+                         : "")
                 };
 
             if (Has(i.Override))

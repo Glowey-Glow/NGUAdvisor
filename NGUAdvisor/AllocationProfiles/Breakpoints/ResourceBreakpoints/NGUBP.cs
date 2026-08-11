@@ -1,3 +1,4 @@
+using NGUAdvisor.Managers;
 using System;
 
 namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
@@ -38,10 +39,7 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                     break;
             }
 
-            if (target < 0)
-                return true;
-
-            return target > 0 && level >= target;
+            return NguValueMath.NguTargetMet(target, level);
         }
 
         public override bool Allocate()
@@ -94,10 +92,12 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             return calcA.Num;
         }
 
+        // Live reads only. The stair-snap arithmetic is NguValueMath.NguCap, under characterisation
+        // test. num2 is assembled HERE, in the game's own left-to-right order, and handed over as one
+        // number: floating-point multiplication is not associative and this value feeds two
+        // Math.Ceiling calls, where a 1-ulp shift is a whole allocation unit.
         private CapCalc GetNGUEnergyCapCalc(int offset)
         {
-            var ret = new CapCalc(1, 0);
-
             var num1 = 0.0f;
             if (_character.settings.nguLevelTrack == difficulty.normal)
                 num1 = _character.NGU.skills[Index].level + 1L + offset;
@@ -115,27 +115,20 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 num2 *= 3.0;
             if (_character.settings.nguLevelTrack >= difficulty.sadistic)
                 num2 /= _character.NGUController.NGU[0].sadisticDivider();
-            var num3 = Math.Ceiling(_character.NGUController.energySpeedDivider(Index) * (double)num1 / num2);
-            if (num3 < 1.0)
-                num3 = 1.0;
 
-            var num4 = Math.Ceiling(num3 / Math.Ceiling(num3 / MaxAllocation) * 1.00000202655792);
-            long num;
-            if (num4 > _character.idleEnergy)
-                num = _character.idleEnergy;
-            else
-                num = (long)num4;
-
-            var ppt = num4 / num3;
-            ret.Num = num;
-            ret.PPT = ppt;
-            return ret;
+            var r = NguValueMath.NguCap(new NguValueMath.NguCapInputs
+            {
+                LevelPlusOnePlusOffset = num1,
+                Num2 = num2,
+                SpeedDivider = _character.NGUController.energySpeedDivider(Index),
+                MaxAllocation = MaxAllocation,
+                IdlePool = _character.idleEnergy
+            });
+            return new CapCalc(r.PPT, r.Num);
         }
 
         private CapCalc GetNGUMagicCapCalc(int offset)
         {
-            var ret = new CapCalc(1, 0);
-
             var num1 = 0.0f;
             if (_character.settings.nguLevelTrack == difficulty.normal)
                 num1 = _character.NGU.magicSkills[Index].level + 1L + offset;
@@ -153,21 +146,16 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 num2 *= 3.0;
             if (_character.settings.nguLevelTrack >= difficulty.sadistic)
                 num2 /= _character.NGUController.NGUMagic[0].sadisticDivider();
-            var num3 = Math.Ceiling(_character.NGUController.magicSpeedDivider(Index) * (double)num1 / num2);
-            if (num3 < 1.0)
-                num3 = 1.0;
 
-            var num4 = Math.Ceiling(num3 / Math.Ceiling(num3 / MaxAllocation) * 1.00000202655792);
-            long num;
-            if (num4 > _character.magic.idleMagic)
-                num = _character.magic.idleMagic;
-            else
-                num = (long)num4;
-
-            var ppt = num4 / num3;
-            ret.Num = num;
-            ret.PPT = ppt;
-            return ret;
+            var r = NguValueMath.NguCap(new NguValueMath.NguCapInputs
+            {
+                LevelPlusOnePlusOffset = num1,
+                Num2 = num2,
+                SpeedDivider = _character.NGUController.magicSpeedDivider(Index),
+                MaxAllocation = MaxAllocation,
+                IdlePool = _character.magic.idleMagic
+            });
+            return new CapCalc(r.PPT, r.Num);
         }
     }
 }

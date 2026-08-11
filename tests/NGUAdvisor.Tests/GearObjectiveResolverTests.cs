@@ -14,14 +14,116 @@ namespace NGUAdvisor.Tests
             bool noec = false, bool challengeActive = false, bool huntActive = false,
             string over = null, bool overIsSegment = false,
             string profile = null, bool profileRespawn = false,
-            string pin = null, bool pinRespawn = false)
+            string pin = null, bool pinRespawn = false, bool dropFarm = false)
             => new GearObjectiveResolver.Inputs
             {
                 Noec = noec, ChallengeActive = challengeActive, HuntActive = huntActive,
                 Override = over, OverrideIsSegment = overIsSegment,
                 ProfileObjective = profile, ProfileRespawn = profileRespawn,
-                Pin = pin, PinRespawn = pinRespawn
+                Pin = pin, PinRespawn = pinRespawn, DropFarmActive = dropFarm
             };
+
+        // ── THE ADVISOR'S OWN DROP FARM ───────────────────────────────────────────────────────────
+        // [OPERATOR] 2026-08-05: "we're not swapping to DC/Respawn gear either. We made the Loot
+        // Hunter to handle this previously, perhaps it should absorb that into this as well."
+        //
+        // The Loot Hunter set was gated on GearHunter.Active — the MANUAL toggle — so a farm the
+        // ADVISOR chose ran on whatever objective the profile happened to hold. Exactly the shape of
+        // the DC/PP digger law, which had the same hole for the same reason (FarmVenue).
+
+        [Fact]
+        public void A_drop_farm_runs_the_loot_hunter_set()
+        {
+            var r = GearObjectiveResolver.Resolve(In(dropFarm: true));
+            Assert.Equal(GearObjectiveResolver.LootHunter, r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.DropFarm, r.Source);
+            Assert.True(r.Resolved);
+        }
+
+        // It outranks the standing profile timeline and the pin — background objectives with no claim
+        // on the next several hours — and names what will come back.
+        [Fact]
+        public void A_drop_farm_outranks_the_profile_timeline_and_the_pin()
+        {
+            var r = GearObjectiveResolver.Resolve(In(profile: "NGUs", pin: "Adventure", dropFarm: true));
+            Assert.Equal(GearObjectiveResolver.LootHunter, r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.DropFarm, r.Source);
+            Assert.Contains("NGUs", r.Sentence);
+            Assert.Contains("resumes", r.Sentence);
+        }
+
+        // A challenge rotation reacts to a run the user cannot re-gear out of, so it still wins —
+        // enforced by the farm row's OWN !ChallengeActive guard, not by its rank.
+        [Fact]
+        public void A_challenge_rotation_outranks_a_drop_farm()
+        {
+            var r = GearObjectiveResolver.Resolve(
+                In(challengeActive: true, over: "Boss Push", dropFarm: true));
+            Assert.Equal("Boss Push", r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.Challenge, r.Source);
+        }
+
+        // ⚠ THE REGRESSION THAT MADE THE FIRST ATTEMPT DEAD CODE. The farm row was ranked BELOW the
+        // override to protect the challenge rotation — but that is already the guard's job, and with
+        // AutoProfile on and NO challenge running, ChallengeOverlay.cs:186-189 sets the override to
+        // SegmentGear() every tick. So `Has(Override)` was permanently true and the farm row was
+        // never reached: observed live with DropFarmActive true, the farm routing zone 20, and gear
+        // still on "NGUs". Segment gear is a PHASE plan; a drop farm is the next several hours.
+        [Fact]
+        public void A_drop_farm_outranks_segment_gear()
+        {
+            var r = GearObjectiveResolver.Resolve(
+                In(over: "NGUs", overIsSegment: true, dropFarm: true));
+            Assert.Equal(GearObjectiveResolver.LootHunter, r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.DropFarm, r.Source);
+            Assert.Contains("NGUs", r.Sentence);      // names what resumes
+        }
+
+        // Segment gear still wins whenever no farm is running — the common case must be untouched.
+        [Fact]
+        public void Segment_gear_still_wins_with_no_drop_farm()
+        {
+            var r = GearObjectiveResolver.Resolve(In(over: "Wandoos", overIsSegment: true));
+            Assert.Equal("Wandoos", r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.Segment, r.Source);
+        }
+
+        [Fact]
+        public void The_manual_hunt_still_outranks_everything_including_a_drop_farm()
+        {
+            var r = GearObjectiveResolver.Resolve(
+                In(huntActive: true, over: "Wandoos", overIsSegment: true, dropFarm: true));
+            Assert.Equal(GearObjectiveResolver.Src.Hunt, r.Source);
+        }
+
+        // No farm re-gears its way through a challenge — the same guard the hunt already has.
+        [Fact]
+        public void A_challenge_suppresses_the_drop_farm_set_even_with_no_rotation()
+        {
+            var r = GearObjectiveResolver.Resolve(In(challengeActive: true, profile: "NGUs", dropFarm: true));
+            Assert.Equal("NGUs", r.Name);
+            Assert.Equal(GearObjectiveResolver.Src.Profile, r.Source);
+        }
+
+        [Fact]
+        public void No_equipment_challenge_still_beats_a_drop_farm()
+        {
+            var r = GearObjectiveResolver.Resolve(In(noec: true, dropFarm: true));
+            Assert.Equal(GearObjectiveResolver.Src.Noec, r.Source);
+            Assert.False(r.Resolved);
+        }
+
+        // Regression: with the farm off, every pre-existing row lands exactly where it did.
+        [Fact]
+        public void With_no_drop_farm_the_table_is_unchanged()
+        {
+            Assert.Equal(GearObjectiveResolver.Src.Profile,
+                GearObjectiveResolver.Resolve(In(profile: "NGUs")).Source);
+            Assert.Equal(GearObjectiveResolver.Src.Pin,
+                GearObjectiveResolver.Resolve(In(pin: "Adventure")).Source);
+            Assert.Equal(GearObjectiveResolver.Src.None,
+                GearObjectiveResolver.Resolve(In()).Source);
+        }
 
         [Fact]
         public void Noec_BeatsEverything_AndResolvesToNothing()

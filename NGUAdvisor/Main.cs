@@ -14,7 +14,7 @@ namespace NGUAdvisor
 {
     public class Main : MonoBehaviour
     {
-        // INVARIANT (why the pervasive `static readonly Character` caching here and across ~20 managers is safe):
+        // INVARIANT (why caching the Character root once is safe):
         // NGU Idle keeps ONE Character MonoBehaviour alive for the whole process. Its save/load path,
         // Character.saveLoad.loadintoGame (see LoadQuicksave, ~line 707), deserializes INTO that existing
         // instance rather than reconstructing it, so the reference resolved once here never goes stale on an
@@ -23,6 +23,14 @@ namespace NGUAdvisor
         // full scene teardown / new Character within the same process — which does not happen in NGU — and our
         // own hot-reload, which discards these statics wholesale on a fresh assembly load anyway. Do not
         // "fix" the caching into live lookups without first confirming that invariant no longer holds.
+        //
+        // WHAT CHANGED (weld fix, audit 01 §5 step 1): the ~22 managers and breakpoint classes that used to
+        // mirror this line with their own `static readonly Character _character = Main.Character;` now hold a
+        // PROPERTY instead. The caching invariant above is untouched — there is still exactly one resolved
+        // root — but the Unity read no longer happens in each of those types' INITIALIZERS. That is what made
+        // them impossible to name headlessly and what made an initializer throw permanent for the process.
+        // This field is now the ONLY remaining type-init Character capture in the tree, and it is the one
+        // place the capture belongs: Main is the Unity entry point and cannot be loaded headlessly anyway.
         public static readonly Character Character = FindObjectOfType<Character>();
         public static readonly InventoryController InventoryController = Character.inventoryController;
         public static StreamWriter OutputWriter;
@@ -39,6 +47,47 @@ namespace NGUAdvisor
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
         public const string Version = "2.3.0";
+        // "dev" or "public", baked in at compile time from <AdvisorChannel> in NGUAdvisor.csproj — the
+        // ONE line that differs between the two repos (see that property's comment for why it is not a
+        // #if and not a hand-edited const here beside Version).
+        //
+        // Unreadable or absent answers "dev", so the build footer keeps its stamps and its drift
+        // warning. A wrong "public" would take the stale-UI instrument away from a developer without
+        // saying anything, and that instrument exists because a reviewed toggle once sat six days out
+        // of the running app.
+        private static string _channel;
+        public static string Channel
+        {
+            get
+            {
+                if (_channel != null) return _channel;
+                _channel = "dev";
+                try
+                {
+                    var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                    foreach (System.Reflection.AssemblyMetadataAttribute a in
+                             asm.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false))
+                    {
+                        if (a.Key == "Channel" && !string.IsNullOrEmpty(a.Value)) { _channel = a.Value; break; }
+                    }
+                }
+                catch { }
+                return _channel;
+            }
+        }
+
+        // What a human is shown: "2.3.0" on public, "2.3.0-dev" everywhere else. The two repos ship
+        // the SAME release number and the suffix is DERIVED from the channel, so Version stays one
+        // digit-for-digit identical line in both trees and there is exactly one thing to bump at a
+        // release. Hardcoding "2.3.0-dev" here would have put a second version carrier back in the
+        // file — the shape b2abcf0 had to reconcile after two shipped binaries disagreed.
+        //
+        // AssemblyVersion / AssemblyFileVersion in Properties/AssemblyInfo.cs stay NUMERIC (2.3.*,
+        // 2.3.0.0) and carry no suffix: those fields cannot hold one, and a dev build is the same
+        // release, not a different one. There is deliberately no AssemblyInformationalVersion carrying
+        // "2.3.0-dev" — it would need the number a second time, in the csproj, which is the duplicate
+        // this whole arrangement exists to avoid.
+        public static string DisplayVersion => Version + (Channel == "public" ? "" : "-" + Channel);
         // Build stamp, derived automatically from the hot-reload assembly identity (NGUAdvisor.r<yyMMddHHmmss>,
         // the unique per-compile name that already exists for Mono byte-load dedup). Replaces the old
         // hand-bumped codename — every compile yields a unique, sortable id (yyMMdd-HHmm) with zero edits.
@@ -64,6 +113,10 @@ namespace NGUAdvisor
         // completed snipe mid-run (user-reported). SetResnipe re-seeds from the current best zone.
         private static int _furthestZone = -1;
 
+        // Latch for the "titan fight refused" line: the routing check runs every tick and the refusal
+        // is a STATE, so it is said on transition. -1 = nothing currently refused.
+        private static int _titanBlockedIdx = -1;
+
         // Highest zone that already armed a "new zone fightable" re-snipe this run. Fightability is
         // measured in CURRENT gear, but the snipe itself runs in the gold loadout — when the gold
         // gear couldn't clear the zone, the ratchet dropped back and the trigger re-fired forever
@@ -88,13 +141,14 @@ namespace NGUAdvisor
         // Same deferral for a full config re-read (settings + form + allocation), mirroring ConfigWatcher.
         public static void RequestSettingsReload() => _reloadSettingsPending = true;
 
-        // Payload hot reload is a DEVELOPMENT-BUILD capability: it needs NGUAdvisorBootstrap, which
-        // byte-loads NGUAdvisor.dll and is the only thing that can replace it live. This release injects
-        // the advisor directly and ships no bootstrap, so there is nothing to reload into. Present, and
-        // saying so plainly, because the shared companion page offers the button — a command that silently
-        // did nothing would read as a hang.
-        public static void RequestHotReload() =>
-            Log("Hot reload is not available in this release — restart the game to load a new build.");
+        // HOT RELOAD (F5 / companion "hotReloadAdvisor") — swaps the PAYLOAD DLL, not the settings.
+        // Deferred through a flag for the same reason as the two above, only more so: the reload tears
+        // this very component down (Loader.Unload -> writers closed, UiBridge disposed, GameObject
+        // destroyed) and immediately byte-loads a replacement. Doing that from inside a UI-command drain
+        // would dispose the bridge mid-iteration, and doing it from the middle of Update() would leave
+        // the rest of Update() running against a torn-down Main. Update() drains this FIRST and returns.
+        private static volatile bool _hotReloadPending;
+        public static void RequestHotReload() => _hotReloadPending = true;
 
         public static FileSystemWatcher ConfigWatcher;
         public static FileSystemWatcher AllocationWatcher;
@@ -206,6 +260,18 @@ namespace NGUAdvisor
             Try(() => DebugWriter.Close());
             Try(() => OutputWriter.Close());
         }
+		static void RollIfLarge(string path, long maxBytes = 8L * 1024 * 1024)
+		{
+			try
+			{
+				var fi = new FileInfo(path);
+				if (!fi.Exists || fi.Length < maxBytes) return;
+				var prev = path + ".1";
+				if (File.Exists(prev)) File.Delete(prev);
+				File.Move(path, prev);
+			}
+			catch { /* best-effort, same as the folder migration above */ }
+		}
 
         public void Start()
         {
@@ -245,23 +311,34 @@ namespace NGUAdvisor
                 var logDir = Path.Combine(_dir, "logs");
                 if (!Directory.Exists(logDir))
                     Directory.CreateDirectory(logDir);
-
-                OutputWriter = new StreamWriter(Path.Combine(logDir, "inject.log")) { AutoFlush = true };
-                LootWriter = new StreamWriter(Path.Combine(logDir, "loot.log")) { AutoFlush = true };
-                CombatWriter = new StreamWriter(Path.Combine(logDir, "combat.log")) { AutoFlush = true };
-                PitSpinWriter = new StreamWriter(Path.Combine(logDir, "pitspin.log"), true) { AutoFlush = true };
-                CardsWriter = new StreamWriter(Path.Combine(logDir, "cards.log"), true) { AutoFlush = true };
-                DebugWriter = new StreamWriter(Path.Combine(logDir, "debug.log")) { AutoFlush = true };
+					RollIfLarge(Path.Combine(logDir, "inject.log"));
+					RollIfLarge(Path.Combine(logDir, "loot.log"));
+					RollIfLarge(Path.Combine(logDir, "combat.log"));
+					RollIfLarge(Path.Combine(logDir, "debug.log"));
+					
+					OutputWriter  = new StreamWriter(Path.Combine(logDir, "inject.log"), true) { AutoFlush = true };
+					LootWriter    = new StreamWriter(Path.Combine(logDir, "loot.log"), true)   { AutoFlush = true };
+					CombatWriter  = new StreamWriter(Path.Combine(logDir, "combat.log"), true) { AutoFlush = true };
+					PitSpinWriter = new StreamWriter(Path.Combine(logDir, "pitspin.log"), true) { AutoFlush = true };
+					CardsWriter = new StreamWriter(Path.Combine(logDir, "cards.log"), true) { AutoFlush = true };
+					DebugWriter   = new StreamWriter(Path.Combine(logDir, "debug.log"), true)  { AutoFlush = true };
+					
+					OutputWriter.WriteLine($"===== SESSION START {DateTime.Now:yyyy-MM-dd HH:mm:ss} v{DisplayVersion} build {BuildTag} =====");
+					DebugWriter.WriteLine($"===== SESSION START {DateTime.Now:yyyy-MM-dd HH:mm:ss} v{DisplayVersion} build {BuildTag} =====");
+					
+					
                 // Health probe: if debug.log stays empty even of this line, the writer itself is broken
                 // and every "Advisor ... failed" message has been invisible.
-                LogDebug($"debug.log writer alive (v{Version} build {BuildTag})");
+                LogDebug($"debug.log writer alive (v{DisplayVersion} build {BuildTag})");
 
                 _profilesDir = Path.Combine(_dir, "profiles");
                 if (!Directory.Exists(_profilesDir))
                     Directory.CreateDirectory(_profilesDir);
 
-                // Install any missing embedded goal-loadout presets before profiles are listed/loaded.
-                Managers.PresetInstaller.InstallMissing(_profilesDir);
+                // Install the embedded goal-loadout presets before profiles are listed/loaded. Missing files
+                // are written; a preset we installed and the user has not touched is refreshed to the shipped
+                // version; a preset the user edited is preserved. See Managers/PresetInstallPlan.
+                Managers.PresetInstaller.Install(_profilesDir);
 
                 var oldPath = Path.Combine(_dir, "allocation.json");
                 var newPath = Path.Combine(_profilesDir, "default.json");
@@ -359,6 +436,26 @@ namespace NGUAdvisor
                 // values we read). Reads/HUD stay live; see CompatibilityGate.
                 Managers.CompatibilityGate.Initialize(_dir);
 
+                // CONSTANT CAPTURE IS RETIRED — the CALL is gone, the CLASS is deliberately kept.
+                //
+                // Managers/ConstantCapture.cs was a TEMPORARY INSTRUMENT (audit/decisions/constant-capture-spec.md)
+                // whose own comment said "remove once audit/08-captured-constants.md is written". 08 is written,
+                // and so are 11, 16 and 19 — the instrument produced all four and has nothing left to measure.
+                //
+                // WHY IT HAD TO STOP SHIPPING. It is not a correctness risk and never was; it is a dev
+                // instrument running on players' machines. Measured on the operator's own install, 2026-08-07:
+                // 358 lines and ~60 KB per launch, 3,222 lines over 9 launches, 9.2% of a 5.9 MB inject.log —
+                // spent re-deriving constants that are already recorded in the audit corpus.
+                //
+                // WHY THE CLASS STAYS. It is the only way those constants get re-measured if a game patch
+                // moves them: every value it reads is scene-serialized, so the decompile shows the declaration
+                // and never the number. CompatibilityGate above DETECTS a changed game build; this is what
+                // RE-MEASURES after one. Deleting the file would trade a 558-line dormant asset for a rewrite.
+                // To re-arm for one session, restore `Managers.ConstantCapture.Run();` on the line below —
+                // it must stay here, before the InvokeRepeating block, so nothing has started ticking on top
+                // of it, and out of any static constructor (a throw in a type-initializer that has captured
+                // Main.Character poisons the type for the whole process — 01-architecture-decision §4.3).
+
                 InvokeRepeating("AutomationRoutine", 0.0f, 10.0f);
                 InvokeRepeating("MonitorLog", 0.0f, 1f);
                 InvokeRepeating("QuickStuff", 0.0f, .5f);
@@ -453,6 +550,16 @@ namespace NGUAdvisor
 
         public void Update()
         {
+            // FIRST, and it returns: a hot reload destroys this component and starts a fresh payload, so
+            // nothing below may run afterwards. Loader.Unload() deactivates the GameObject before
+            // destroying it, which also suppresses this frame's LateUpdate on the old Main.
+            if (_hotReloadPending)
+            {
+                _hotReloadPending = false;
+                PerformHotReload();
+                return;
+            }
+
             // Drain deferred file-watcher work on the main thread (see the watcher handlers). Doing this
             // off-thread previously crashed the game (e.g. digger menu UI refresh from a background thread).
             if (_reloadSettingsPending)
@@ -485,15 +592,10 @@ namespace NGUAdvisor
             if (Input.GetKeyDown(KeyCode.F7))
                 QuickLoad();
 
-            // F5 is deliberately UNBOUND here. On the development build it hot-reloads the payload DLL,
-            // which only works when the session was started through NGUAdvisorBootstrap — an assembly this
-            // release does not ship. Binding it to anything else would put the same key on two different
-            // jobs across the two builds, so the gear dump moved to F11 and matches dev.
-            //
-            // The companion's Settings view still carries a Hot Reload button, because the page is shared
-            // verbatim with the development build (one 500 KB file; divergence there is expensive). The
-            // command below answers it honestly rather than doing nothing, which is also what the dev build
-            // does when it is started without the bootstrap.
+            // F5 = hot-reload the advisor from disk (browser-refresh convention). Requests only; the
+            // teardown happens at the top of the NEXT Update, off this frame's stack.
+            if (Input.GetKeyDown(KeyCode.F5))
+                RequestHotReload();
 
             // F9 kept its old meaning — "open the profile editor" — now that the editor lives in the
             // companion: open the window if it is closed, then ask the page to show the Profile Editor.
@@ -518,8 +620,20 @@ namespace NGUAdvisor
                     else
                     {
                         Log("Equipping Quick Loadout");
+                        // SaveTempLoadout stays OUTSIDE the gate deliberately. During No Equipment the
+                        // ChangeGear below is ignored, so _tempLoadout simply records the gear that is
+                        // still on — and the F8 that follows restores it through Cause.Restore, whose
+                        // set-equality early-out (LoadoutManager.cs:50) makes it a no-op rather than an
+                        // allocation reset. Skipping the save instead would leave _tempLoadout holding
+                        // a loadout from BEFORE the challenge, which is the stale case worth avoiding.
+                        // _tempSwapped (:605) toggles unconditionally for gear, diggers and beards
+                        // together, and diggers/beards are NOT gated — so the hotkey stays coherent.
                         LoadoutManager.SaveTempLoadout();
-                        LoadoutManager.ChangeGear(Settings.QuickLoadout);
+                        // Cause.UserHotkey: a deliberate keypress, NOT the advisor deciding to churn.
+                        // [OPERATOR] RULING: ignored during No Equipment, with a line every press.
+                        // The gate and the line both live at the choke point (LoadoutManager.ChangeGear),
+                        // not here, so any future hotkey caller inherits them.
+                        LoadoutManager.ChangeGear(Settings.QuickLoadout, GearChangeGate.Cause.UserHotkey);
                     }
                 }
 
@@ -558,10 +672,46 @@ namespace NGUAdvisor
                 _tempSwapped = !_tempSwapped;
             }
 
-            // F11 = dump currently-equipped item ids, for authoring Gear breakpoints. Moved off F5 so the
-            // key matches the development build, where F5 is the payload hot reload.
+            // F11 = dump currently-equipped item ids (moved off F5, which is now the hot reload).
             if (Input.GetKeyDown(KeyCode.F11))
                 DumpEquipped();
+        }
+
+        // Hot-reload the payload from disk. Only works when the session was started via
+        // "Run NGU Advisor.bat": that injects NGUAdvisorBootstrap, which byte-loads NGUAdvisor.dll and is
+        // the only thing that can replace it live. The payload and the bootstrap are separate assemblies
+        // and the payload cannot reference the bootstrap, so the call goes out by reflection: walk the
+        // loaded assemblies for "NGUAdvisorBootstrap" and invoke NGUAdvisorBootstrap.Boot.Reload().
+        // MUST NOT THROW — this runs inside the Unity update loop.
+        private static void PerformHotReload()
+        {
+            System.Reflection.MethodInfo reload = null;
+            try
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (asm.GetName().Name != "NGUAdvisorBootstrap") continue;
+                    reload = asm.GetType("NGUAdvisorBootstrap.Boot")?.GetMethod("Reload");
+                    break;
+                }
+            }
+            catch (Exception e) { try { LogDebug($"Hot reload: bootstrap lookup failed: {e.Message}"); } catch { } }
+
+            if (reload == null)
+            {
+                // Hand-injected / unusual load: no bootstrap in the domain, so there is nothing that can
+                // swap the DLL. Say so and do nothing else — a silent no-op is worse than no hotkey.
+                try { Log("Hot reload UNAVAILABLE: no NGUAdvisorBootstrap in this session. Start the game with 'Run NGU Advisor.bat' to enable it (this build needs a full restart to change)."); } catch { }
+                return;
+            }
+
+            // LOG BEFORE THE TEARDOWN. Boot.Reload() calls our own Loader.Unload(), which closes every
+            // StreamWriter — WriterLog has no null/closed guard, so anything logged after this point
+            // throws. Boot.Reload is itself fully guarded and reports to bootstrap.log.
+            try { Log($"Hot reload: unloading build {BuildTag} and byte-loading NGUAdvisor.dll from disk (see bootstrap.log)..."); } catch { }
+
+            try { reload.Invoke(null, null); }
+            catch { /* writers are gone by now; bootstrap.log has the detail */ }
         }
 
         public void LateUpdate() => SnipeZone();
@@ -1190,6 +1340,82 @@ namespace NGUAdvisor
             }
         }
 
+        // The zone the tempZone chain (audit/40 §2 R10) WOULD route if it were reached:
+        // gear hunt > advisor drop farm > Target ITOPOD > Settings.SnipeZone. Extracted so the SEVEN
+        // gates that return above it can name what they are displacing without restating the rule —
+        // a second copy would be free to drift, and reporting the wrong displaced zone is worse than
+        // reporting none. -1 means "no intent": combat is off, so nothing here would route anyway.
+        //
+        // ⚠ internal, NOT private, FOR audit/40 §3 item 7. QuestManager.UpdateShouldQuest held a
+        // SECOND COPY of this chain's Target ITOPOD row and had drifted from it twice — it knew
+        // neither the gear-hunt row nor the drop-farm row 271f5f8 added above it, so quests took R7
+        // and pre-empted both, one row above the row 271f5f8 fixed. The copy is deleted and the
+        // question is asked HERE instead. That consumer legitimately wants the INTENT rather than
+        // the routed zone: it IS R7, which sits above R10, so asking what actually routed would make
+        // it read its own output. Item 7 changed no line of the chain itself — it changed only who
+        // may call it. (The chain WAS changed afterwards, by the overload below; see there.)
+        //
+        // The parameterless form is the one QuestManager wants: it is a consumer of the ANSWER and
+        // has no use for what Target ITOPOD discarded. `out _` keeps that call site unchanged.
+        internal static int ResolveIntentZone() => ResolveIntentZone(out _);
+
+        // OVERLOAD, so the R10 rule stays one copy. `discardedByItopod` is the written zone target
+        // Settings.AdventureTargetITOPOD threw away this pass, or -1 when it threw nothing away.
+        //
+        // audit/40 §3 item 3's SURVIVING HALF. 271f5f8 rescued the advisor's own drop farm from the
+        // toggle; §6.1 recorded on purpose that nothing else was rescued — "Target ITOPOD keeps its
+        // meaning everywhere else, including for the boost farm, a wider change than the defect
+        // justified". That precedence is deliberate and is NOT changed here. The SILENCE was never
+        // deliberate: AdvisorApply.cs:1175-1179 writes the boost-farm zone and logs
+        // "Advisor: farm zone -> X", the row below discards it, and nothing says so — the identical
+        // shape that cost a full run of farming that never left the ITOPOD (audit/41 §2.1).
+        //
+        // Answered HERE rather than at the call site because this method IS the rule. A second copy
+        // of "did the toggle win?" would be free to drift from the one that decides it, and a line
+        // naming the wrong discarded zone is worse than no line at all (see the header above).
+        //
+        // ⚠ THIS IS WHERE THE R10 TERNARY BECAME A THREE-BRANCH LADDER. The old single line
+        // `return Settings.AdventureTargetITOPOD ? 1000 : Settings.SnipeZone;` cannot report which
+        // zone it discarded, because it never names one. Same precedence, same two outcomes — the
+        // ladder only adds the assignment. QuestStandDownTests pins the new shape; see its comment.
+        private static int ResolveIntentZone(out int discardedByItopod)
+        {
+            discardedByItopod = -1;
+            if (!Settings.CombatEnabled) return -1;
+            if (GearHunter.Active && GearHunter.ZoneReachable()) return Settings.GearHuntZone;
+            if (Settings.AdvisorZones && Managers.FarmVenue.DropFarmActive
+                && Settings.SnipeZone >= 0 && Settings.SnipeZone < 1000) return Settings.SnipeZone;
+            if (!Settings.AdventureTargetITOPOD) return Settings.SnipeZone;
+            // Only a zone the character could actually be standing in counts as displaced. -1 is the
+            // SavedSettings sentinel (SavedSettings.cs:13) and 1000 IS the ITOPOD, so neither is a
+            // contention — reporting either would be the "silence ≠ zero" error in reverse.
+            if (Settings.SnipeZone >= 0 && Settings.SnipeZone < 1000) discardedByItopod = Settings.SnipeZone;
+            return 1000;
+        }
+
+        // audit/40 §3 items 1, 2, 4, 5 and 6: every override in SnipeZone() discards or rewrites the
+        // written zone target without a word, and the advisor's own "farm zone -> X" line reads as a
+        // statement of fact when it is only a statement of intent. NOTE, DO NOT DECIDE — the chain
+        // is unchanged; see ZoneRouting's header.
+        //
+        // Latched on three ints before any string exists: this sits on the every-frame path.
+        private static void NoteRouting(Managers.ZoneRouting.Cause cause, int intended, int routed)
+        {
+            try
+            {
+                if (!Managers.ZoneRouting.ShouldSurface(cause, intended, routed,
+                                                       out var previous, out var previousSpoke)) return;
+                var text = Managers.ZoneRouting.Describe(previous, previousSpoke, cause,
+                    intended, intended < 0 ? null : ZonePhaseReader.ZoneName(intended),
+                    routed, routed < 0 ? null : ZonePhaseReader.ZoneName(routed));
+                Managers.ZoneRouting.Spoke(!string.IsNullOrEmpty(text));
+                if (string.IsNullOrEmpty(text)) return;
+                // Record() logs as well as feeding the overlay, so this is one line, not two.
+                ChallengeOverlay.Record("ZONE", text, Managers.ZoneRouting.Reason(previous, cause));
+            }
+            catch { }
+        }
+
         private void SnipeZone()
         {
             try
@@ -1206,6 +1432,13 @@ namespace NGUAdvisor
                     return;
 
                 CombatManager.UpdateFightTimer(Time.deltaTime);
+
+                // At most ONE routing note per pass. A gate that takes routing notes and returns; a
+                // gate that DECLINES records its cause here and lets a later owner overwrite it,
+                // because "the gold snipe found nothing" is not the interesting fact once a titan
+                // owns the zone. The tail note (Cause.None) is what says an override released.
+                var routeCause = Managers.ZoneRouting.Cause.None;
+                int routeIntent = -1;
 
                 // If tm ever drops to 0, reset our gold loadout stuff (the "rebirth" snipe trigger —
                 // gated by its S3 toggle in manual mode; advisor always re-snipes here).
@@ -1224,6 +1457,9 @@ namespace NGUAdvisor
                 // Pit run logic
                 if (MoneyPitManager.ShockwaveTier() <= 1e18 && MoneyPitManager.MoneyPitReady() && !MoneyPitManager.NeedsRebirth())
                 {
+                    // routed = -1 on purpose: the pit run alternates zone 0 and the ITOPOD WITHIN one
+                    // hold (NeedsGold flips), and naming either would re-emit the line on every flip.
+                    NoteRouting(Managers.ZoneRouting.Cause.PitRun, ResolveIntentZone(), -1);
                     if (MoneyPitManager.NeedsGold())
                     {
                         CombatManager.DoZone(0);
@@ -1241,6 +1477,7 @@ namespace NGUAdvisor
                 {
                     if (Character.machine.realBaseGold == 0.0)
                     {
+                        NoteRouting(Managers.ZoneRouting.Cause.TimeMachineEmpty, ResolveIntentZone(), 0);
                         CombatManager.DoZone(0);
                         return;
                     }
@@ -1254,12 +1491,16 @@ namespace NGUAdvisor
                             UpdateFurthestZone();
                             if (_furthestZone >= 0)
                             {
+                                NoteRouting(Managers.ZoneRouting.Cause.GoldSnipe, ResolveIntentZone(), _furthestZone);
                                 CombatHelpers.IsCurrentlyGoldSniping = true;
                                 CombatManager.DoZone(_furthestZone);
                                 return;
                             }
                             // No fightable zone right now — fall through to normal routing (ITOPOD)
-                            // instead of parking in the Safe Zone.
+                            // instead of parking in the Safe Zone. audit/40 §3 item 6: a deliberate
+                            // decline that says nothing is indistinguishable from a gate that never
+                            // fired, so it is recorded and reported at the tail.
+                            routeCause = Managers.ZoneRouting.Cause.GoldSnipeNoZone;
                         }
                     }
                 }
@@ -1267,17 +1508,39 @@ namespace NGUAdvisor
                 if (Settings.ManageTitans && LockManager.HasTitanLock())
                 {
                     int? titanZone = ZoneHelpers.GetHighestSpawningTitanZone();
-                    if (titanZone.HasValue && !ZoneHelpers.AutokillAvailable(Array.IndexOf(ZoneHelpers.TitanZones, titanZone.Value)))
+                    int titanIdx = titanZone.HasValue
+                        ? Array.IndexOf(ZoneHelpers.TitanZones, titanZone.Value) : -1;
+                    // A fight the game will not let us win is not a fight to route into. Today this is
+                    // T4/UUG without the Ring of Apathy worn: EnemyAI sets invincible=true and doubles
+                    // its own damage growth, so walking in is an unattended death loop. The gear swap
+                    // has already run by here and would have equipped it if it could, so this only
+                    // fires when it genuinely cannot. Falling through routes to quests/ITOPOD as usual
+                    // — no stall state, and the reason is said once per transition rather than per tick.
+                    if (titanIdx >= 0 && ZoneHelpers.TitanFightBlocked(titanIdx, out var blockedWhy))
                     {
-                        CombatHelpers.IsCurrentlyFightingTitan = true;
-                        CombatManager.DoZone(titanZone.Value);
-                        return;
+                        if (_titanBlockedIdx != titanIdx)
+                        {
+                            _titanBlockedIdx = titanIdx;
+                            Log($"NOT fighting titan {titanIdx + 1} (zone {titanZone.Value}): {blockedWhy}.");
+                        }
+                    }
+                    else
+                    {
+                        _titanBlockedIdx = -1;
+                        if (titanZone.HasValue && !ZoneHelpers.AutokillAvailable(titanIdx))
+                        {
+                            NoteRouting(Managers.ZoneRouting.Cause.Titan, ResolveIntentZone(), titanZone.Value);
+                            CombatHelpers.IsCurrentlyFightingTitan = true;
+                            CombatManager.DoZone(titanZone.Value);
+                            return;
+                        }
                     }
                 }
 
                 int questZone = QuestManager.IsQuesting();
                 if (questZone >= 0)
                 {
+                    NoteRouting(Managers.ZoneRouting.Cause.Quest, ResolveIntentZone(), questZone);
                     CombatHelpers.IsCurrentlyQuesting = true;
                     CombatManager.DoZone(questZone);
                     return;
@@ -1290,12 +1553,14 @@ namespace NGUAdvisor
                         UpdateFurthestZone();
                         if (_furthestZone >= 0)
                         {
+                            NoteRouting(Managers.ZoneRouting.Cause.CBlockGold, ResolveIntentZone(), _furthestZone);
                             CombatHelpers.IsCurrentlyAdventuring = true; // Not equipping gold loadout
                             CombatManager.DoZone(_furthestZone);
                             return;
                         }
                         // Nothing fightable yet (fresh challenge rebirth, moves locked) — fall
                         // through to normal routing (ITOPOD) until stats support an idle zone.
+                        routeCause = Managers.ZoneRouting.Cause.CBlockNoZone;
                     }
                 }
 
@@ -1304,11 +1569,35 @@ namespace NGUAdvisor
 
                 // GEAR HUNT outranks ITOPOD targeting (user-reported: Target ITOPOD silently
                 // overrode the hunted stage — the hunt toggle IS the routing intent while on).
-                int tempZone = GearHunter.Active && GearHunter.ZoneReachable()
-                    ? Settings.GearHuntZone
-                    : Settings.AdventureTargetITOPOD ? 1000 : Settings.SnipeZone;
+                //
+                // AN ADVISOR DROP FARM OUTRANKS IT FOR THE SAME REASON, and this is the SECOND time
+                // the same defect has been reported: audit/40 §3 item 3 recorded that gear hunt was
+                // fixed for exactly this and "the farm zone was not". Observed live 2026-08-05 —
+                // SnipeZone 20, the advisor logging "rare farm -> Chocolate World", and the character
+                // adventuring the ITOPOD the whole time because _adventureTargetItopod was left true
+                // from an earlier session. The write happened, was announced, and was discarded one
+                // line later with nothing said.
+                //
+                // GATED NARROWLY, ON PURPOSE. Only a farm the advisor is actively driving wins
+                // (FarmVenue.DropFarmActive, raised by the gear farm / rare track / IDLE phase and
+                // handed back on the ITOPOD phase and the boost fall-through). Target ITOPOD keeps
+                // its meaning everywhere else, including for the boost farm, which is a broader
+                // change than this defect justifies. The SnipeZone < 1000 test makes a stale flag
+                // unable to do anything except pick the zone the advisor already wrote.
+                //
+                // THE RULE ITSELF NOW LIVES IN ResolveIntentZone() so the seven gates above can name
+                // what they displace from the same source. One copy, on purpose: a second would be
+                // free to drift, and a displacement line naming the wrong zone is worse than none.
+                int tempZone = ResolveIntentZone(out var discardedByItopod);
                 if (tempZone < 1000 && !CombatManager.IsZoneUnlocked(tempZone))
+                {
+                    // audit/40 §3 item 4: this rewrite has never said a word either way, so a locked
+                    // target and a honoured one produce the same silence.
+                    int lockedTarget = tempZone;
                     tempZone = Settings.AllowZoneFallback ? ZoneHelpers.GetMaxReachableZone(false) : 1000;
+                    routeCause = Managers.ZoneRouting.Cause.UnlockFallback;
+                    routeIntent = lockedTarget;
+                }
 
                 // EVIL CLIMB pushes boss numbers to unlock T7 — that means adventuring the highest clearable
                 // zone (bosses + gold + the digger/aug income they feed), NEVER the ITOPOD, which pushes no
@@ -1322,12 +1611,17 @@ namespace NGUAdvisor
                     UpdateFurthestZone();
                     if (_furthestZone >= 0)
                     {
+                        // audit/40 §3 item 5: sound reason, recorded in the comment above, never
+                        // surfaced at runtime — including when it overrides an EXPLICIT ITOPOD choice.
+                        NoteRouting(Managers.ZoneRouting.Cause.EvilClimb, tempZone, _furthestZone);
                         CombatHelpers.IsCurrentlyAdventuring = true;
                         CombatManager.DoZone(_furthestZone);
                         return;
                     }
                     // Nothing clearable yet (fresh climb rebirth, stats too low) — fall through to normal
                     // routing (ITOPOD) until stats support an idle zone.
+                    routeCause = Managers.ZoneRouting.Cause.EvilClimbNoZone;
+                    routeIntent = -1;
                 }
 
                 // No Time Machine (locked early / TM challenge) and headed to the ITOPOD: ITOPOD enemies
@@ -1341,11 +1635,31 @@ namespace NGUAdvisor
                     UpdateFurthestZone();
                     if (_furthestZone >= 0)
                     {
+                        NoteRouting(Managers.ZoneRouting.Cause.GoldStarvedAugs, tempZone, _furthestZone);
                         CombatHelpers.IsCurrentlyAdventuring = true;
                         CombatManager.DoZone(_furthestZone);
                         return;
                     }
+                    // Same silent decline as R5/R8/R12, and the only one audit/40 §3 item 6 did not
+                    // list — it has neither a comment nor a line today.
+                    routeCause = Managers.ZoneRouting.Cause.GoldStarvedNoZone;
+                    routeIntent = -1;
                 }
+
+                // CLAIMED LAST, so anything more specific keeps the pass. R11/R12/R13 and the two
+                // hand-backs are facts about THIS frame; the toggle discard is a standing state, and
+                // the latch reports it the moment the transient clears (the frame after a decline is
+                // either an owner returning with its own line, or this). One note per pass is the
+                // rule set at the top of this method.
+                if (routeCause == Managers.ZoneRouting.Cause.None && discardedByItopod >= 0)
+                {
+                    routeCause = Managers.ZoneRouting.Cause.TargetItopod;
+                    routeIntent = discardedByItopod;
+                }
+
+                NoteRouting(routeCause,
+                    routeCause == Managers.ZoneRouting.Cause.None ? tempZone : routeIntent,
+                    tempZone);
 
                 CombatHelpers.IsCurrentlyAdventuring = true;
                 CombatManager.DoZone(tempZone);

@@ -58,7 +58,11 @@
       {
         "Type": "Number",
         "Target": 100
-      }
+      },
+        {
+          "Type": "Time",
+          "Time": { "m": 32 }
+        }
     ],
     "Challenges": [ "NORB-1" ]
   }

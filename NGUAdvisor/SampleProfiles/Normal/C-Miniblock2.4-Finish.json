@@ -48,6 +48,10 @@
 	  {
 	    "Type": "Number",
 	    "Target": 100
+	  },
+	  {
+	    "Type": "Time",
+	    "Time": { "m": 32 }
 	  }
 	],
 	"Challenges": [ "BLIND-1", "24HR-2" ]

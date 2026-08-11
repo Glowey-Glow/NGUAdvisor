@@ -37,9 +37,10 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:20", "CAPTM:10", "BR:50", "CAPALLNGU", "WISH-0", "WISH-1", "WISH-2", "WISH-3" ],
+        "Priorities": [ "CAPWAN:20", "CAPTM:10", "BR:50", "CAPALLNGU" ],
         "Note1": "For now SAD NGUs are better off in dedicated SNUGDays",
-		"Note2": "Around T11 and the sNGU > eNGU quirk, then run SNGUs full time even though Wishes will be slower"
+		"Note2": "Around T11 and the sNGU > eNGU quirk, then run SNGUs full time even though Wishes will be slower",
+		"Note3": "WISH-0..3 used to be listed here. There is no WISH token: the parser's tag set has 14 stems and WISH is not one of them, so all four fell out as nulls and were filtered before anything counted them. Wishes are funded by the Wishes steps in DoAllocations (Manage Wishes), which run before AND after this magic swap and already take the whole idle pool for the four wish slots - a token would be redundant even if one existed."
       }
     ],
     "R3": [

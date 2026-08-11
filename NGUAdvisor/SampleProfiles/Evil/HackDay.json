@@ -22,13 +22,15 @@
     "Gear": [
       {
         "Time": 0,
-        "ID": [ 319, 326,   322, 342, 324, 311,   390, 320, 295, 307,   327, 450, 328, 276, 451, 297, 314, 296, 313 ],
-        "Comment": "R3Bars4Hacks"
+        "Objective": "Resource 3 Bars",
+        "Comment": "R3Bars4Hacks",
+        "Note": "Was a hardcoded 19-item ID list. On a save that does not own those exact items the whole loadout failed to equip - observed live 2026-08-01: 'Finished equipping gear - 19 of 19 did NOT go on', with a Missing item line for every entry, so the hack day ran in whatever gear happened to be on. An objective lets the native optimizer pick the best set the account ACTUALLY has, and keeps improving it as drops land."
       },
       {
         "Time": { "h": 1, "m": 30 },
-        "ID": [ 326, 319,   322, 342, 317, 325,   295, 327, 450, 328, 451, 276, 320, 314, 297, 296, 307, 313, 321 ],
-        "Comment": "Hacks"
+        "Objective": "Hacks",
+        "Comment": "Hacks",
+        "Note": "Bars are flow into curRes3 and matter only while the bar is still filling; hacks spend the STOCK. Hence the swap at 90 minutes from Resource 3 Bars to Hacks (Res3 cap/power + hack speed)."
       }
     ],
     "Wandoos": [

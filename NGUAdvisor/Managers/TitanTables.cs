@@ -12,6 +12,22 @@ namespace NGUAdvisor.Managers
     // published DOM stay testable under the same rule as the rest of the class.
     public static class TitanTables
     {
+        // How many VERSIONS of a titan have actually been DEFEATED, from the human-readable version number.
+        //
+        // ZoneHelpers.TitanVersion returns `titan{n}Version + 1` — the version you are currently ON, which
+        // is never less than 1. Two separate callers needed "how many have I beaten" and only one of them
+        // got the conversion right:
+        //   LevelPlanner.TickNguTrack   Math.Max(0, TitanVersion(6) - 1)   correct
+        //   ExpBalancer.Pools           TitanVersion(6) >= 1               ALWAYS TRUE
+        // That second one silently disabled the guide's entire pre-T7 Evil EXP rule — ExpRatio.Split tests
+        // t7Killed first, so the energy-only branch below it was unreachable for the whole of Evil ch.5,
+        // and the account ran the post-T7 split instead. Nothing failed; the readout just quietly meant
+        // something else.
+        //
+        // It lives here, in a Unity-free class, so the conversion has ONE home and a headless test rather
+        // than being re-derived at each call site.
+        public static int VersionsDefeated(int humanVersion) => Math.Max(0, humanVersion - 1);
+
         // Titan abbreviations (0-based index), relocated from the retired WinForms TitansPanel — consumed by
         // AtHourPlanner + the UiBridge titan snapshot node.
         public static readonly string[] Abbrev =
@@ -19,6 +35,45 @@ namespace NGUAdvisor.Managers
             "GRB", "GCT", "Jake", "UUG", "Walderp", "Beast", "Nerd",
             "Godmother", "Exile", "Hungers", "Lobster", "Amalg", "Tippi", "Traitor"
         };
+
+        // ------------------------------------------------------- gear a fight REQUIRES for a mechanic
+        // Items that must be WORN for the fight to be winnable at all, as opposed to items that merely
+        // score well. Nothing else in the gear pipeline can express this: every objective is a set of
+        // STATS, and the one entry here has none.
+        //
+        // T4 (index 3) — UUG THE UNMENTIONABLE, zone 14 — and the Ring of Apathy, item 135.
+        // [DECOMP] InventoryController.apathyCheck() scans `character.inventory.accs` — the EQUIPPED
+        // accessory slots — for id 135 and returns ITS LEVEL, or -1 when it is not equipped. EnemyAI
+        // then branches on that number (:715-753, and again :1516-1545):
+        //
+        //     < 0    invincible = true;  growCount += 400;  growCount *= 2;     <- UNKILLABLE
+        //     < 100  growCount += (100 - level), scaled by (2 - level/100)      <- still growing
+        //     >= 100 the insult does nothing
+        //
+        // and damage is `1 + growCount/100`. So fighting UUG without the ring ON is not merely slow,
+        // it cannot be won, against a boss whose damage is simultaneously ballooning.
+        //
+        // ⚠ THIS IS NOT THE AK GATE, and conflating the two is the trap. Autokill needs
+        // `itemList.itemMaxxed[135]` — a flag on the ITEM LIST meaning "levelled to max"
+        // (AdventureController:3201, and ZoneHelpers.AutokillAvailable case 3 reads exactly that).
+        // apathyCheck needs it in an ACCESSORY SLOT RIGHT NOW. A player can satisfy the first and fail
+        // the second, which is precisely the state the advisor used to walk into.
+        //
+        // 0 = no required accessory. Only T4 has one in the whole game as of this writing; the table is
+        // per-titan so a second mechanic does not need a code change.
+        public const int ApathyRingId = 135;
+
+        // The level at which the ring fully suppresses UUG's growth. Below it the fight is winnable but
+        // the boss still grows, so this is a WARNING threshold, not a gate.
+        public const int ApathyFullLevel = 100;
+
+        public static readonly int[] RequiredAccessory =
+        {
+            0, 0, 0, ApathyRingId, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        };
+
+        public static int RequiredAccessoryFor(int titanIndex) =>
+            titanIndex >= 0 && titanIndex < RequiredAccessory.Length ? RequiredAccessory[titanIndex] : 0;
 
         // Autokill attack/defense/HP-REGEN requirements per titan index (0-based) and version (1-4),
         // extracted from the game's autokillTitan{N}V{V}Achieved methods (reference/decomp-full/

@@ -15,7 +15,15 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
     public abstract class ResourceBreakpoint
     {
-        protected static readonly Character _character = Main.Character;
+        // PROPERTY, not `static readonly ... = Main.Character`. The field form ran Main.Character —
+        // and therefore FindObjectOfType<Character>() — inside this type's INITIALIZER, so merely
+        // NAMING ResourceBreakpoint (or any subclass) required a live Unity scene. Two consequences it
+        // cost us: nothing in this hierarchy could be linked into the headless net9.0 test project, and
+        // a throw in that initializer poisons the type for the whole process lifetime (audit 01 §R4).
+        // As a property the Unity read happens at USE, not at type-init, so the type loads anywhere and
+        // a failed read is a local fault. The read itself is unchanged — Main.Character is still the
+        // one cached root, so this is not a per-access FindObjectOfType.
+        protected static Character _character => Main.Character;
 
         private double? CapPercent { get; set; }
 
@@ -70,7 +78,40 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             MaxAllocation = Math.Min(capMax, GetIdleResourceAmount());
         }
 
-        public bool IsValid() => CorrectResourceType() && Unlocked() && !TargetMet();
+        // ---- Diagnostic surface (read-only; see AllocDiagnostic) ----
+        // Index/MaxAllocation are protected because nothing outside the lane should STEER on them. The
+        // energy/magic telemetry still has to NAME a lane and report the budget it resolved to, so those
+        // two facts get a public read-only view rather than loosening the setters.
+
+        // Mirrors the profile token syntax, so a log line can be pasted back into a profile: "CAPNGU-5".
+        public string Label => Managers.LaneTargets.Label(GetType().Name, IsCap, Index);
+
+        // What UpdateMaxAllocation resolved to. The gap between this and what the lane actually committed
+        // is the stair-snap, which is CORRECT: every system caps at one level per game tick (decomp
+        // NGUController.updateNGU zeroes progress on level-up and discards the overflow), so a lane that
+        // takes less than its budget is taking everything it can use. Only the trailing idle is waste.
+        public long Budget => MaxAllocation;
+
+        // ---- Constraint-layer wiring surface (ConstraintLayerBridge) ----
+        // The new path never calls UpdateMaxAllocation: the constraint layer decides each lane's
+        // budget (spec §2's fill) and hands it in here; Allocate() then self-limits below it exactly
+        // as before — the lane's own stair-snap math IS the Pass 2 capacity (CapacityPass.Table's
+        // Advisor rows). Index/Type/CapPercent get read-only views because the bridge must NAME a
+        // lane family and, for parity logging, replay the old share arithmetic — nothing outside the
+        // lane steers on them.
+        public void OfferBudget(long amount) => MaxAllocation = amount > 0 ? amount : 0;
+
+        public int LaneIndex => Index;
+
+        public ResourceType LaneType => Type;
+
+        public double? CapPercentView => CapPercent;
+
+        // Managers/LaneTargets holds the composition and the per-lane TargetMet() inventory. FIVE of the
+        // ten lanes hardcode TargetMet() => false, so for them this reduces to "correct pool AND
+        // unlocked" and they can never leave the priority list by being satisfied — decision record
+        // amendment 01 §P1 is the fix for that, and it is deliberately NOT applied here.
+        public bool IsValid() => Managers.LaneTargets.IsValid(CorrectResourceType(), Unlocked(), TargetMet());
 
         protected abstract bool Unlocked();
 
@@ -102,10 +143,12 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 {
                     var split = prio.Split(':');
                     temp = split[0];
-                    var success = int.TryParse(split[1], out var tempCap);
-                    if (!success)
-                        cap = 100;
-                    else if (tempCap > 100)
+                    // SKIP, do not default to 100. A malformed percent used to mean "take the entire
+                    // pool" — the worst possible reading of a typo, and indistinguishable from an
+                    // intentional CAPX:100. Same principle as the index sentinel below.
+                    if (!int.TryParse(split[1], out var tempCap))
+                        continue;
+                    if (tempCap > 100)
                         cap = 100;
                     else if (tempCap < 0)
                         cap = 0;
@@ -123,9 +166,20 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 {
                     var split = temp.Split('-');
                     temp = split[0];
-                    var success = int.TryParse(split[1], out index);
-                    if (!success)
-                        index = -1;
+                    // SKIP the whole token rather than emitting a poisoned breakpoint. This used to
+                    // set index = -1, which every lane then had to guard against independently —
+                    // and six of them did not, or did it wrong. -1 travels into eleven `Index = index`
+                    // construction sites and then indexes a game array: ngus[-1], bloodMagics[-1],
+                    // ControllerFor(-1). Some throw and kill the lane for a profile lifetime; AUG-x
+                    // did not even throw (-1 % 2 == -1 in C#, so it took the upgrade branch and
+                    // reported unlocked), silently inflating the prioCount divisor for every other
+                    // lane in the pool — the same mechanism as the RIT-7 defect.
+                    //
+                    // Setting index = 0 would be worse: RIT-x would silently become RIT-0, a valid
+                    // fundable lane the user never asked for. A malformed token must produce nothing.
+                    // (audit 09 §5; advisors/02:718; decision record amendment 07)
+                    if (!int.TryParse(split[1], out index))
+                        continue;
                 }
                 else
                 {
@@ -266,6 +320,10 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 }
                 else if (temp.StartsWith("ALLAT") || temp.StartsWith("CAPALLAT"))
                 {
+                    // GRAMMAR UNCHANGED, one flag fewer: this used to also set GroupSpread = true, the
+                    // per-group waterfill AdvancedTrainingBP no longer has. The five slots it yields,
+                    // their indices and their order are exactly as before — see the header comment on
+                    // AdvancedTrainingBP for why the local waterfill went.
                     for (var i = 0; i < 5; i++)
                     {
                         yield return new AdvancedTrainingBP
@@ -273,30 +331,33 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                             CapPercent = cap,
                             Index = i,
                             IsCap = temp.Contains("CAP"),
-                            Type = type,
-                            GroupSpread = true   // even waterfill across the 5 slots (see AdvancedTrainingBP)
+                            Type = type
                         };
                     }
                 }
                 else if (temp.StartsWith("ALLHACK") || temp.StartsWith("CAPALLHACK"))
                 {
-                    // Hacks with target first
-                    foreach (var hack in _character.hacks.hacks.Where(x => x.target > 0))
+                    // Plain 0..14, and let IsValid() sort them out at allocation time.
+                    //
+                    // This used to read live hack state HERE — targeted hacks first, then untargeted — but
+                    // parsing happens once when the profile loads. The resulting order was therefore frozen
+                    // at load: a target set later never reordered anything, and a hack that reached its
+                    // target kept its slot until the profile was reloaded. ChallengeOverlay made it worse by
+                    // caching the parsed list for the whole session.
+                    //
+                    // The partition also had a hole. It bucketed `target > 0` and `target == 0`, so hacks at
+                    // target == -1 — the game's own "never fund this" marker — matched neither and vanished
+                    // from ALLHACK entirely. hitTarget already returns true for -1, so letting IsValid()
+                    // filter is both simpler and correct.
+                    //
+                    // Index 15 ("THE END") is excluded outright rather than emitted and filtered later: it
+                    // takes no R3, and including it inflated the priority count the share math divides by.
+                    for (var i = 0; i <= 14; i++)
                     {
                         yield return new HackBP
                         {
                             CapPercent = cap,
-                            Index = _character.hacks.hacks.IndexOf(hack),
-                            IsCap = temp.Contains("CAP"),
-                            Type = type
-                        };
-                    }
-                    foreach (var hack in _character.hacks.hacks.Where(x => x.target == 0))
-                    {
-                        yield return new HackBP
-                        {
-                            CapPercent = cap,
-                            Index = _character.hacks.hacks.IndexOf(hack),
+                            Index = i,
                             IsCap = temp.Contains("CAP"),
                             Type = type
                         };

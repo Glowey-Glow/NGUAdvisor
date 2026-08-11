@@ -52,8 +52,9 @@ namespace NGUAdvisor.Managers
 
         // Optimize for an objective and return the item IDs (for writing into a loadout / profile).
         // forceTopRespawn pins the single best Respawn item so the loadout always keeps some respawn.
-        public static int[] OptimizeIds(GearObjectives.Objective obj, bool forceTopRespawn = false)
-            => Optimize(obj, forceTopRespawn).AllIds().Where(x => x > 0).Distinct().ToArray();
+        public static int[] OptimizeIds(GearObjectives.Objective obj, bool forceTopRespawn = false,
+                                        int requireAccessoryId = 0)
+            => Optimize(obj, forceTopRespawn, requireAccessoryId).AllIds().Where(x => x > 0).Distinct().ToArray();
 
         // Optimize for an objective by name (as stored in profiles/settings); null if unknown.
         public static GearObjectives.Objective FindObjective(string name)
@@ -63,7 +64,8 @@ namespace NGUAdvisor.Managers
         // Resolve the gear a mode should equip: if objectiveName is set (and valid), optimize live for it
         // (route C3 3.2) so the mode's gear stays optimal; otherwise fall back to the static loadout IDs.
         // MUST be called on the main thread (reads live inventory). Never throws; falls back on any error.
-        public static int[] ResolveModeGear(string objectiveName, bool forceRespawn, int[] fallback)
+        public static int[] ResolveModeGear(string objectiveName, bool forceRespawn, int[] fallback,
+                                            int requireAccessoryId = 0)
         {
             if (!string.IsNullOrEmpty(objectiveName))
             {
@@ -74,7 +76,7 @@ namespace NGUAdvisor.Managers
                 {
                     try
                     {
-                        var ids = OptimizeIds(obj, forceRespawn);
+                        var ids = OptimizeIds(obj, forceRespawn, requireAccessoryId);
                         if (ids.Length > 0)
                         {
                             Main.Log($"Mode gear optimized for '{obj.Name}'{(forceRespawn ? " (+top respawn)" : "")}: {ids.Length} items.");
@@ -98,6 +100,7 @@ namespace NGUAdvisor.Managers
             var fallback = Main.Settings.TitanLoadout;
 
             bool realFight = false;
+            int requiredAcc = 0;
             try
             {
                 var targets = Main.Settings.TitanSwapTargets;
@@ -105,7 +108,14 @@ namespace NGUAdvisor.Managers
                 {
                     if (targets == null || i >= targets.Length || !targets[i]) continue;
                     if (!ZoneHelpers.TitanSpawningSoon(i)) continue;
-                    if (!ZoneHelpers.AutokillAvailable(i)) { realFight = true; break; }
+                    if (!ZoneHelpers.AutokillAvailable(i))
+                    {
+                        realFight = true;
+                        // The mechanic item for THIS titan, if it has one. Only on a real fight: once
+                        // the spawn autokills there is no fight to lose and no reason to spend a slot.
+                        requiredAcc = TitanTables.RequiredAccessoryFor(i);
+                        break;
+                    }
                 }
             }
             catch { }
@@ -114,10 +124,19 @@ namespace NGUAdvisor.Managers
             {
                 Main.Log("Titan fight is live (not AK) — kill set overrides the loot objective");
                 obj = "Adventure";
+                if (requiredAcc != 0)
+                {
+                    int lvl = ZoneHelpers.EquippedAccessoryLevel(requiredAcc);
+                    if (lvl < 0)
+                        Main.Log($"This fight REQUIRES item {requiredAcc} worn as an accessory — reserving a slot for it.");
+                    else if (requiredAcc == TitanTables.ApathyRingId && lvl < TitanTables.ApathyFullLevel)
+                        Main.Log($"Ring of Apathy is level {lvl}; below {TitanTables.ApathyFullLevel} UUG still " +
+                                 "grows stronger every insult. Level it to stop the growth entirely.");
+                }
             }
             else if (string.IsNullOrEmpty(obj) && (fallback == null || fallback.Length == 0))
                 obj = "Adventure";
-            return ResolveModeGear(obj, Main.Settings.TitanObjectiveRespawn, fallback);
+            return ResolveModeGear(obj, Main.Settings.TitanObjectiveRespawn, fallback, requiredAcc);
         }
 
         // Gold gear resolution with a data-driven default: when the user configured NEITHER a gold
@@ -162,7 +181,8 @@ namespace NGUAdvisor.Managers
             catch (Exception e) { Main.LogDebug($"CurrentScore failed: {e.Message}"); return 0; }
         }
 
-        public static Result Optimize(GearObjectives.Objective obj, bool forceTopRespawn = false)
+        public static Result Optimize(GearObjectives.Objective obj, bool forceTopRespawn = false,
+                                      int requireAccessoryId = 0)
         {
             var idToItem = new Dictionary<int, GearScorer.Item>();
             var pools = BuildPools(idToItem);
@@ -293,6 +313,29 @@ namespace NGUAdvisor.Managers
                 if (Has(r.MainWeapon) || Has(r.OffWeapon) || Has(r.Head) || Has(r.Chest) || Has(r.Legs) || Has(r.Boots)) return true;
                 foreach (var a in r.Accessories) if (Has(a)) return true;
                 return false;
+            }
+
+            // A REQUIRED accessory outranks merit, because it is not competing on merit. The Ring of
+            // Apathy (135) carries curAttack/capAttack/curDefense/capDefense = 0 and specType1/2/3 =
+            // None ([DECOMP] ItemNameDesc.cs:2664-2676) — literally every stat zero — so it scores
+            // exactly 0 against any objective and a merit pass will NEVER select it. Its whole value is
+            // a mechanic the scorer cannot see: without it worn, UUG is invincible (TitanTables
+            // .RequiredAccessory carries the citation). Pin it, then optimize the remaining slots
+            // around it, which costs one slot's worth of stats and buys a winnable fight.
+            //
+            // Silently ignored when the item is not owned — the caller's gate is what refuses the
+            // fight; this method's job is only to wear it when it can.
+            if (requireAccessoryId != 0 && accSlots > 0 &&
+                accPool.Any(kv => kv.Key == requireAccessoryId))
+            {
+                pinId = requireAccessoryId;
+                pinPart = part.Accessory;
+                r.Accessories.Add(requireAccessoryId);
+                r.Score = RunOptimize();
+                pinId = 0;
+                // The respawn pin below rebuilds `r` from scratch and would drop this one, and a
+                // required item beats a respawn preference every time. Done here.
+                return r;
             }
 
             // Pass 1: pure merit — no pin.

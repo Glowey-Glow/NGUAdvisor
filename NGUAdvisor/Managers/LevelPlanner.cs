@@ -2,15 +2,19 @@ using System;
 
 namespace NGUAdvisor.Managers
 {
-    // Level caps (user-approved plan): the advisor manages the game's own target fields
-    // (advancedTraining.levelTarget, machine.speedTarget/multiTarget), which the allocation
-    // breakpoints already respect (a met target drops out and its share redistributes — the
-    // ALLAT waterfill sends it to the remaining slots) and which display in the game's own
-    // AT/TM target boxes.
+    // Level caps: the advisor manages the AT slots of the game's own target field
+    // (advancedTraining.levelTarget), which the allocation breakpoints already respect (a met
+    // target drops out and its share redistributes — the ALLAT waterfill sends it to the
+    // remaining slots) and which display in the game's own AT target boxes.
     //
     // AT slots are PURPOSE-DRIVEN (user rule): Toughness (0) and Power (1) are the titan push
     // and stay uncapped; Block (2) stops at 99% damage reduction. BLOCK IS THE ONLY SLOT THE
     // ADVISOR WRITES A TARGET INTO — slots 0/1/3/4 are the operator's.
+    //
+    // BLOCK'S STOP IS A FLOOR (operator ruling 2026-08-07). It used to be written unconditionally,
+    // so a target the operator typed into the game's own AT box was overwritten within one tick and
+    // could not be made to stick at all — reported as "capping Block below the 100,000 threshold I
+    // set". The 99% level is now the LEAST this will accept and a larger hand-set number wins.
     //
     // THE WANDOOS ATs (3/4) TAKE NO ADVISOR-WRITTEN TARGET, EVER (operator ruling 2026-08-10).
     // They used to be set to the level at which Wandoos' cap-speed dump costs <= 1% of max E/M,
@@ -29,28 +33,24 @@ namespace NGUAdvisor.Managers
     //   field for the rest of the run. Clearing it by hand held only until the next window.
     //
     // The guide's rule here ("run Wandoos AT until cheap to run Wandoos 98") is a COST PREDICATE,
-    // not a lane instruction. A predicate has no business being a TARGET.
+    // not a lane instruction — ObjectiveTable already carries it as a predicate/rate row and
+    // TargetPass already reports it as NO OPINION. A predicate has no business being a TARGET.
     //
-    // Sufficiency freezes (marathon only):
-    //   Power/Toughness — frozen only while adventure stats beat the NEXT titan AK requirement
-    //        with 10% headroom (TitanAk table); a new titan/version target automatically thaws.
-    //   TM — frozen only while the TM holds gold AND augments are affordable (the drain
-    //        ledger's starvation check); gold trouble thaws it.
-    // User targets are snapshotted before the first override and restored on auto-profile off.
+    // Every number written here must be DERIVED (a saturating curve or a cost threshold),
+    // never a snapshot of the current level — a snapshot is a FREEZE, and a freeze in a
+    // serialized game field strands across reloads with no restore path and shrinks the
+    // rebirth banks (rate × level-at-rebirth). The old sufficiency freezes (FreezeAt/FreezeTm)
+    // did exactly that and were removed (decision record amendment 24 §3). TM in particular
+    // takes NO advisor-written target, ever: it never saturates, so speedTarget/multiTarget
+    // stay zero — the game's unset sentinel (amendment 24 §4).
     public static class LevelPlanner
     {
-        private static long[] _atSnapshot;        // slots 0..1 (sufficiency freeze)
         private static long _blockSnapshot;       // slot 2 — the only advisor-written AT target
-        private static long _speedSnapshot, _multiSnapshot;
-        private static bool _frozenAt, _frozenTm, _purposeOn;
+        private static bool _purposeOn;
         private static bool _wanReclaimed;        // one-shot per process; see TickPurposeTargets
 
-        public static string Status { get; private set; } = "";
-        public static bool AtFrozen => _frozenAt;
-        public static bool TmFrozen => _frozenTm;
-
         // R11: the outer whole-Tick catch was removed so AdvisorApply's RunStep("Level planner", ...) owns
-        // the bounded fault report. The narrow NextObjective / gold probes keep their own catches.
+        // the bounded fault report. TickPurposeTargets / TickNguTrack keep their own catches.
         public static void Tick()
         {
             var c = Main.Character;
@@ -60,42 +60,11 @@ namespace NGUAdvisor.Managers
             if (!s.AutoProfile)
             {
                 ThawAll(c);
-                Status = "";
                 return;
             }
 
             TickPurposeTargets(c);
             TickNguTrack(c);
-
-            bool marathon = ChallengeOverlay.Segment == "NGU MARATHON";
-
-            // Power/Toughness sufficiency vs the REALISTIC objective: the next un-AK'd
-            // titan+version at THIS difficulty (never Evil content while on Normal — the
-            // T7 overreach bug).
-            bool atSufficient = false;
-            try
-            {
-                var obj = OptimizationAdvisor.NextObjective();
-                atSufficient = !obj.Known
-                    || (c.totalAdvAttack() >= obj.ReqAttack * 1.1 && c.totalAdvDefense() >= obj.ReqDefense * 1.1);
-            }
-            catch { }
-
-            bool wantAt = marathon && atSufficient;
-            if (wantAt && !_frozenAt) FreezeAt(c);
-            else if (!wantAt && _frozenAt) ThawAt(c);
-
-            // TM sufficiency: funded and not starving the augment budget.
-            bool goldOk = false;
-            try { goldOk = c.machine.realBaseGold > 0 && !OptimizationAdvisor.GoldStarvedForAugs(c, 1.0); } catch { }
-
-            bool wantTm = marathon && goldOk;
-            if (wantTm && !_frozenTm) FreezeTm(c);
-            else if (!wantTm && _frozenTm) ThawTm(c);
-
-            Status = _frozenAt || _frozenTm
-                ? $"caps: {(_frozenAt ? "AT" : "")}{(_frozenAt && _frozenTm ? "+" : "")}{(_frozenTm ? "TM" : "")} frozen"
-                : "caps: none";
         }
 
         // Guide ch5 24h structure: Normal NGUs most of the run, EVIL NGUs the LAST N hours (N = T7 versions
@@ -111,10 +80,32 @@ namespace NGUAdvisor.Managers
                 try { chapter = StageDetector.Detect().Chapter; } catch { }
                 double target = -1;
                 try { target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; } catch { }
-                if (chapter != 5 || ZoneHelpers.CurrentHighestBoss(c) < 125 || target <= 0) return;
+                // GATED ON DIFFICULTY, NOT CHAPTER — matching ChallengeOverlay.cs:509-523.
+                // Chapter() ends at Evil boss 166 (IDP unlock), which is mid-Evil, so `chapter != 5`
+                // stopped being true while the run was still Evil and the Evil-NGU tail was still
+                // scheduled. StageDetector also returns chapter 0 on any exception, dropping a
+                // healthy Evil run out of its shape for up to 60s. rebirthDifficulty is a stored
+                // field on character.settings and does neither.
+                //
+                // Closes G1-D1: ChallengeOverlay was migrated and this sibling site was not, so past
+                // boss 166 the allocation entered EVIL NGU while the level track was never switched
+                // to Evil — funding the Evil-NGU tail on the NORMAL NGU track.
+                // (advisors/01:427-438, :697; decision record amendment 11 §2)
+                bool isEvil = false;
+                try { isEvil = c.settings.rebirthDifficulty == difficulty.evil; } catch { }
+                if (!isEvil || ZoneHelpers.CurrentHighestBoss(c) < 125 || target <= 0) return;
+
+                // THE PROFILE WINS IF IT SCHEDULED THE TRACK ITSELF. The header above says "elsewhere the
+                // profile's NGUDiff owns the track" — but inside this ch.5 window it did not, and both
+                // writers hit c.settings.nguLevelTrack every tick with no arbitration. Concretely, on
+                // 24hr-EarlyEvil (Diff:0 -> Diff:1 at h22) with a 24h target and T7 v1 down, switchAt
+                // lands near h23, so from h22 to h23 this method wrote the track back to NORMAL — quietly
+                // undoing the author's swap and costing an hour of Evil NGUs in the one window the guide
+                // says they matter most. A profile with a real NGUDiff timeline now keeps ownership.
+                try { if (Main.Profile != null && Main.Profile.ProfileOwnsNguTrack) return; } catch { }
 
                 int t7 = 0;
-                try { t7 = Math.Max(0, ZoneHelpers.TitanVersion(6) - 1); } catch { }
+                try { t7 = TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6)); } catch { }
                 if (t7 < 1) return; // no T7 version defeated → no Evil NGU hours (guide ch5 rule: N = versions defeated)
                 double evilHours = t7;
                 double switchAt = target - evilHours * 3600.0;
@@ -146,12 +137,12 @@ namespace NGUAdvisor.Managers
                     _blockSnapshot = targets[2];
                     _purposeOn = true;
 
-                    // RECLAIM, NOT AN OVERRIDE, AND IT FIRES ONCE PER PROCESS. Until the ruling in the
-                    // class header this was the only writer that had ever touched levelTarget[3]/[4],
-                    // and it left a number behind every time it left its segment window — so a value
-                    // sitting in those slots at the first engage of a session is one the advisor
-                    // stranded, and withdrawing it is the exit the old code never performed. After
-                    // this, nothing writes them again, so a target typed later stands for the session.
+                    // RECLAIM, NOT AN OVERRIDE, AND IT FIRES ONCE PER PROCESS. Until the ruling above
+                    // this was the only writer that had ever touched levelTarget[3]/[4], and it left a
+                    // number behind every time it left its segment window — so a value sitting in
+                    // those slots at the first engage of a session is one the advisor stranded, and
+                    // withdrawing it is the exit that the old code never performed. After this, nothing
+                    // in the advisor writes them again, so a target typed later stands for the session.
                     //
                     // The one-shot is what makes that promise keepable. Reclaiming on EVERY engage
                     // would zero a hand-typed target each time the operator toggled the auto profile
@@ -166,39 +157,72 @@ namespace NGUAdvisor.Managers
                     }
 
                     ChallengeOverlay.Record("AT purpose caps on",
-                        "block → 99% reduction · rest to Power/Toughness" +
+                        "block → 100,000 levels, every difficulty (a higher target of yours is kept) · " +
+                        "rest to Power/Toughness" +
                         (reclaimed ? " · cleared a stale advisor target off the wandoos ATs (they take none now)"
                                    : " · wandoos ATs untouched"));
                 }
 
-                ApplyPurpose(targets, 2, BlockStopLevel(c));
-                // SLOTS 3/4 ARE DELIBERATELY ABSENT. See the wandoos paragraph in the class header.
+                // Block is a FLOOR, not a set — a hand-typed target above the cap is the operator's and
+                // is never lowered to it. See LaneTargets.AdvancedTrainingPurposeFloor for why this
+                // slot and not the Wandoos ones.
+                //
+                // ⚠ THE STOP IS THE RULED CONSTANT, NOT A DERIVED ONE, AND THAT IS THE WHOLE CHANGE.
+                // This used to pass BlockStopLevel(c) = ceil(49 / block.levelFactor), which solves the
+                // Block curve for 99% damage reduction and lands near 5,000 — twenty times below the
+                // cap. Because the floor only protects an ALREADY-SET higher target, it could not pull
+                // a 100,000 down, but ON AN UNSET SLOT IT WROTE ~5,000 FIRST and nothing ever raised
+                // it: the slot sat at 99% for the rest of the run. [OPERATOR] 2026-08-07: "the 5000 is
+                // not acceptable... this goes for every difficulty".
+                //
+                // THIS SINGLE WRITE COVERS ALL THREE DIFFICULTIES BY ITSELF. levelTarget[2] is one
+                // field per slot with NO per-track split — ConstraintLayerBridge.LaneStateFor reads
+                // advancedTraining.level[i] with no track branch, unlike the NGU lanes — so there is
+                // no Normal/Evil/Sadistic variant of this target to write.
+                //
+                // AMENDMENT 24 §3 KEPT THIS WRITE AS "DERIVED FROM A SATURATING CURVE" AND IT STILL
+                // QUALIFIES, more strongly than before. 24 §1's disqualifying case is a FREEZE —
+                // max(1, current level), meaningless outside the process. A ruled constant is stable
+                // and re-derivable after any reload, which is the actual serialized-safe test; it is
+                // ceil(49/f) that was the weaker citizen here, moving with a Unity-serialized field
+                // (AdvancedTrainingController.cs:33, no initializer) the advisor cannot verify. ⚠ AND
+                // 24 §5 JUSTIFIED KEEPING IT BY CITING [OPERATOR]'s "100k levels / 99.95% block" —
+                // a number this formula does not produce. That conflation is the defect being closed.
+                ApplyPurposeFloor(targets, 2, ObjectiveTable.AtBlockHardCapLevel);
+                // SLOTS 3/4 ARE DELIBERATELY ABSENT. See the wandoos paragraph in the class header for
+                // the ruling; `c` is still the parameter this method takes because slot 2 needs it.
             }
             catch (Exception e) { Main.LogDebug($"LevelPlanner purpose caps: {e.Message}"); }
         }
 
-        private static void ApplyPurpose(long[] targets, int slot, long stop)
+        // The stop is a MINIMUM: an existing higher target is the operator's and
+        // survives. The decision itself is LaneTargets.AdvancedTrainingPurposeFloor (Unity-free, tested).
+        private static void ApplyPurposeFloor(long[] targets, int slot, long stop)
         {
             if (stop == long.MinValue) return;   // unknown — leave the current target alone
-            if (targets[slot] != stop) targets[slot] = stop;
+            var next = LaneTargets.AdvancedTrainingPurposeFloor(targets[slot], stop);
+            if (targets[slot] != next) targets[slot] = next;
         }
 
-        // Block stops at 99% damage reduction. The game's blockBonus = 0.5 / (1 + f·L) (remaining
-        // damage fraction; tooltip shows reduction = 1 − that), so 99% needs f·L >= 49.
-        private static long BlockStopLevel(Character c)
-        {
-            try
-            {
-                float f = c.advancedTrainingController.block.levelFactor;
-                if (f <= 0) return long.MinValue;
-                return (long)Math.Ceiling(49.0 / f);
-            }
-            catch { return long.MinValue; }
-        }
+        // BlockStopLevel WAS HERE AND IS DELETED, not merely bypassed — a second way to compute a
+        // block stop is a second writer waiting to be re-wired. Its derivation, preserved so nobody
+        // re-derives it from scratch and reintroduces the number:
+        //
+        //     blockBonus = 0.5 / (1 + f·L) is the REMAINING damage fraction (the tooltip shows
+        //     reduction = 1 − that), so 99% reduction needs f·L >= 49, i.e. L = ceil(49 / f) where
+        //     f = advancedTrainingController.block.levelFactor. Near 5,000 in practice — but f is
+        //     Unity-serialized with no initializer ([DECOMP] AdvancedTrainingController.cs:33), so
+        //     "5,000" was always an INFERENCE from the guide's 99%-at-5k rung, never a measurement.
+        //
+        // It has no other caller and never had one: TickPurposeTargets' slot-2 write was its only
+        // use. The 99% rung itself is NOT lost — it survives as the ch.3 precondition row and as
+        // BlockCurveRungs in ObjectiveTable, which is where a milestone belongs. What it must not be
+        // again is a TARGET.
 
-        // WandoosStopLevel WAS HERE AND IS DELETED (operator ruling 2026-08-10) — a second way to
-        // compute a wandoos-AT stop is a second writer waiting to be re-wired, and this one had
-        // already been re-wired once, into the segment that broke it. Its derivation, preserved so
+        // WandoosStopLevel WAS HERE AND IS DELETED, on the same terms as BlockStopLevel above: a
+        // second way to compute a wandoos-AT stop is a second writer waiting to be re-wired, and
+        // this one had already been re-wired once (marathon → + EVIL CLIMB / AUGMENTATION / NGU+AT /
+        // EVIL NGU, commit 047cd33) into the segment that broke it. Its derivation, preserved so
         // nobody re-derives it from scratch and reintroduces the target:
         //
         //     The dump cost is baseTime / totalWandoosSpeed and speed scales with (1 + f·L), so the
@@ -207,13 +231,17 @@ namespace NGUAdvisor.Managers
         //         needFactor = baseTime / (0.01 · cap · sOther)
         //         L          = ceil((needFactor − 1) / f),     f = wandoosEnergy/Magic.levelFactor
         //     with <= 0 meaning "already under 1% at level 0". baseEnergyTime()/baseMagicTime() are
-        //     CONSTANT per difficulty and OS ([DECOMP] Wandoos98Controller.cs:73-83) — the two live
-        //     terms are SPEED and CAP, and BOTH ARE GEAR. That is precisely why it could not be
-        //     written as a target: it is a reading of the worn loadout, and the worn loadout in the
-        //     segments this ran in was Augments, not a cap loadout.
+        //     CONSTANT per difficulty and OS ([DECOMP] Wandoos98Controller.cs:73-83, `advisors/01`
+        //     G1-D18) — the two live terms are SPEED and CAP, and BOTH ARE GEAR. That is precisely
+        //     why it could not be written as a target: it is a reading of the worn loadout, and the
+        //     worn loadout in the segments this ran in was Augments, not a cap loadout.
         //
-        // The 1%-dump rung itself is NOT lost. It survives where a cost predicate belongs — as the
-        // "run Wandoos AT until CHEAP TO RUN WANDOOS 98" predicate row, never as a level.
+        // The 1%-dump rung itself is NOT lost. It survives where a cost predicate belongs — as
+        // ObjectiveTable's "run Wandoos AT until CHEAP TO RUN WANDOOS 98" predicate/rate row, which
+        // TargetPass reports as NO OPINION rather than converting into a level.
+        //
+        // Amendment 26 §1's gear wording in constraint-layer-spec §10 and `03` §7.2 was transcribed
+        // from the comment that lived here; the derivation above is its source and still stands.
 
         private static void ThawPurpose(Character c)
         {
@@ -232,57 +260,8 @@ namespace NGUAdvisor.Managers
             ChallengeOverlay.Record("AT purpose caps off", "auto profile off — user Block target restored");
         }
 
-        // ---- Sufficiency freeze: Power/Toughness (slots 0..1) only — 2..4 are purpose-owned. ----
-
-        private static void FreezeAt(Character c)
-        {
-            var targets = c.advancedTraining.levelTarget;
-            _atSnapshot = new long[2];
-            for (int i = 0; i < 2 && i < targets.Length; i++)
-            {
-                _atSnapshot[i] = targets[i];
-                long lvl = c.advancedTraining.level[i];
-                targets[i] = lvl > 0 ? lvl : -1;   // -1 = hold at zero (target 0 means uncapped)
-            }
-            _frozenAt = true;
-            ChallengeOverlay.Record("Power/Toughness capped at current levels", "AK requirement beaten ×1.1 — energy to the marathon");
-        }
-
-        private static void ThawAt(Character c)
-        {
-            if (_atSnapshot != null)
-            {
-                var targets = c.advancedTraining.levelTarget;
-                for (int i = 0; i < 2 && i < targets.Length && i < _atSnapshot.Length; i++)
-                    targets[i] = _atSnapshot[i];
-            }
-            _atSnapshot = null;
-            _frozenAt = false;
-            ChallengeOverlay.Record("Power/Toughness caps released", "push/AK target needs stats again");
-        }
-
-        private static void FreezeTm(Character c)
-        {
-            _speedSnapshot = c.machine.speedTarget;
-            _multiSnapshot = c.machine.multiTarget;
-            c.machine.speedTarget = Math.Max(1, c.machine.levelSpeed);
-            c.machine.multiTarget = Math.Max(1, c.machine.levelGoldMulti);
-            _frozenTm = true;
-            ChallengeOverlay.Record("TM capped at current levels", "gold funded — energy/magic to the marathon");
-        }
-
-        private static void ThawTm(Character c)
-        {
-            c.machine.speedTarget = _speedSnapshot;
-            c.machine.multiTarget = _multiSnapshot;
-            _frozenTm = false;
-            ChallengeOverlay.Record("TM caps released", "gold needs levels again");
-        }
-
         private static void ThawAll(Character c)
         {
-            if (_frozenAt) ThawAt(c);
-            if (_frozenTm) ThawTm(c);
             if (_purposeOn) ThawPurpose(c);
         }
     }
