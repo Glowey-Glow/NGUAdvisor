@@ -9,9 +9,27 @@ namespace NGUAdvisor.Managers
     // AT/TM target boxes.
     //
     // AT slots are PURPOSE-DRIVEN (user rule): Toughness (0) and Power (1) are the titan push
-    // and stay uncapped; Block (2) stops at 99% damage reduction; the wandoos ATs (3/4) stop
-    // once Wandoos' cap-speed dump costs <= 1% of max E/M. Past their stops, those slots'
-    // shares flow to Toughness/Power.
+    // and stay uncapped; Block (2) stops at 99% damage reduction. BLOCK IS THE ONLY SLOT THE
+    // ADVISOR WRITES A TARGET INTO — slots 0/1/3/4 are the operator's.
+    //
+    // THE WANDOOS ATs (3/4) TAKE NO ADVISOR-WRITTEN TARGET, EVER (operator ruling 2026-08-10).
+    // They used to be set to the level at which Wandoos' cap-speed dump costs <= 1% of max E/M,
+    // in whichever segment was judged to run Wandoos as an intended E/M sink. That was wrong twice
+    // over, and the second failure is what closed the feature:
+    //
+    //   PRICED AGAINST THE WRONG LOADOUT. The stop divides by the CURRENT totalCapEnergy/Magic, so
+    //   a loadout that is not cap-optimised inflates it. AT HOUR was excluded for exactly this
+    //   ("its weaker caps inflate the targets and steal AT from Power/Toughness", user-caught) —
+    //   but AUGMENTATION, added later, wears the Augments loadout and had the same defect. On a
+    //   ~30-minute rebirth cycle AUGMENTATION is the pre-rebirth segment, so the operator got a
+    //   fresh inflated target on both wandoos ATs once per rebirth, all day.
+    //
+    //   THE WRITE OUTLIVED ITS WINDOW. The stops were applied only inside the segment list and
+    //   never withdrawn on the way out, so each window stranded a number in a serialized game
+    //   field for the rest of the run. Clearing it by hand held only until the next window.
+    //
+    // The guide's rule here ("run Wandoos AT until cheap to run Wandoos 98") is a COST PREDICATE,
+    // not a lane instruction. A predicate has no business being a TARGET.
     //
     // Sufficiency freezes (marathon only):
     //   Power/Toughness — frozen only while adventure stats beat the NEXT titan AK requirement
@@ -22,9 +40,10 @@ namespace NGUAdvisor.Managers
     public static class LevelPlanner
     {
         private static long[] _atSnapshot;        // slots 0..1 (sufficiency freeze)
-        private static long[] _purposeSnapshot;   // slots 2..4 (purpose caps)
+        private static long _blockSnapshot;       // slot 2 — the only advisor-written AT target
         private static long _speedSnapshot, _multiSnapshot;
         private static bool _frozenAt, _frozenTm, _purposeOn;
+        private static bool _wanReclaimed;        // one-shot per process; see TickPurposeTargets
 
         public static string Status { get; private set; } = "";
         public static bool AtFrozen => _frozenAt;
@@ -124,26 +143,36 @@ namespace NGUAdvisor.Managers
 
                 if (!_purposeOn)
                 {
-                    _purposeSnapshot = new[] { targets[2], targets[3], targets[4] };
+                    _blockSnapshot = targets[2];
                     _purposeOn = true;
+
+                    // RECLAIM, NOT AN OVERRIDE, AND IT FIRES ONCE PER PROCESS. Until the ruling in the
+                    // class header this was the only writer that had ever touched levelTarget[3]/[4],
+                    // and it left a number behind every time it left its segment window — so a value
+                    // sitting in those slots at the first engage of a session is one the advisor
+                    // stranded, and withdrawing it is the exit the old code never performed. After
+                    // this, nothing writes them again, so a target typed later stands for the session.
+                    //
+                    // The one-shot is what makes that promise keepable. Reclaiming on EVERY engage
+                    // would zero a hand-typed target each time the operator toggled the auto profile
+                    // back on, which is the same class of defect as the one being closed.
+                    bool reclaimed = false;
+                    if (!_wanReclaimed)
+                    {
+                        _wanReclaimed = true;
+                        reclaimed = targets[3] != 0 || targets[4] != 0;
+                        targets[3] = 0;   // 0 = the game's unset sentinel
+                        targets[4] = 0;
+                    }
+
                     ChallengeOverlay.Record("AT purpose caps on",
-                        "block → 99% reduction · wandoos ATs → 1% dump cost · rest to Power/Toughness");
+                        "block → 99% reduction · rest to Power/Toughness" +
+                        (reclaimed ? " · cleared a stale advisor target off the wandoos ATs (they take none now)"
+                                   : " · wandoos ATs untouched"));
                 }
 
                 ApplyPurpose(targets, 2, BlockStopLevel(c));
-                // Wandoos-AT stops are measured against the ACTIVE loadout's E/M caps, so they run only in
-                // segments where Wandoos is the INTENDED sink: NGU MARATHON, plus on Evil the EVIL CLIMB /
-                // AUGMENTATION phases (Wandoos is a primary early-Evil E/M sink). NOT AT HOUR — its weaker
-                // caps inflate the targets and steal AT from Power/Toughness (user-caught). Extending to the
-                // Evil climb fixes a STALE -1: the profile-owned marathon never runs during the climb, so the
-                // Wandoos ATs kept the Normal-era -1 and never boosted E/M Wandoos (user-caught 2026-07-17).
-                // (ApplyPurpose sets, doesn't ratchet, so a brief overshoot self-corrects next tick.)
-                string wanSeg = ChallengeOverlay.Segment;
-                if (wanSeg == "NGU MARATHON" || wanSeg == "EVIL CLIMB" || wanSeg == "AUGMENTATION")
-                {
-                    ApplyPurpose(targets, 3, WandoosStopLevel(c, energy: true));
-                    ApplyPurpose(targets, 4, WandoosStopLevel(c, energy: false));
-                }
+                // SLOTS 3/4 ARE DELIBERATELY ABSENT. See the wandoos paragraph in the class header.
             }
             catch (Exception e) { Main.LogDebug($"LevelPlanner purpose caps: {e.Message}"); }
         }
@@ -167,53 +196,40 @@ namespace NGUAdvisor.Managers
             catch { return long.MinValue; }
         }
 
-        // Wandoos ATs stop once the Wandoos cap-speed dump costs <= 1% of max E/M. The dump cost
-        // is baseTime / totalWandoosSpeed, and speed scales with (1 + f·L) — solve for L. The
-        // stop moves as the OS levels raise baseTime during the run; recomputed live. Reads
-        // CURRENT gear (cap + speed) — callers must invoke this during the marathon only.
-        private static long WandoosStopLevel(Character c, bool energy)
-        {
-            try
-            {
-                if (!c.buttons.wandoos.interactable || c.wandoos98.disabled) return long.MinValue;
-                var ctl = energy ? c.advancedTrainingController.wandoosEnergy : c.advancedTrainingController.wandoosMagic;
-                float f = ctl.levelFactor;
-                if (f <= 0) return long.MinValue;
-
-                long lvl = c.advancedTraining.level[energy ? 3 : 4];
-                double speed = energy ? c.totalWandoosEnergySpeed() : c.totalWandoosMagicSpeed();
-                double baseTime = energy ? (double)c.wandoos98Controller.baseEnergyTime() : (double)c.wandoos98Controller.baseMagicTime();
-                double cap = energy ? (double)c.totalCapEnergy() : (double)c.totalCapMagic();
-                if (speed <= 0 || cap <= 0 || baseTime <= 0) return long.MinValue;
-
-                double sOther = speed / (1.0 + f * lvl);          // speed without this AT's factor
-                double needFactor = baseTime / (0.01 * cap * sOther);   // required (1 + f·L)
-                double levels = (needFactor - 1.0) / f;
-                if (levels <= 0) return -1;                       // already <= 1% at level 0: hold
-                return (long)Math.Ceiling(levels);
-            }
-            catch { return long.MinValue; }
-        }
+        // WandoosStopLevel WAS HERE AND IS DELETED (operator ruling 2026-08-10) — a second way to
+        // compute a wandoos-AT stop is a second writer waiting to be re-wired, and this one had
+        // already been re-wired once, into the segment that broke it. Its derivation, preserved so
+        // nobody re-derives it from scratch and reintroduces the target:
+        //
+        //     The dump cost is baseTime / totalWandoosSpeed and speed scales with (1 + f·L), so the
+        //     level at which the cost falls to 1% of max E/M is
+        //         sOther     = speed / (1 + f·L₀)              // speed without this AT's factor
+        //         needFactor = baseTime / (0.01 · cap · sOther)
+        //         L          = ceil((needFactor − 1) / f),     f = wandoosEnergy/Magic.levelFactor
+        //     with <= 0 meaning "already under 1% at level 0". baseEnergyTime()/baseMagicTime() are
+        //     CONSTANT per difficulty and OS ([DECOMP] Wandoos98Controller.cs:73-83) — the two live
+        //     terms are SPEED and CAP, and BOTH ARE GEAR. That is precisely why it could not be
+        //     written as a target: it is a reading of the worn loadout, and the worn loadout in the
+        //     segments this ran in was Augments, not a cap loadout.
+        //
+        // The 1%-dump rung itself is NOT lost. It survives where a cost predicate belongs — as the
+        // "run Wandoos AT until CHEAP TO RUN WANDOOS 98" predicate row, never as a level.
 
         private static void ThawPurpose(Character c)
         {
+            // SLOT 2 ONLY. Slots 3/4 are restored by NOT being touched: the advisor no longer writes
+            // them, so there is nothing of its own to withdraw, and a snapshot-restore here would be
+            // the last surviving way for a stale number to reach them — it would re-impose whatever
+            // sat in the boxes at engage time over anything the operator typed since.
             try
             {
-                if (_purposeSnapshot != null)
-                {
-                    var targets = c.advancedTraining.levelTarget;
-                    if (targets != null && targets.Length >= 5)
-                    {
-                        targets[2] = _purposeSnapshot[0];
-                        targets[3] = _purposeSnapshot[1];
-                        targets[4] = _purposeSnapshot[2];
-                    }
-                }
+                var targets = c.advancedTraining.levelTarget;
+                if (targets != null && targets.Length >= 5) targets[2] = _blockSnapshot;
             }
             catch { }
-            _purposeSnapshot = null;
+            _blockSnapshot = 0;
             _purposeOn = false;
-            ChallengeOverlay.Record("AT purpose caps off", "auto profile off — user targets restored");
+            ChallengeOverlay.Record("AT purpose caps off", "auto profile off — user Block target restored");
         }
 
         // ---- Sufficiency freeze: Power/Toughness (slots 0..1) only — 2..4 are purpose-owned. ----
