@@ -3,32 +3,32 @@
 NGU Advisor is an automation platform and advisor for the Steam version of NGU Idle. An injected DLL runs
 the automation in-game; a separate **companion window** is the configuration surface and live dashboard.
 
-**Version 2.3.0** — the Allocation Safety release.
+**Version 2.4.0** — the Allocation Engine & Wishes release.
 
-### New in 2.3.0
+### New in 2.4.0
 
-A single unusable entry in a profile's priority list used to stop that resource being allocated at all,
-for the rest of the run, with nothing in the log to say so. What changed for you day to day:
+The resource allocator has been rebuilt around a capacity-aware constraint layer, and the wish
+sliders now mean what they say. What changed for you day to day:
 
-- **A typo in a priority list no longer costs you the resource.** An entry the advisor cannot recognise
-  — `NUG`, `CAPWANDOOS`, or an entry from a newer profile than your build — is now skipped, and the rest
-  of the list allocates normally.
-- **Energy and Magic** could previously be pulled out of every system each tick and left idle (with
-  **Manage Wishes** on), or frozen at whatever split was in place when the profile loaded (with it off)
-  — so later breakpoints in a timeline never took effect. Fixed.
-- **Hacks** could stop levelling permanently from the same cause, plus a second one: an unreadable hack
-  number emptied all sixteen hacks every pass and refilled none. Both fixed.
-- **The shipped files report the version you downloaded.** `NGUAdvisor.dll` and `Advisor Launcher.exe`
-  previously read 1.1.0.0 and 1.0.0.0 in File Properties whatever the release.
+- **Wish sliders: "% of idle" is now a share of what is actually left.** They used to take their
+  percentage of your entire pool before anything else allocated — and leftover idle flowed to
+  wishes even at 0%. Wishes are now funded last, from what genuinely remains, and 0% allocates
+  nothing. **Low sliders will visibly slow wish progress — that is the fix working.** If wishes
+  do something you don't expect, please open an issue with your slider values and a log snippet.
+- **Allocation is capacity-aware.** Each system is offered what it can actually use this tick;
+  surplus is routed instead of vanishing, and the companion's pool bar explains any idle remainder.
+- **R3 after CBlock 3** runs the guide's first-milestone sweep across hacks 3–7 instead of
+  sitting on hack 0 forever.
+- **Titan spawns park on the highest *killable* version**, and surplus stats above a titan's kill
+  requirement are spent on loot instead of wasted. New live-fight behaviours — reports welcome.
 
-A profile with no bad entries behaves exactly as before. Settings and profiles carry over.
-
-Full detail in [CHANGELOG.md](CHANGELOG.md), including the 2.2.0 Loadouts release.
+Settings and profiles carry over. Full detail in [CHANGELOG.md](CHANGELOG.md), including the
+2.3.0 Allocation Safety release.
 
 # Install & update
 
 1. Download the latest release from the [releases page](https://github.com/Glowey-Glow/NGUAdvisor/releases)
-   — grab the zip named for the version (`NGUAdvisor_2.3.0.zip`), **not** the source archive.
+   — grab the zip named for the version (`NGUAdvisor_2.4.0.zip`), **not** the source archive.
 2. Extract it anywhere.
 3. With **NGU Idle open**, run **`Advisor Launcher.exe`** (or the `Run NGU Advisor.bat` fallback).
 

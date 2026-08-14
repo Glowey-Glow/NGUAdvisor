@@ -2,6 +2,48 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [2.4.0] - 2026-08-14 — Allocation engine & wishes
+
+The largest release since the companion. The resource allocator has been rebuilt around a
+constraint layer that measures what each system can actually absorb before offering it the pool,
+and the wish sliders now mean what they say. Settings and profiles carry over — extract over
+your old copy.
+
+### Changed — read this if you use wishes
+
+- **The wish "% of idle" sliders now take a share of what is actually left.** They used to take
+  their percentage of your *entire* pool, off the top, before every other system allocated — and
+  all leftover idle went to wishes anyway, even with a slider at 0. Wishes are now funded last:
+  the sliders take their percentage of whatever is still idle after Wandoos, augments, NGUs and
+  the rest have taken their fill, and **0% genuinely allocates nothing**. If your sliders are set
+  low, wish progress will visibly slow — that is the fix working, not a regression; raise the
+  sliders if you want wishes funded harder. This behaviour is new in this release: if wishes do
+  something you don't expect, please open an issue with your slider values and a log snippet.
+
+### Added
+
+- **The constraint layer.** Every energy and magic pass now runs through a capacity-aware fill:
+  each lane is offered what it can provably use this tick (stair-snap level costs, stall floors,
+  per-tick absorption), surplus flows to a designated sink, and anything left idle is *reported*
+  with a reason instead of vanishing. The companion's pool bar shows where every unit went.
+- **Guide targets.** Where the community guide names a hard number, the advisor now stops there
+  instead of over-levelling — first wire: the Advanced Training Block cap on Evil chapter 5.
+- **R3 after CBlock 3: the first-milestone sweep.** With AutoProfile on, R3 used to sit on hack 0
+  forever. Once CBlock 3 completes on Evil, the advisor now runs the guide's first-milestone
+  sweep across hacks 3–7, then parks on the Adventure hack.
+- **Titans: the spawn parks on the highest *killable* version**, not the highest version you have
+  auto-killed — a version you can beat but have never AK'd is no longer skipped. And when your
+  stats clear a titan's kill requirement with room to spare, the gear optimizer spends the
+  surplus on drop-chance and loot instead of wasted stats. Both are new live-fight behaviours —
+  if a titan fight surprises you, please report it.
+
+### Fixed
+
+- **The Wandoos advanced-training slots no longer receive advisor-written targets.** Only the
+  Block slot ever takes one; the Wandoos E/M dumps self-limit as designed.
+- Hundreds of smaller correctness fixes ride along with the engine work; the automated test
+  suite grew from 361 to 2,159 checks between 2.3.0 and this release.
+
 ## [2.3.0] - 2026-08-07 — Allocation safety
 
 One unusable entry in a profile's priority list used to stop that resource being allocated at all —
