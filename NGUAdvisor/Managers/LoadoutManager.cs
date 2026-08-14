@@ -7,7 +7,7 @@ namespace NGUAdvisor.Managers
 {
     public static class LoadoutManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly InventoryController _ic = Main.InventoryController;
 
         // The last swap, so the companion can explain a result that LOOKS wrong but isn't. Three
@@ -28,6 +28,11 @@ namespace NGUAdvisor.Managers
         }
         public static SwapOutcome LastSwap { get; private set; }
 
+        // Set by ChangeGear the moment it zeroes allocation; CLEARED by CustomAllocation the moment the
+        // next allocation pass finishes, which is what turns it into a measured duration. Null means
+        // "no swap is currently waiting to be re-seated", which is the steady state.
+        public static DateTime? AllocationClearedAt { get; set; }
+
         private static int[] _savedLoadout;
         private static int[] _tempLoadout;
         private static int[] _savedDaycare;
@@ -39,12 +44,56 @@ namespace NGUAdvisor.Managers
         public static void RestoreGear()
         {
             Log($"Restoring original loadout");
-            ChangeGear(_savedLoadout);
+            // The advisor withdrawing its own write. Distinct from a stale row: the field is back to
+            // something the operator owns, which is the outcome an undo would have produced anyway.
+            // ChangeGear runs immediately after this and records the restore as its own new row, so the
+            // ledger shows the withdrawal and the replacement rather than one row mutating in place.
+            WriteLedger.MarkReverted("gear.equipped");
+            // Cause.Restore: this UNDOES a swap and must never be gated — see GearChangeGate.Cause.
+            ChangeGear(_savedLoadout, GearChangeGate.Cause.Restore);
         }
 
-        public static void ChangeGear(int[] gearIds, bool shockwave = false)
+        // Whether the No Equipment refusal has already been narrated, so the line fires once per
+        // transition rather than once per attempted swap. Session state by design; the DECISION is
+        // GearChangeGate.TransitionLine and is pure (same split as AugmentBP's _noAugsSurfaced latch).
+        private static bool _noecSurfaced;
+
+        // The gated entry point. Every caller that does not name a cause is the advisor acting on its
+        // own initiative, which is the case F3 is about — so the default is the gated one.
+        public static void ChangeGear(int[] gearIds, bool shockwave = false) =>
+            ChangeGear(gearIds, GearChangeGate.Cause.Advisor, shockwave);
+
+        public static void ChangeGear(int[] gearIds, GearChangeGate.Cause cause, bool shockwave = false)
         {
             if (gearIds?.Length > 0 == false)
+                return;
+
+            // F3. THE ONE PREDICATE, at the ONE entry point — deliberately not at the fifteen external
+            // call sites, which is how a rule like this rots (38 §E7 inverted). During No Equipment,
+            // gear contributes 0f to every spec ([DECOMP] InventoryController.cs:647) while every swap
+            // still pays removeAllEnergyAndMagic() below, so an advisor-initiated swap is pure cost.
+            //
+            // Read LIVE and never latched: the gate lifts the instant the challenge ends, with no
+            // cached state, exactly like the Pass 1 predicates (constraint-layer-spec §4.5).
+            bool inNoec;
+            try { inNoec = ChallengeDetector.Current() == "NOEC"; }
+            catch { inNoec = false; }   // fail OPEN: an unreadable challenge state must not strand gear
+
+            try
+            {
+                var line = GearChangeGate.TransitionLine(inNoec, _noecSurfaced);
+                if (line != null) Log(line);
+                _noecSurfaced = inNoec;
+
+                // The ignored keypress gets its own line, EVERY time, and is deliberately not folded
+                // into the latch above: the user pressed F8 and the gear did not move, which without a
+                // line is indistinguishable from a broken hotkey. [OPERATOR] ruling.
+                var keyed = GearChangeGate.IgnoredHotkeyLine(inNoec, cause);
+                if (keyed != null) Log(keyed);
+            }
+            catch { }
+
+            if (GearChangeGate.Blocks(inNoec, cause))
                 return;
 
             if (GetCurrentGear().Where(x => x > 0).Distinct().OrderBy(x => x).SequenceEqual(gearIds.Where(x => x > 0).Distinct().OrderBy(x => x)))
@@ -229,6 +278,38 @@ namespace NGUAdvisor.Managers
                     Kept = kept,
                     At = DateTime.UtcNow
                 };
+
+                // WHAT THE SWAP COST, ARMED HERE AND REPORTED WHEN THE COST IS KNOWN.
+                //
+                // Every swap begins by calling Character.removeAllEnergyAndMagic() (line ~124 above),
+                // which zeroes committed energy/magic/R3 across EIGHT controllers — Wandoos, Augments,
+                // Time Machine, Basic Training, NGUs, Wishes, Blood Magic and Hacks. Eight is a constant
+                // of the game's method, not something to count here.
+                //
+                // Nothing re-allocates on the way out: no call site asks for it. The re-seat is ambient,
+                // picked up by whichever timer fires first — QuickStuff at 0.5 s, which is GATED on not
+                // being in a boss fight, or AutomationRoutine at 10 s, which is not. So the cost is
+                // bounded but variable, and the variable that matters (were you mid-fight?) is exactly
+                // the one a fixed "~0.5 s" string would get wrong.
+                //
+                // Hence a stamp, not a message. CustomAllocation reports the MEASURED gap the next time
+                // an allocation pass completes, so the number the operator reads is the number that
+                // happened. Twelve triggers reach this method and all of them pass through here.
+                AllocationClearedAt = DateTime.UtcNow;
+
+                // One choke point, every equip in the product. Breakpoints, all six lock subsystems,
+                // the optimizer, the F8 hotkey — they all land here, which is why gear is the cheapest
+                // thing in the registry to instrument and the hardest to miss.
+                WriteLedger.Record("gear.equipped",
+                    LastSwap.Mode + " · " + want.Length + " item" + (want.Length == 1 ? "" : "s"),
+                    missed.Length == 0
+                        ? "objective change — " + kept.Length + " slot(s) kept what they had"
+                        : missed.Length + " requested item(s) could not be equipped",
+                    ChallengeOverlay.Segment,
+                    "Requested " + want.Length + ", worn " + wornNow.Length + ", kept " + kept.Length +
+                        (missed.Length > 0 ? ", missed " + missed.Length : ""),
+                    "Every swap first zeroes committed energy, magic and R3 across eight controllers",
+                    "Re-seated by whichever allocation timer fires first — 0.5s idle, 10s in a fight");
 
                 if (missed.Length == 0)
                     Log(kept.Length == 0
@@ -560,6 +641,8 @@ namespace NGUAdvisor.Managers
                 Log($"Saved Temp Loadout {string.Join(", ", _tempLoadout)}");
         }
 
-        public static void RestoreTempLoadout() => ChangeGear(_tempLoadout);
+        // Cause.Restore: the other half of the Quick Loadout hotkey — it puts back what the user had
+        // before the temp swap. Gating it would strand that loadout for the rest of the challenge.
+        public static void RestoreTempLoadout() => ChangeGear(_tempLoadout, GearChangeGate.Cause.Restore);
     }
 }

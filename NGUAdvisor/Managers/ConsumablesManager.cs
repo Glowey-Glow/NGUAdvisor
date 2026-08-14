@@ -7,7 +7,7 @@ namespace NGUAdvisor.Managers
 {
     public static class ConsumablesManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
 
         private static Arbitrary Arbitrary => _character.arbitrary;
 

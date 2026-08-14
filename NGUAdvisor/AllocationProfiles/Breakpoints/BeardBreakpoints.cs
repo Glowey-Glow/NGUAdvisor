@@ -25,11 +25,18 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
             if (!LockManager.CanSwap())
                 return false;
 
-            // Advisor auto-apply (Phase B): while enabled (and not in a challenge), the advisor's
-            // goal-aware set replaces the profile's list at every swap.
+            // ⚠ THE ADVISOR OVERRIDE THAT USED TO SIT HERE WAS UNREACHABLE, and its comment described
+            // a challenge guard that existed in neither place. PerformSwap is only ever entered from
+            // CustomAllocation.cs:239, which runs the profile timeline `if (Settings.ManageBeards &&
+            // !Settings.AdvisorBeards …)` — so `if (Settings.AdvisorBeards)` here could never be true.
+            // The two paths are mutually exclusive, not layered: when the beards advisor is on this
+            // method is not called at all and AdvisorApply.ApplyBeards owns the set instead.
             var target = bp.priorities;
-            if (Main.Settings != null && Main.Settings.AdvisorBeards)
-                target = OptimizationAdvisor.CurrentBeardSet() ?? target;
+
+            // The challenge rule applies to the profile path too, so it holds with the beards advisor
+            // OFF and on a profile that never set an empty list. Applied to the INTENT so the log line
+            // below says what actually happened; BeardManager.EquipBeards carries the backstop.
+            target = BeardRule.Apply(ChallengeDetector.Current(), target);
 
             // TRUNCATE TO THE SLOTS THAT EXIST, and treat the list as a PRIORITY ORDER rather than a
             // set. EquipBeards resizes anything longer than capBeards() and returns false to say so —
@@ -53,7 +60,9 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
             if (BeardManager.EquipBeards(target))
             {
-                Main.Log($"Equipping Beards: {string.Join(", ", target)}");
+                Main.Log(target == null || target.Length == 0
+                    ? "Equipping Beards: none"
+                    : $"Equipping Beards: {string.Join(", ", target)}");
                 current = bp;
                 diggerbp.Reset(); // Diggers could turn off due to a deactivation of the Golden Beard
                 return true;

@@ -1,3 +1,4 @@
+using NGUAdvisor.Managers;
 using System;
 
 namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
@@ -8,7 +9,18 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         protected override bool Unlocked() => _character.buttons.bloodMagic.interactable;
 
-        protected override bool TargetMet() => false;
+        // THE `false` STAYS — see the long note on RitualBP.TargetMet for the evidence. Short version:
+        // amendment 16 §7 names `ritualsUnlocked` as this lane's discarded game signal, but that is a
+        // LOCK and CastRituals below already applies it (`i >= ritualsUnlocked() → continue`); and an
+        // exhaustive search finds no ritual target anywhere in the decomp, so there is nothing else to
+        // wire. Rituals cycle forever and never report done.
+        //
+        // BR has a second reason on top of RitualBP's, and it is about this lane's shape rather than
+        // the game's: BR's `Index` is a DURATION in seconds, not a ritual id (05 §6.2 flags the same
+        // ambiguity). One BR lane spans every unlocked ritual, so even a per-ritual terminator would
+        // not answer BR's question — the lane would be done only when EVERY unlocked ritual were, which
+        // is a fold over a signal that does not exist.
+        protected override bool TargetMet() => Managers.LaneTargets.NeverDone();
 
         // Latch: log only on transition, since this runs on every allocation pass.
         private static bool? _lastFunded;
@@ -42,6 +54,10 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             try { return Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; } catch { return -1; }
         }
 
+        // Live reads and the game calls only — the per-ritual decision is RitualMath.RitualDecide and
+        // the arithmetic is RitualMath.{ProgressPerTick,TimeLeft,MaxAllocationFor}, all under
+        // characterisation test. This is the magic layer's ENTIRE blood-facing surface (amendment 01:
+        // at the magic layer, the four blood sinks are ONE consumer), so it is where M1 will attach.
         private long CastRituals(int secondsToRun)
         {
             long allocationLeft = MaxAllocation;
@@ -57,42 +73,23 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                 if (i >= _character.bloodMagicController.ritualsUnlocked())
                     continue;
 
-                float goldCost = _character.bloodMagicController.bloodMagics[i].baseCost * _character.totalDiscount();
-                var shouldSkip = false;
-
-                // Ritual costs too much gold
-                if (goldCost > _character.realGold && _character.bloodMagic.ritual[i].progress <= 0.0)
+                var state = new RitualMath.RitualState
                 {
-                    shouldSkip = true;
-                }
-                else
-                {
-                    float tLeft = RitualTimeLeft(i, allocationLeft);
-                    double completeTime = _character.rebirthTime.totalseconds + tLeft;
+                    Id = i,
+                    Unlocked = true,   // the loop already skipped locked rituals above
+                    GoldCost = _character.bloodMagicController.bloodMagics[i].baseCost * _character.totalDiscount(),
+                    Progress = _character.bloodMagic.ritual[i].progress
+                };
 
-                    // Ritual will not finish before rebirth
-                    if (deadline > 0 && completeTime > deadline)
-                    {
-                        shouldSkip = true;
-                    }
-                    else
-                    {
-                        // If the runtime is explicitly set, ignore the breakpoint logic
-                        if (secondsToRun > 0)
-                        {
-                            // The time left is more than the configured number of seconds to run
-                            if (tLeft > secondsToRun)
-                                shouldSkip = true;
-                        }
-                        // The time left is more than an hour
-                        else if (tLeft > 3600)
-                        {
-                            shouldSkip = true;
-                        }
-                    }
-                }
+                // RitualTimeLeft is passed lazily: it runs the whole ritual-rate stack, and the
+                // original never reached it when the gold gate already refused the ritual.
+                int id = i;
+                long left = allocationLeft;
+                var action = RitualMath.RitualDecide(state, _character.realGold, secondsToRun,
+                                                     _character.rebirthTime.totalseconds, deadline,
+                                                     () => RitualTimeLeft(id, left));
 
-                if (shouldSkip)
+                if (action != RitualMath.RitualAction.Fund)
                 {
                     if (_character.bloodMagic.ritual[i].magic > 0)
                         _character.bloodMagicController.bloodMagics[i].removeAllMagic();
@@ -112,41 +109,32 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         private float RitualProgressPerTick(int id, long remaining)
         {
-            var num1 = remaining * (double)_character.totalMagicPower();
+            var diff = _character.settings.rebirthDifficulty;
+            var bmc = _character.bloodMagicController;
 
-            if (_character.settings.rebirthDifficulty == difficulty.normal)
-                num1 /= 50000.0 * _character.bloodMagicController.normalSpeedDividers[id];
-            else if (_character.settings.rebirthDifficulty == difficulty.evil)
-                num1 /= 50000.0 * _character.bloodMagicController.evilSpeedDividers[id];
-            else if (_character.settings.rebirthDifficulty == difficulty.sadistic)
-                num1 /= _character.bloodMagicController.sadisticSpeedDividers[id];
-            if (_character.settings.rebirthDifficulty >= difficulty.sadistic)
-                num1 /= _character.bloodMagicController.bloodMagics[id].sadisticDivider();
+            // The difficulty branch resolves to (scale, divider): normal and evil scale by 50000.0 and
+            // sadistic does not. An unrecognised difficulty leaves the rate undivided, as before.
+            double scale = 1.0, divider = 1.0;
+            if (diff == difficulty.normal) { scale = 50000.0; divider = bmc.normalSpeedDividers[id]; }
+            else if (diff == difficulty.evil) { scale = 50000.0; divider = bmc.evilSpeedDividers[id]; }
+            else if (diff == difficulty.sadistic) { divider = bmc.sadisticSpeedDividers[id]; }
 
-            var num2 = num1 * _character.bloodMagicController.bloodMagics[id].totalBloodMagicSpeedBonus();
-
-            if (num2 <= 0.0)
-                num2 = 0.0;
-
-            if (num2 >= float.MaxValue)
-                num2 = float.MaxValue;
-
-            return (float)num2;
+            return RitualMath.ProgressPerTick(new RitualMath.RitualRateInputs
+            {
+                Remaining = remaining,
+                TotalMagicPower = _character.totalMagicPower(),
+                DividerScale = scale,
+                SpeedDivider = divider,
+                Sadistic = diff >= difficulty.sadistic,
+                SadisticDivider = diff >= difficulty.sadistic ? bmc.bloodMagics[id].sadisticDivider() : 1.0,
+                SpeedBonus = bmc.bloodMagics[id].totalBloodMagicSpeedBonus()
+            });
         }
 
-        public float RitualTimeLeft(int id, long remaining)
-        {
-            return (float)((1.0 - _character.bloodMagic.ritual[id].progress) / RitualProgressPerTick(id, remaining) / 50.0);
-        }
+        public float RitualTimeLeft(int id, long remaining) =>
+            RitualMath.TimeLeft(_character.bloodMagic.ritual[id].progress, RitualProgressPerTick(id, remaining));
 
-        private long CalculateMaxAllocation(int id, long remaining)
-        {
-            long num1 = _character.bloodMagicController.bloodMagics[id].capValue();
-            if (remaining > num1)
-                return num1;
-
-            var num2 = (long)(num1 / Math.Ceiling(num1 / (double)remaining)) + 1L;
-            return num2;
-        }
+        private long CalculateMaxAllocation(int id, long remaining) =>
+            RitualMath.MaxAllocationFor(_character.bloodMagicController.bloodMagics[id].capValue(), remaining);
     }
 }

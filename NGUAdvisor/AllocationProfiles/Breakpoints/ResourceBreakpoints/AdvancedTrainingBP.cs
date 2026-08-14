@@ -1,34 +1,57 @@
-using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 {
+    // ---- THE ALLAT GROUP WATERFILL IS GONE (amendment 11 §4.4 REPLACE · amendment 28 · 31 §Q4a) ----
+    // This class used to carry a `GroupSpread` flag, set on the 5 BPs yielded by ALLAT/CAPALLAT, and a
+    // private GroupShare() that clamped each slot to an even waterfill share of idleEnergy over the
+    // group members still wanting energy. It existed because a CAPALLAT slot's budget was
+    // min(cur, idle) — everything left — so allocation order dumped the whole pool into Defense/Attack
+    // and the wandoos ATs got nothing. It was a LOCAL equal-share divisor, the same category of
+    // mechanism as the prioCount one, and amendment 01 put both on the REPLACE path.
+    //
+    // The constraint layer now performs that waterfill for the whole pool at once: every seated
+    // destination — each AT slot is its own destination — is offered
+    // min(capacity, remaining / destinations-not-yet-offered), with `remaining` recomputed after each
+    // lane commits, so slack from a cheap slot flows forward to an expensive one exactly as the local
+    // waterfill intended (ConstraintLayer.FillSession.Offer/Commit).
+    //
+    // Nested inside that fill, GroupShare was PROVABLY A NO-OP, not merely redundant. CalculateATCap
+    // already clamps to MaxAllocation, which on this path IS the fill's offer, `remaining / D` over
+    // the D destinations not yet offered. GroupShare's own waterlevel is at least
+    // `idleEnergy / (1 + later hungry AT slots)`, and those later slots are a SUBSET of the later
+    // destinations, so its divisor is never larger than D while its numerator is the same live pool:
+    // its bound is always >= the offer the lane already had, and `Math.Min` therefore always returned
+    // the unchanged amount. (Its `needs.Count <= 1` branch returned the last slot's full need
+    // unclamped in any case — audit 30 §S6, LaneCapMathTests' QUIRK characterisation.)
+    //
+    // ⚠ NOT inert on the kill-switch path: with SavedSettings.ConstraintAllocatorDisabled set, the old
+    // prioCount loop runs, and there the group's even spread now comes from that loop's own divisor
+    // instead — the auto profile's ALLAT token is no longer CAPALLAT, so the five slots are non-CAP
+    // lanes and are split by prioCount. A hand-written profile that still says CAPALLAT gets neither
+    // and is back to the 2026-07-11 shape.
     public class AdvancedTrainingBP : ResourceBreakpoint
     {
-        // Set on the 5 BPs yielded by ALLAT/CAPALLAT (user-reported: allocation order dumped the
-        // whole pool into Defense/Attack and the wandoos ATs got nothing). When true, this slot
-        // takes at most an even waterfill share of the pool across the group members that still
-        // want energy, instead of its full cap.
-        public bool GroupSpread { get; set; }
-
         protected override bool CorrectResourceType() => Type == ResourceType.Energy;
 
         protected override bool Unlocked() => UnlockedAt(Index);
 
         protected override bool TargetMet() => TargetMetAt(Index);
 
+        // `<`, not `<=`: length is a COUNT (decomp AllAdvancedTraining.length == 5) and the slots are
+        // 0-based, so `<=` let AT-5 report VALID. That is worse than the equivalent RitualBP off-by-one,
+        // because there is no slot 5 to no-op against: ControllerFor(5) returns null and
+        // levelTarget[5] is out of bounds, so TargetMetAt/Allocate throw, CustomAllocation.RunStep
+        // swallows it, and the ENTIRE energy lane is dead until the next profile load — with one log line
+        // per ten minutes. No shipped profile uses AT-5, but the profile editor accepts free text.
         private bool UnlockedAt(int index) =>
-            index <= _character.advancedTrainingController.length && _character.buttons.advancedTraining.interactable;
+            Managers.LaneCapMath.AdvancedTrainingIndexUnlocked(index, _character.advancedTrainingController.length)
+            && _character.buttons.advancedTraining.interactable;
 
-        private bool TargetMetAt(int index)
-        {
-            long target = _character.advancedTraining.levelTarget[index];
-            if (target < 0L)
-                return true;
-
-            return target != 0L && _character.advancedTraining.level[index] >= target;
-        }
+        private bool TargetMetAt(int index) =>
+            Managers.LaneTargets.AdvancedTrainingTargetMet(
+                _character.advancedTraining.levelTarget[index],
+                _character.advancedTraining.level[index]);
 
         private AdvancedTrainingController ControllerFor(int index)
         {
@@ -56,70 +79,17 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             if (_character.wishes.wishes[190].level >= 1)
                 return true;
             long amount = CalculateATCap();
-            if (GroupSpread)
-                amount = Math.Min(amount, GroupShare(amount));
             SetInput(amount);
             ControllerFor(Index).addEnergy();
 
             return true;
         }
 
-        // Even spread across the ALLAT/CAPALLAT group: waterfill the pool over the members that
-        // still want energy (this slot and the ones allocating after it — earlier slots already
-        // took their share out of idleEnergy, so front-to-back shares stay consistent). A slot
-        // never gets more than its need; slack from cheap slots flows to expensive ones.
-        private long GroupShare(long myNeed)
-        {
-            try
-            {
-                var needs = new List<long> { myNeed };
-                for (int j = Index + 1; j < 5; j++)
-                {
-                    if (!UnlockedAt(j) || TargetMetAt(j)) continue;
-                    long n = NeedFor(j);
-                    if (n > 0) needs.Add(n);
-                }
-                if (needs.Count <= 1) return myNeed;
-
-                long avail = _character.idleEnergy;
-                needs.Sort();
-                int remaining = needs.Count;
-                foreach (var n in needs)
-                {
-                    long share = avail / remaining;
-                    if (n > share) return Math.Min(myNeed, share);   // waterlevel reached
-                    avail -= n;
-                    remaining--;
-                }
-                return myNeed;   // pool covers every member's full need
-            }
-            catch
-            {
-                return myNeed;
-            }
-        }
-
-        // A group member's cap need (same formula CalculateATCap uses): funded 500 levels ahead
-        // when the pool plausibly covers it, at current level otherwise.
-        private long NeedFor(int index)
-        {
-            double f = FormulaFor(index, 500);
-            if (f <= 0) return 0;
-            if (f > _character.idleEnergy) f = FormulaFor(index, 0);
-            if (f > long.MaxValue) return long.MaxValue;
-            return (long)f;
-        }
-
-        private double FormulaFor(int index, int offset)
-        {
-            var divisor = GetDivisor(index, offset);
-            if (divisor == 0.0)
-                return 0;
-
-            double formula = Math.Ceiling(50.0 * divisor /
-                (Mathf.Sqrt(_character.totalEnergyPower()) * _character.totalAdvancedTrainingSpeedBonus()));
-            return formula < 1.0 ? 1.0 : formula;
-        }
+        private double FormulaFor(int index, int offset) =>
+            Managers.LaneCapMath.AdvancedTrainingFormula(
+                GetDivisor(index, offset),
+                Mathf.Sqrt(_character.totalEnergyPower()),
+                _character.totalAdvancedTrainingSpeedBonus());
 
         private long CalculateATCap()
         {
@@ -135,23 +105,11 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         private CapCalc CalculateATCap(int offset)
         {
-            var ret = new CapCalc(1, 0);
-            double formula = FormulaFor(Index, offset);
-            if (formula == 0.0)
-                return ret;
-
-            double num = Math.Ceiling(formula / Math.Ceiling(formula / MaxAllocation) * 1.00000202655792);
-            long num1;
-            if (num > _character.idleEnergy)
-                num1 = _character.idleEnergy;
-            else
-                num1 = (long)num;
-
-            ret.Num = num1;
-            ret.PPT = (double)num / formula;
-            return ret;
+            var r = Managers.LaneCapMath.AdvancedTrainingCap(FormulaFor(Index, offset), MaxAllocation, _character.idleEnergy);
+            return new CapCalc(r.PPT, r.Num);
         }
 
-        private float GetDivisor(int index, int offset) => ControllerFor(index).baseTime * (_character.advancedTraining.level[index] + offset + 1f);
+        private float GetDivisor(int index, int offset) =>
+            Managers.LaneCapMath.AdvancedTrainingDivisor(ControllerFor(index).baseTime, _character.advancedTraining.level[index], offset);
     }
 }

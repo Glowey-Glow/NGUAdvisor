@@ -70,6 +70,24 @@ namespace NGUAdvisor.Managers
             }
             foreach (var id in LoadoutManager.CurrentGearIds()) keep.Add(id);
 
+            // GEAR LOCK. A locked item is named by the operator and may score zero against every
+            // objective (the Ring of Apathy scores exactly 0 against all of them) — so the sweep
+            // above cannot see it, and without this line the advisor could merge or convert away the
+            // very item a profile row pins. Same standing as the static loadouts just above: the user
+            // said "this one", so it is not spare.
+            //
+            // ⚠ ACTIVE row only, which is the same reach the static-loadout line has and NOT a
+            // complete guarantee: a gear breakpoint that has not come round yet is invisible here.
+            // That gap is pre-existing — a plain "ID": [326] row two hours down the timeline was
+            // never in this set either — and closing it needs the loaded profile, not the active
+            // breakpoint. Named rather than papered over.
+            try
+            {
+                var activeLocks = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveLocks;
+                if (activeLocks != null) foreach (var id in activeLocks) keep.Add(id);
+            }
+            catch { }
+
             // Never-maxed items and transform-chain tiers are excluded from TRASH (user rule):
             // an unmaxed item still owes its permanent item-list max bonus (farm it to 100 first),
             // and chain tiers are consolidation/climb fodder, never trash.

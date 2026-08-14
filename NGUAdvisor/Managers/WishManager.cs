@@ -8,7 +8,7 @@ namespace NGUAdvisor.Managers
 {
     public static class WishManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly WishesController _wc = _character.wishesController;
 
         private static long energy;
@@ -63,19 +63,31 @@ namespace NGUAdvisor.Managers
                 _wc.selectNewWish(wishToSelect);
         }
 
-        public static void Allocate(bool overCap = false)
+        // Runs once per allocation tick, AFTER the energy/magic/R3 swaps (CustomAllocation step
+        // "Wishes (share of remaining idle)"), so the % sliders bite on what the other systems
+        // actually left — not on a freshly reclaimed pool (audit/38 §E4.1; the old overCap spare
+        // pass and the pre-swap percent pass are both gone). Wish holdings are invisible to every
+        // lane reclaim (ConstraintLayerBridge.Reclaim, R3Breakpoints.RemoveR3 — none touch
+        // wishesController), so the release below is the only per-tick release: wishes hand back
+        // everything and re-take percent × (old holdings + fresh residue). The un-taken remainder
+        // sits idle for one tick and the next swap reabsorbs it into the lanes, so a slider below
+        // 100 bleeds wish funding back to the allocators until the two reach equilibrium.
+        public static void Allocate()
         {
             _wc.removeAllResources();
 
-            long remainingEnergy = overCap ? _character.idleEnergy : (long)Math.Ceiling(_character.idleEnergy * Settings.WishEnergy / 100.0);
+            // The > idle clamps are not decorative: above 2^53 the double product loses exactness
+            // and Ceiling can land one unit past the pool (pools legitimately exceed 1e18 under
+            // potions — audit/15 §A1).
+            long remainingEnergy = (long)Math.Ceiling(_character.idleEnergy * Settings.WishEnergy / 100.0);
             if (remainingEnergy > _character.idleEnergy)
                 remainingEnergy = _character.idleEnergy;
 
-            long remainingMagic = overCap ? _character.magic.idleMagic : (long)Math.Ceiling(_character.magic.idleMagic * Settings.WishMagic / 100.0);
+            long remainingMagic = (long)Math.Ceiling(_character.magic.idleMagic * Settings.WishMagic / 100.0);
             if (remainingMagic > _character.magic.idleMagic)
                 remainingMagic = _character.magic.idleMagic;
 
-            long remainingRes3 = overCap ? _character.res3.idleRes3 : (long)Math.Ceiling(_character.res3.idleRes3 * Settings.WishR3 / 100.0);
+            long remainingRes3 = (long)Math.Ceiling(_character.res3.idleRes3 * Settings.WishR3 / 100.0);
             if (remainingRes3 > _character.res3.idleRes3)
                 remainingRes3 = _character.res3.idleRes3;
 
@@ -164,18 +176,43 @@ namespace NGUAdvisor.Managers
             }
 
             ppt = BaseProgressPerTick(id);
+
+            // The GAME's own zero-floor, mirrored exactly — strict `<`, on a double comparison
+            // ([DECOMP] WishesController.cs:754, progressPerTick). It is 1e-8, and 1e-8 sits BELOW
+            // the real stall floor; the gap between them is where the field failure lives, and the
+            // next guard is what closes it.
             if (ppt < 1E-8f)
                 return 0f;
 
             if (ppt > _wc.minimumWishTime())
                 return _wc.minimumWishTime();
 
-            // 499 tick offset
-            float progress = Wishes[id].progress + ppt * 499f;
-            if (progress > 1f)
-                progress = 1f;
-
-            if (ppt / progress <= 2.9802322E-8f) // Math.Pow(2, -25)
+            // ---- THE STALL FLOOR (constraint-layer-spec §5.3; 37 §S5 A3) -------------------------
+            // Wish.progress is a float ([DECOMP] Wish.cs:14) accumulated by a bare `+=`
+            // ([DECOMP] WishesController.cs:278), so the bar freezes wherever ppt falls to or below
+            // HALF AN ULP of where it stands. The floor is ulp(progress)/2 — and every wish must
+            // cross the [0.5, 1) binade to reach 1f, where ulp/2 is 2^-25 for the whole binade and
+            // does not scale with progress inside it. A rate at or below 2^-25 therefore completes
+            // no level no matter where the bar sits today: it may still be advancing at 0.25 (local
+            // floor 2^-26) and it will park the instant it reaches 0.5.
+            //
+            // ⚠ THIS USED TO DIVIDE BY progress, AND A WRONG FLOOR IS WORSE THAN NO FLOOR BECAUSE IT
+            // LOOKS HANDLED. `ppt / progress <= 2^-25` is `ppt <= progress × 2^-25`, which at
+            // progress = 0.5 is ppt <= 1.49e-8 — HALF the real floor. So a wish at ppt ≈ 2e-8
+            // cleared the game's 1e-8 floor, cleared this guard, advanced while the bar was low, and
+            // froze at exactly 0.5 forever: the failure players report from the field (10 §D4). The
+            // whole of that field stall lives in the gap [1e-8, 2.98e-8) that neither floor closed.
+            //
+            // ⚠ AND THE 499-TICK PROJECTION IS NOT THE ARGUMENT. It was clamped to 1f, and 1f is the
+            // FIRST value of the next binade up (ulp 2^-23, half-ulp 2^-24 — twice the floor below
+            // it), so asking "is it stalled at the projection" would defund a healthy wish precisely
+            // because its bar is about to finish. The question a resource guard asks is the capacity
+            // one — "is the marginal unit provably wasted?" — and that one is ABSOLUTE. The
+            // projection had no other reader, so it goes with the division.
+            //
+            // The floor itself is CapacityPass's, not a second copy: same constant, same home as
+            // HackMath.StallFloor, already pinned at the binade boundary by CapacityPassTests.
+            if (CapacityPass.CannotCompleteLevel(ppt))
                 return 0f;
 
             return ppt;

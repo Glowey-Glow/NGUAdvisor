@@ -22,7 +22,7 @@
       { "Time": 0, "List": [ 0, 2, 4, 6, 5 ] }
     ],
     "NGUDiff": [ { "Time": 0, "Diff": 0 } ],
-    "Rebirth": [ { "Type": "Number", "Target": 1000 } ],
+    "Rebirth": [ { "Type": "Number", "Target": 1000 }, { "Type": "Time", "Time": { "m": 32 } } ],
     "Challenges": [
       "TC-5", "TC-6", "TC-7",
       "NOTM-4", "NOTM-5",

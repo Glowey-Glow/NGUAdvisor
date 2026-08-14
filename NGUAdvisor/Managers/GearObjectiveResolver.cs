@@ -26,6 +26,7 @@ namespace NGUAdvisor.Managers
             public const string Noec = "noec";           // No-Equipment Challenge: nothing may be worn
             public const string Challenge = "challenge"; // the challenge overlay's push/growth rotation
             public const string Hunt = "hunt";           // gear hunt's hybrid Loot Hunter set
+            public const string DropFarm = "dropfarm";   // the advisor's own farm, same Loot Hunter set
             public const string Segment = "segment";     // the auto-profile's segment gear
             public const string Profile = "profile";     // the active profile's gear timeline
             public const string Pin = "pin";             // the user's standing pick (Loadouts -> Main)
@@ -36,11 +37,19 @@ namespace NGUAdvisor.Managers
         {
             public bool Noec;                  // ChallengeDetector.Current() == "NOEC"
             public bool ChallengeActive;       // ChallengeDetector.Current() != null
-            public bool HuntActive;            // GearHunter.Active
+            public bool HuntActive;            // GearHunter.Active — the MANUAL gear-hunt toggle
+            // FarmVenue.DropFarmActive — the ADVISOR's own gear/rare/IDLE farm is standing in a zone
+            // for its drops. Kept separate from HuntActive: it ranks lower (see Resolve) and it needs
+            // its own sentence, because "you armed this" and "the advisor chose this" are different
+            // things to tell someone whose gear just changed.
+            public bool DropFarmActive;
             public string Override;            // ChallengeOverlay.GearObjectiveOverride
             public bool OverrideIsSegment;     // true when the override is segment gear, not a challenge rotation
             public string ProfileObjective;    // GearBreakpoints.ActiveObjective
             public bool ProfileRespawn;        // GearBreakpoints.ActiveForceRespawn
+            // GearBreakpoints.ActiveLocks — the item IDs the profile's gear row pins (Gear Lock).
+            // Null/empty for every profile written before the feature existed.
+            public int[] ProfileLocks;
             public string Pin;                 // Settings.GearObjective ("" = follow the profile)
             public bool PinRespawn;            // Settings.GearObjectiveRespawn
         }
@@ -49,9 +58,20 @@ namespace NGUAdvisor.Managers
         {
             public string Name;            // null when nothing is in force
             public bool ForceRespawn;
+            // The Gear Lock in force, or null. Set ONLY on the profile row — see Resolve.
+            public int[] Locks;
             public string Source;          // one of Src.*
             public string Sentence;        // one line for the companion, already human-readable
             public bool Resolved => !string.IsNullOrEmpty(Name);
+            public int LockCount => Locks == null ? 0 : Locks.Length;
+        }
+
+        private static string LockNote(int[] locks)
+        {
+            int n = locks == null ? 0 : locks.Length;
+            if (n == 0) return "";
+            return n == 1 ? " One item is locked into the set."
+                          : " " + n + " items are locked into the set.";
         }
 
         // The sentinel GearHunter uses instead of a real objective — its set is a hybrid (curated
@@ -100,6 +120,35 @@ namespace NGUAdvisor.Managers
                     Sentence = "Running the Loot Hunter set — gear hunt is camping a stage."
                 };
 
+            // THE ADVISOR'S OWN DROP FARM gets the SAME Loot Hunter set, for the same reason: while
+            // routing is parked in a zone waiting on drops, DC and Respawn multiply exactly what that
+            // farm produces, and a stats/NGU objective contributes nothing to it. This is the gear
+            // half of the drop-chance demand that already moves the DC digger (FarmVenue).
+            //
+            // ⚠ ABOVE THE OVERRIDE, AND THE FIRST ATTEMPT PUT IT BELOW — which made it dead code.
+            // The reasoning for "below" was that a challenge rotation must not be re-geared around.
+            // That is already guaranteed by this row's OWN !ChallengeActive guard, so ranking below
+            // the override bought nothing and cost everything: with AutoProfile on and no challenge
+            // running, ChallengeOverlay.cs:186-189 sets the override to SegmentGear() on EVERY tick,
+            // so `Has(Override)` is permanently true and the farm row was never reached. Observed
+            // live: DropFarmActive true (the DC digger moved on it), the farm routing zone 20, and
+            // gear still on "NGUs" for the whole run.
+            //
+            // What the override actually is here is a PHASE plan. A drop farm is a concrete activity
+            // the advisor has committed the next several hours to, and it is the automatic twin of
+            // the manual gear hunt — which already sits above the override for exactly this reason.
+            // During a challenge the guard below hands the rotation back untouched.
+            if (!i.ChallengeActive && i.DropFarmActive)
+                return new Result
+                {
+                    Name = LootHunter,
+                    Source = Src.DropFarm,
+                    Sentence = "Running the Loot Hunter set — the advisor is farming a zone for drops."
+                        + (Has(i.Override) ? " \"" + i.Override + "\" resumes when the farm ends."
+                         : Has(i.ProfileObjective) ? " \"" + i.ProfileObjective + "\" resumes when the farm ends."
+                         : "")
+                };
+
             if (Has(i.Override))
                 return i.OverrideIsSegment
                     ? new Result
@@ -118,13 +167,23 @@ namespace NGUAdvisor.Managers
                         Sentence = "Running \"" + i.Override + "\" — from the challenge rotation."
                     };
 
+            // GEAR LOCK RIDES WITH THE PROFILE ROW AND NOWHERE ELSE.
+            //
+            // The segment / challenge rows above pair the override's NAME with the profile
+            // breakpoint's respawn FLAG — a pre-existing quirk this file already documents and
+            // deliberately preserves. It is NOT extended to locks. A lock names concrete items chosen
+            // for one row's plan; pairing it with an objective that came from somewhere else would
+            // pin, say, a doll set into a challenge-rotation push loadout the user never associated it
+            // with. When the override wins, the lock stands down with the row it belonged to.
             if (Has(i.ProfileObjective))
                 return new Result
                 {
                     Name = i.ProfileObjective,
                     ForceRespawn = i.ProfileRespawn,
+                    Locks = i.ProfileLocks != null && i.ProfileLocks.Length > 0 ? i.ProfileLocks : null,
                     Source = Src.Profile,
                     Sentence = "Running \"" + i.ProfileObjective + "\" — from the profile's gear timeline."
+                        + LockNote(i.ProfileLocks)
                         + (Has(i.Pin) ? " Your pick applies when the timeline has nothing to say." : "")
                 };
 

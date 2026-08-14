@@ -14,7 +14,7 @@ namespace NGUAdvisor.AllocationProfiles
 {
     public class CustomAllocation
     {
-        private readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private BreakpointWrapper _wrapper;
         private readonly string _allocationPath;
         private readonly string _profileName;
@@ -130,7 +130,13 @@ namespace NGUAdvisor.AllocationProfiles
         // Breakpoint sets only re-fire when the SELECTED breakpoint changes, so a single time-0
         // breakpoint would never re-apply after rebirth (diggers stayed off — user-reported). Resetting
         // every set forces one re-apply of the active breakpoint on the first pass of the new run.
-        private double _lastRebirthSeconds = double.MaxValue;
+        // STATIC, because the watermark belongs to the SESSION, not to this CustomAllocation instance.
+        // Switching profiles constructs a new CustomAllocation, which reset the field to MaxValue, so the
+        // `rt < _lastRebirthSeconds - 1` test below fired on the first tick after every switch and logged
+        // "Rebirth detected" on a run that had not rebirthed — three times in 43 seconds in the
+        // 2026-08-01 log, on a run the overlay reported as 2.3h old. Static keeps the real rebirth
+        // watermark across switches; a genuine first load still fires, since MaxValue is the initial value.
+        private static double _lastRebirthSeconds = double.MaxValue;
 
         public void DoAllocations()
         {
@@ -186,19 +192,6 @@ namespace NGUAdvisor.AllocationProfiles
                     if (Settings.ManageGear && !Settings.AutoProfile && Main.Character.buttons.inventory.interactable)
                         _wrapper.gear.Swap();
                 });
-                RunStep("Wishes (reclaim + allocate)", () =>
-                {
-                    if (Settings.ManageWishes && !preventMagicAllocation)
-                    {
-                        if (Settings.ManageEnergy)
-                            _character.removeMostEnergy();
-                        if (Settings.ManageMagic)
-                            _character.removeMostMagic();
-                        if (Settings.ManageR3)
-                            _character.removeAllRes3();
-                        WishManager.Allocate();
-                    }
-                });
                 RunStep("Energy", () =>
                 {
                     if (Settings.ManageEnergy)
@@ -214,12 +207,21 @@ namespace NGUAdvisor.AllocationProfiles
                     if (Settings.ManageR3)
                         _wrapper.r3.Swap();
                 });
-                RunStep("Wishes (spare resources)", () =>
+                RunStep("Wishes (share of remaining idle)", () =>
                 {
                     if (Settings.ManageWishes && !preventMagicAllocation)
                     {
-                        // Allocating to wishes again because there can be spare resources
-                        WishManager.Allocate(true);
+                        // Wishes are funded HERE, after the E/M/R3 swaps, and nowhere else. There
+                        // used to be a pass BEFORE the swaps that opened with removeMostEnergy/
+                        // removeMostMagic/removeAllRes3 and then applied the Wish % sliders — to a
+                        // pool the reclaim had just refilled to nearly the whole cap, so "% of
+                        // idle" behaved as "% of total, taken off the top" and the swaps divided a
+                        // denominator silently pre-shrunk by it (user-reported; audit/38 §E4.1).
+                        // Here the sliders mean what the UI label says: a share of what is
+                        // genuinely still idle once every other system has taken its fill. They
+                        // are also authoritative downward — 0% really allocates nothing, where the
+                        // old spare pass drank all residue regardless of the sliders.
+                        WishManager.Allocate();
                         WishManager.UpdateWishMenu();
                     }
                 });
@@ -255,7 +257,47 @@ namespace NGUAdvisor.AllocationProfiles
             finally
             {
                 IsAllocationRunning = false;
+                ReportReseatAfterGearSwap();
             }
+        }
+
+        // THE PRICE OF A GEAR SWAP, MEASURED RATHER THAN ESTIMATED.
+        //
+        // A swap zeroes committed energy/magic/R3 across eight controllers and then re-allocates via
+        // nothing in particular — whichever of the two timers fires first. Until now that window was
+        // invisible: the operator saw "Finished equipping gear" and no indication that eight systems had
+        // just been producing nothing, or for how long. The advisor swaps several times an hour.
+        //
+        // ⚠ THIS IS A REPORT, NOT A GATE, AND DELIBERATELY SO. Twelve triggers reach ChangeGear and most
+        // are time-critical — a titan window opening, a gold snipe, a quest acquire. A confirm prompt
+        // here would trade an invisible half-second for a missed titan, which is a worse trade every
+        // time. The swap is almost always right; only the telling was missing.
+        //
+        // It runs in the `finally` so a throw mid-allocation still closes the window rather than leaving
+        // the stamp armed and reporting a false, ever-growing gap on the next pass.
+        private static void ReportReseatAfterGearSwap()
+        {
+            try
+            {
+                var since = LoadoutManager.AllocationClearedAt;
+                if (!since.HasValue) return;
+                LoadoutManager.AllocationClearedAt = null;
+
+                var secs = (DateTime.UtcNow - since.Value).TotalSeconds;
+                if (secs < 0 || secs > 600) return;   // clock skew or a stamp that outlived its run
+
+                var mode = "gear swap";
+                try { if (LoadoutManager.LastSwap != null && !string.IsNullOrEmpty(LoadoutManager.LastSwap.Mode)) mode = LoadoutManager.LastSwap.Mode; } catch { }
+
+                // Eight is Character.removeAllEnergyAndMagic()'s own fixed list, not a count taken here.
+                var detail = $"{mode} · allocation cleared on 8 systems, re-seated after {secs:0.0}s";
+
+                // A long window is a genuine warning: it means the re-seat waited on the 10s loop because
+                // the 0.5s one is gated on not being mid-fight. A short one is just what a swap costs.
+                if (secs >= 3.0) Activity.Warning("Gear swap paused 8 systems", detail);
+                else Activity.Completed("Gear swap re-seated", detail);
+            }
+            catch (Exception e) { LogDebug($"Reseat report: {e.Message}"); }
         }
 
         // ---- per-step fault containment (audit P0: allocation-tick blackout) ----
@@ -293,8 +335,28 @@ namespace NGUAdvisor.AllocationProfiles
             }
         }
 
+        // Does the loaded profile SCHEDULE the NGU level track itself?
+        //
+        // More than one NGUDiff breakpoint means the author wrote a timeline (e.g. 24hr-EarlyEvil's
+        // Diff:0 -> Diff:1 at h22), which is a deliberate statement about when Evil NGUs start. A single
+        // breakpoint is just a starting track, not a schedule. LevelPlanner.TickNguTrack uses this to
+        // decide whether it may drive the track dynamically: both of them write
+        // c.settings.nguLevelTrack, and with no arbitration the last writer each tick won.
+        public bool ProfileOwnsNguTrack => (_wrapper != null && _wrapper.ngus != null) && _wrapper.ngus.Length > 1;
+
         // The run's planned length: the smallest positive time-based rebirth target (rebirth triggers
-        // when the run crosses it). -1 when rebirth is disabled/unset (RebirthTime -1 profiles, NORB).
+        // when the run crosses it). -1 means NO TIME DEADLINE IS KNOWN — which covers a profile that
+        // disarmed rebirth (RebirthTime -1) but ALSO a profile whose rebirth is armed on something
+        // other than the clock (a NUMBER/BOSSES entry written without a "Time" key parses to
+        // RebirthTime 0, and 0 is skipped below).
+        //
+        // ⚠ SO -1 HERE DOES NOT MEAN "NO REBIRTH". It means "no seconds figure to give you", and the
+        // horizon/deadline/countdown callers all want exactly that. Anything asking whether a rebirth
+        // is COMING must ask RebirthIsArmed() + RebirthSchedule instead; BloodPlanner asked it here
+        // and read eleven shipped Number profiles as having no rebirth at all.
+        //
+        // This also never consulted NORB — an older version of this comment claimed it did. NORB is a
+        // live challenge state, not a profile field, and it is tested by the callers that care.
         public double NextRebirthTargetSeconds()
         {
             if (_wrapper == null) return -1;
@@ -303,6 +365,22 @@ namespace NGUAdvisor.AllocationProfiles
                 if (rb.RebirthTime > 0 && (best < 0 || rb.RebirthTime < best))
                     best = rb.RebirthTime;
             return best;
+        }
+
+        // Does this profile schedule a rebirth AT ALL — on the clock, on the number, on a boss count,
+        // or on a muffin cycle? The per-entry rule is RebirthSchedule.EntryArmed, which is the same
+        // `>= 0` test DoRebirth just below already filters on and TimeRebirth.RebirthAvailable already
+        // opens with, so this cannot drift from what the rebirth path actually does.
+        //
+        // This is a profile question only. AutoRebirth, NORB and money-pit run mode are live state and
+        // belong to RebirthSchedule.Current, which composes them with this.
+        public bool RebirthIsArmed()
+        {
+            if (_wrapper == null) return false;
+            foreach (var rb in _wrapper.rebirth)
+                if (RebirthSchedule.EntryArmed(rb.RebirthTime))
+                    return true;
+            return false;
         }
 
         public bool DoRebirth()

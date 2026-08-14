@@ -8,7 +8,7 @@ namespace NGUAdvisor.Managers
 {
     public static class CombatManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AdventureController _ac = _character.adventureController;
         private static readonly PlayerController _pc = _ac.playerController;
         private static bool isFighting = false;
@@ -134,6 +134,18 @@ namespace NGUAdvisor.Managers
                 isFighting = false;
                 fightTimer = 0;
                 _ac.zoneSelector.changeZone(zone);
+
+                // Twelve callers funnel through here, which is why one hook covers every zone move the
+                // advisor makes. Whoever currently owns routing is the interesting half — a snipe, a
+                // titan spawn, a quest or the standing zone target — and until now that only appeared
+                // as an overlay line that scrolled away.
+                WriteLedger.Record("adventure.zone",
+                    ZonePhaseReader.ZoneName(zone) ?? ("zone " + zone),
+                    "routing owner: " + (LockManager.GetLockTypeName() ?? "the standing zone target"),
+                    ChallengeOverlay.Segment,
+                    "Every advisor zone move lands here, whatever asked for it",
+                    "The owner is decided by the routing precedence chain, not by this call",
+                    "It reverts when that owner releases, not on a timer");
                 return true;
             }
 

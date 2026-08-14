@@ -29,7 +29,51 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <!-- Keep the stale committed copy of the game assembly and old release zip out of the build -->
     <DefaultItemExcludes>$(DefaultItemExcludes);Assembly-CSharp.dll;dist_3.6.1.zip</DefaultItemExcludes>
+
+    <!--
+      WHICH BUILD IS THIS - the only line that differs between the dev repo and the public one.
+
+      ⚠ IN THIS (PUBLIC) REPO THIS READS `public`; the dev tree reads `dev`. That is the whole port
+      instruction: every .cs and the companion's index.html stay BYTE-IDENTICAL across the two trees,
+      and this property is the single point of divergence. Nothing has to be stripped at port time,
+      which is the point - a port law that relies on remembering to delete something is a port law
+      that eventually does not happen.
+
+      It drives the build footer. A dev build shows the advisor/companion build stamps and the drift
+      warning, because those are the instrument that catches a stale deploy. A public build shows the
+      product version and nothing else: a player has no companion to rebuild, and a "UI is stale"
+      banner they cannot act on is just alarming.
+
+      DEFAULT IS `dev` ON PURPOSE, and the direction matters. An unset or unreadable channel keeps the
+      stamps, so the failure mode is a public build showing developer noise (cosmetic). The other
+      default would silently remove the drift warning from the person who most needs it - the exact
+      class of failure BuildStamp exists to prevent. THIS FILE MUST THEREFORE SET IT EXPLICITLY: with
+      the property absent, a public release would ship the dev footer.
+
+      NOT a DefineConstants / #if: this tree has zero conditional compilation and that is worth keeping.
+      The value is baked in as assembly metadata, so it is also readable straight out of a shipped DLL
+      when someone hands you a binary and asks which build it is.
+    -->
+    <AdvisorChannel Condition="'$(AdvisorChannel)' == ''">public</AdvisorChannel>
   </PropertyGroup>
+
+  <!--
+    Emits the channel as an assembly attribute. A generated file rather than a line in
+    Properties/AssemblyInfo.cs because that file is hand-maintained, and b2abcf0 ("Reconcile the
+    version carriers on 2.2.0: the two shipped binaries said 1.1 and 1.0") is what hand-maintained
+    version carriers cost here. GenerateAssemblyInfo is false in both repos, so the SDK's own
+    AssemblyMetadata item group is unavailable and this target does the job instead.
+  -->
+  <Target Name="GenerateAdvisorChannel" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <AdvisorChannelFile>$(IntermediateOutputPath)AdvisorChannel.g.cs</AdvisorChannelFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(AdvisorChannelFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="// &lt;auto-generated&gt; from &lt;AdvisorChannel&gt; in NGUAdvisor.csproj. Not committed - lives in obj/.;[assembly: System.Reflection.AssemblyMetadata(&quot;Channel&quot;, &quot;$(AdvisorChannel)&quot;)]" />
+    <ItemGroup>
+      <Compile Include="$(AdvisorChannelFile)" />
+    </ItemGroup>
+  </Target>
 
   <!--
     Public-release hardening: strip debug metadata from the Release DLL. The SDK default

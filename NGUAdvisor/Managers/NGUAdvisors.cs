@@ -17,27 +17,34 @@ namespace NGUAdvisor.Managers
     //               (lower is better, hard floors) and is valued by its own curve, so it naturally
     //               drops out at the floor.
     //
-    // Selection: iterative equal-share prune. Split the pool over the kept set, drop NGUs whose
-    // ratio at their ACTUAL share is under 1.05x/hr, re-split (survivors' shares grow), repeat.
-    // The survivors are the lanes worth running; nothing hot -> deepen the top two by rating.
+    // THE MODEL ITSELF NOW LIVES IN Managers/NguValueMath (audit 01 §3.4, extraction E2 — report 03
+    // §10 asked for it by that name). This file is the live-state half: it reads Character, builds the
+    // plain-old-data candidate list, caches the result and formats the summary. ValueRatio, Build,
+    // Pick, Surplus and Stabilize are all in the core, under characterisation test in
+    // tests/NGUAdvisor.Tests/NguValueMathTests.cs — including the three defects that extraction did NOT
+    // fix (linear pricing above the break level, the pool/count share model, Rating-vs-Ratio).
     public static class NGUAdvisors
     {
-        public class Entry
-        {
-            public int Id;
-            public string Name;
-            public long Level;
-            public double Rating;     // x/hr with the FULL pool — the GO-site-comparable score
-            public double Ratio;      // x/hr at the equal share it actually gets when running
-            public double Lph;        // levels/hr at that share (GrowthPanel's predicted rate)
-            public double LphPerUnit; // levels/hr per allocated unit (internal to the prune loop)
-        }
-
         public class Plan
         {
             public bool Known;
-            public List<Entry> Energy = new List<Entry>();
-            public List<Entry> Magic = new List<Entry>();
+            public List<NguValueMath.Entry> Energy = new List<NguValueMath.Entry>();
+            public List<NguValueMath.Entry> Magic = new List<NguValueMath.Entry>();
+            // ⚠ THESE ARE NGU **IDs**, NOT TARGET LEVELS. "Targets" here means "the NGUs this pool
+            // should be aimed at" — the HOT SET. Nothing in this file, or in anything that reads it,
+            // ever produces or writes a target LEVEL.
+            //
+            // Recorded because the name has already misled a corpus reader: `37-spec-reality.md`
+            // §S4.4/§S5 F flags this component as computing "the NGU target levels amendment 21 §1
+            // says never exist." It does not. The two live consumers turn these ids into PROFILE
+            // TOKENS — `ChallengeOverlay.ChapterNgus` emits `NGU-{i}` (:704-709) and
+            // `ChapterNgusSurplus` emits `CAPNGU-{i}` / `NGU-{i}` (:726-731) — which is lane
+            // MEMBERSHIP, orthogonal to a target; the third (`OptimizationAdvisor.cs:505-518`) reads
+            // only `.Length` for a display row. Each seated NGU lane still runs pure rate semantics:
+            // `NGUBP.TargetMet` reads the GAME's `NGU.skills[i].target` field (:29-42), which this
+            // advisor never writes, and 0 is the game's unset sentinel so the lane never reports done
+            // ([DECOMP] AllNGUController.cs:1311-1314). That is amendment 21 §1 exactly, and `31`
+            // §362 already classified this ranking as membership selection.
             public int[] EnergyTargets = new int[0];
             public int[] MagicTargets = new int[0];
             // Positive-value NGUs that didn't make the hot set, by rating — the surplus-energy
@@ -48,11 +55,14 @@ namespace NGUAdvisor.Managers
             public string Summary = "";
         }
 
-        public static readonly string[] ENames = { "Augs", "Wandoos", "Respawn", "Gold", "Adv-α", "Power-α", "DropCh", "Magic", "PP" };
-        public static readonly string[] MNames = { "Ygg", "EXP", "Power-β", "Number", "TM", "Energy", "Adv-β" };
+        public static readonly string[] ENames = NguValueMath.ENames;
+        public static readonly string[] MNames = NguValueMath.MNames;
 
         private static Plan _cache;
         private static DateTime _cacheAt = DateTime.MinValue;
+
+        private static int[] _incumbentEnergy = new int[0];
+        private static int[] _incumbentMagic = new int[0];
 
         private static double Mul(Func<double> f)
         {
@@ -130,38 +140,31 @@ namespace NGUAdvisor.Managers
             catch { return 0; }
         }
 
-        // Bonus-multiplier ratio for dL more levels: (1 + f(L+dL)) / (1 + fL) — exact for every
-        // NGU except Respawn, which has its own capped time-reduction curve.
-        private static double ValueRatio(Character c, bool magic, int id, double level, double dL)
+        // Live reads -> plain data. One entry per candidate id that survives its own read; a throwing
+        // read drops just that NGU, exactly as the per-candidate try/catch in the old Build did.
+        private static List<NguValueMath.NguCandidate> Candidates(Character c, int[] ids, bool magic)
         {
-            if (dL <= 0) return 1.0;
-            if (!magic && id == 2) return RespawnRatio(c, level, dL);
-            double f = Factor(c, magic, id);
-            if (f > 0) return (1.0 + f * (level + dL)) / (1.0 + f * level);
-            return (level + dL + 1.0) / (level + 1.0);
-        }
-
-        // Respawn value = respawnTime(old)/respawnTime(new), from the game's exact curve
-        // (decomp AllNGUController.respawnBonusNormal/Evil): Normal <=400 linear floored at 0.8,
-        // then an asymptote to 0.6; Evil/Sadistic tracks <=10000 floored at 0.925, then to 0.9.
-        // At a floor the ratio is 1.0 — a capped Respawn never earns a lane.
-        private static double RespawnRatio(Character c, double level, double dL)
-        {
-            double f = Factor(c, false, 2);
+            var list = new List<NguValueMath.NguCandidate>();
+            if (ids == null) return list;
             bool normalTrack = true;
             try { normalTrack = c.settings.nguLevelTrack == difficulty.normal; } catch { }
-            double RF(double lvl)
+            foreach (var id in ids)
             {
-                if (normalTrack)
+                try
                 {
-                    if (lvl <= 400) return Math.Max(0.8, 1.0 - f * lvl);
-                    return Math.Max(0.6, 1.0 - (lvl / (lvl * 5.0 + 200000.0) + 0.2));
+                    list.Add(new NguValueMath.NguCandidate
+                    {
+                        Id = id,
+                        Level = Level(c, magic, id),
+                        Divider = magic ? c.NGUController.magicSpeedDivider(id) : c.NGUController.energySpeedDivider(id),
+                        Factor = Factor(c, magic, id),
+                        IsRespawn = !magic && id == 2,
+                        NormalTrack = normalTrack
+                    });
                 }
-                if (lvl <= 10000) return Math.Max(0.925, 1.0 - f * lvl);
-                return Math.Max(0.9, 1.0 - (lvl / (lvl * 20.0 + 200000.0) + 0.05));
+                catch { }
             }
-            double now = RF(level), after = RF(level + dL);
-            return after > 0 && now > after ? now / after : 1.0;
+            return list;
         }
 
         public static Plan Compute(int[] energyCandidates, int[] magicCandidates)
@@ -175,15 +178,19 @@ namespace NGUAdvisor.Managers
 
                 double ePool = Math.Max(1, c.curEnergy);
                 double mPool = Math.Max(1, c.magic.curMagic);
-                Build(c, energyCandidates, false, ePool, p.Energy);
-                Build(c, magicCandidates, true, mPool, p.Magic);
 
-                p.EnergyTargets = Pick(c, p.Energy, false, ePool);
-                p.MagicTargets = Pick(c, p.Magic, true, mPool);
-                p.EnergySurplus = Surplus(p.Energy, p.EnergyTargets);
-                p.MagicSurplus = Surplus(p.Magic, p.MagicTargets);
+                var eCands = Candidates(c, energyCandidates, false);
+                var mCands = Candidates(c, magicCandidates, true);
 
-                string Fmt(List<Entry> l) => l.Count == 0 ? "-"
+                p.Energy = NguValueMath.Build(eCands, false, Math.Max(1, c.totalEnergyPower()), SpeedMult(c, false), ePool);
+                p.Magic = NguValueMath.Build(mCands, true, Math.Max(1, c.totalMagicPower()), SpeedMult(c, true), mPool);
+
+                p.EnergyTargets = Stabilized(p.Energy, NguValueMath.Pick(p.Energy, Index(eCands), ePool), false);
+                p.MagicTargets = Stabilized(p.Magic, NguValueMath.Pick(p.Magic, Index(mCands), mPool), true);
+                p.EnergySurplus = NguValueMath.Surplus(p.Energy, p.EnergyTargets);
+                p.MagicSurplus = NguValueMath.Surplus(p.Magic, p.MagicTargets);
+
+                string Fmt(List<NguValueMath.Entry> l) => l.Count == 0 ? "-"
                     : string.Join(", ", l.Take(3).Select(x => $"{x.Name} ×{Math.Min(x.Rating, 9.99):0.00}/hr").ToArray());
                 // NOTE: Summary rounds to two decimals, so lanes reading an identical "×1.17/hr" only
                 // proves they agree within ~0.85%. That is not enough to tell a converged tie from a
@@ -199,145 +206,20 @@ namespace NGUAdvisor.Managers
             return p;
         }
 
-        private static void Build(Character c, int[] cands, bool magic, double pool, List<Entry> into)
+        private static Dictionary<int, NguValueMath.NguCandidate> Index(List<NguValueMath.NguCandidate> cands)
         {
-            if (cands == null || cands.Length == 0) return;
-            double mult = SpeedMult(c, magic);
-            double power = magic ? Math.Max(1, c.totalMagicPower()) : Math.Max(1, c.totalEnergyPower());
-            var names = magic ? MNames : ENames;
-            foreach (var id in cands)
-            {
-                try
-                {
-                    if (id < 0 || id >= names.Length) continue;
-                    long level = Level(c, magic, id);
-                    double divider = magic ? c.NGUController.magicSpeedDivider(id) : c.NGUController.energySpeedDivider(id);
-                    if (divider <= 0) continue;
-                    // progressPerTick = power / divider x allocated x mult / (level+1); 50 ticks/s.
-                    double lphPerUnit = power / divider * mult / (level + 1) * 50.0 * 3600.0;
-                    double rating = ValueRatio(c, magic, id, level, lphPerUnit * pool);
-                    into.Add(new Entry
-                    {
-                        Id = id,
-                        Name = names[id],
-                        Level = level,
-                        Rating = rating,
-                        Ratio = rating,   // refined to the actual share in Pick()
-                        LphPerUnit = lphPerUnit
-                    });
-                }
-                catch { }
-            }
-            into.Sort((a, b) => b.Rating.CompareTo(a.Rating));
+            var d = new Dictionary<int, NguValueMath.NguCandidate>();
+            foreach (var n in cands) d[n.Id] = n;
+            return d;
         }
 
-        // Rating exactly 1.0 = a capped curve (Respawn at its floor): genuinely worthless even
-        // for otherwise-idle energy. Everything else with positive value beats idling.
-        private static int[] Surplus(List<Entry> list, int[] targets) =>
-            list.Where(x => !targets.Contains(x.Id) && x.Rating > 1.0001)
-                .OrderByDescending(x => x.Rating).Select(x => x.Id).ToArray();
-
-        // Equal-share prune: each pass splits the pool over the keepers and drops anyone under
-        // 1.05x/hr AT THAT SHARE — survivors' shares grow, so the loop is monotone and terminates.
-        // Prune-only by design (re-admitting on the larger share would oscillate). Nothing hot:
-        // deepen the top two by rating.
-        //
-        // WHAT ACTUALLY HAPPENS AT SCALE (measured in-game 2026-07-16, Normal, ~5.5M NGU levels):
-        // the prune is a PREDICATE, so it assumes lanes differ enough that some clear the bar at the
-        // shared rate. They don't — the allocator drives every lane to EQUAL MARGINAL VALUE and then
-        // sits there. Rating-1 is proportional to pool/(divider x level^2), so equal ratings across
-        // lanes IS the optimality condition for maximising the product of NGU bonuses. Measured: a
-        // 233x spread in level and a 1680x spread in lph/u collapsed to a 0.04% spread in Rating
-        // (E 1.173377..1.173839, M 1.169690..1.169916). Everything is tied.
-        //
-        // At a tie the predicate drops the WHOLE set in one step -> hot.Count == 0 -> the "nothing hot"
-        // fallback is the ONLY branch that ever runs at this scale, and Take(2) is a magic number for
-        // an edge case that became the primary path. Ratio at a share of pool/N is ~1 + 0.174/N, so
-        // 1.05 needs N <= 3: unreachable for any set of 4+. This does NOT misallocate — at a tie the
-        // members are interchangeable, and the CAPNGU surplus absorbers feed the rest to their
-        // per-tick cap regardless — so the pick is harmless, just arbitrary.
-        //
-        // It is NOT dead everywhere: a lower NGU level track (Evil retracks levels) spreads the
-        // ratings again and the designed prune wakes up. Both paths must stay correct — see
-        // [[ngu-marathon-convergence]].
-        private static int[] Pick(Character c, List<Entry> list, bool magic, double pool)
+        // The incumbent set is SESSION state, so it stays here rather than in the pure core.
+        private static int[] Stabilized(List<NguValueMath.Entry> all, int[] fresh, bool magic)
         {
-            if (list.Count == 0) return new int[0];
-            var keep = new List<Entry>(list);
-            for (int iter = 0; iter < 12 && keep.Count > 0; iter++)
-            {
-                double share = pool / keep.Count;
-                foreach (var e in keep)
-                {
-                    e.Lph = e.LphPerUnit * share;
-                    e.Ratio = ValueRatio(c, magic, e.Id, e.Level, e.Lph);
-                }
-                var hot = keep.Where(x => x.Ratio >= 1.05).ToList();
-                if (hot.Count == keep.Count) break;
-                if (hot.Count == 0)
-                {
-                    keep = keep.OrderByDescending(x => x.Rating).Take(2).ToList();
-                    double s2 = pool / keep.Count;
-                    foreach (var e in keep)
-                    {
-                        e.Lph = e.LphPerUnit * s2;
-                        e.Ratio = ValueRatio(c, magic, e.Id, e.Level, e.Lph);
-                    }
-                    break;
-                }
-                keep = hot;
-            }
-
-            var fresh = keep.OrderByDescending(x => x.Rating).Select(x => x.Id).ToArray();
             var incumbent = magic ? _incumbentMagic : _incumbentEnergy;
-            var final = Stabilize(list, fresh, incumbent);
+            var final = NguValueMath.Stabilize(all, fresh, incumbent);
             if (magic) _incumbentMagic = final; else _incumbentEnergy = final;
             return final;
-        }
-
-        // Tie hysteresis. At convergence the ranking is decided on the 5th-6th decimal of Rating —
-        // pure jitter from levels ticking up between the 30s Compute refreshes — so a plain sort
-        // reshuffled the hot set every single refresh. That churned the emitted profile, re-parsed
-        // every breakpoint object behind it, and buried the overlay log, all to swap between lanes
-        // that are interchangeable anyway. Keep the incumbent while it is still statistically tied
-        // with the fresh pick; a lane that genuinely pulls ahead by more than the tolerance still
-        // takes over on the next refresh.
-        //
-        // Deliberately NOT a "ratings within X%" sort comparer: that predicate is not transitive, and
-        // List.Sort throws on an inconsistent comparer. This compares the two candidate SETS instead.
-        private const double TieTolerance = 0.005;   // 0.5% relative — >10x the measured 0.04% spread
-
-        private static int[] _incumbentEnergy = new int[0];
-        private static int[] _incumbentMagic = new int[0];
-
-        private static int[] Stabilize(List<Entry> all, int[] fresh, int[] incumbent)
-        {
-            try
-            {
-                if (incumbent.Length == 0 || incumbent.Length != fresh.Length) return fresh;
-                double RatingOf(int id)
-                {
-                    foreach (var e in all) if (e.Id == id) return e.Rating;
-                    return double.NaN;   // incumbent is no longer a live candidate
-                }
-                double worstInc = double.MaxValue, worstFresh = double.MaxValue;
-                foreach (var id in incumbent)
-                {
-                    double r = RatingOf(id);
-                    if (double.IsNaN(r)) return fresh;
-                    if (r < worstInc) worstInc = r;
-                }
-                foreach (var id in fresh)
-                {
-                    double r = RatingOf(id);
-                    if (double.IsNaN(r)) return fresh;
-                    if (r < worstFresh) worstFresh = r;
-                }
-                // fresh is the top-N, so worstFresh >= worstInc always; keep the incumbent unless the
-                // fresh pick is better by more than the tolerance.
-                return worstInc >= worstFresh * (1.0 - TieTolerance) ? incumbent : fresh;
-            }
-            catch { return fresh; }
         }
     }
 }

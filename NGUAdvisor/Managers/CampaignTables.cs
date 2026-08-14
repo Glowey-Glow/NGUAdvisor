@@ -562,6 +562,34 @@ namespace NGUAdvisor.Managers
             return int.TryParse(s.Substring(dash + 1), out index);
         }
 
+        // What one leg REQUIRES, per code: the highest chain ordinal in its Ordinals list, advisor-
+        // owned codes excluded (they accrue opportunistically and gate nothing). This is the table's
+        // own data reduced, so a consumer asking "is this leg finished on the live counters?" —
+        // ChallengeOverlay's CBlock-3 hack-phase gate via HackPhase.ChainSatisfied — reads the same
+        // rows Status() reads instead of hardcoding a second copy of the guide's list. Optional
+        // ordinals (TC-2, "strongly recommended but optional") are excluded by construction: they
+        // live in Leg.Optional, not Leg.Ordinals. Empty result = no such block/leg, or nothing
+        // parseable — the caller must treat that as unverifiable, not as satisfied.
+        public static Dictionary<string, int> LegRequirements(string blockId, string difficulty)
+        {
+            var req = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var b in Blocks)
+            {
+                if (!string.Equals(b.Id, blockId, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var l in b.Legs)
+                {
+                    if (!string.Equals(l.Difficulty, difficulty, StringComparison.OrdinalIgnoreCase)) continue;
+                    foreach (var raw in l.Ordinals)
+                    {
+                        if (!TryParseOrdinal(raw, out var code, out var idx)) continue;
+                        if (IsAdvisorOwned(code)) continue;
+                        if (!req.TryGetValue(code, out var cur) || idx > cur) req[code] = idx;
+                    }
+                }
+            }
+            return req;
+        }
+
         // ---------------------------------------------------------------- health inputs
 
         // What the caller found on disk for one campaign profile.

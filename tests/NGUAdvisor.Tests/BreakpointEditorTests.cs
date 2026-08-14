@@ -203,6 +203,123 @@ namespace NGUAdvisor.Tests
             Assert.False(BreakpointEditor.Apply(Load(), "gear", 0, 0, "Optimize:", "", null).Ok);
         }
 
+        // ---- Gear Lock (ID list AND an objective, in one row) ----
+        //
+        // The two clauses used to be mutually exclusive: whichever one you wrote cleared the other,
+        // and the runtime threw the IDs away whenever an objective was set. That is the thing the
+        // feature exists to undo, so the load-bearing assertion is that BOTH survive.
+
+        [Fact]
+        public void Gear_lock_keeps_the_item_ids_AND_the_objective()
+        {
+            var m = Load();
+            var r = BreakpointEditor.Apply(m, "gear", 0, 0, "Lock: 326, 100; Optimize: Time Machine", "", null);
+            Assert.True(r.Ok, r.Error);
+            Assert.Equal(new List<int> { 326, 100 }, m.Gear[0].Items);
+            Assert.Equal("Time Machine", m.Gear[0].Objective);
+            Assert.False(m.Gear[0].ForceRespawn);
+            AssertLossless(m);
+        }
+
+        [Fact]
+        public void Gear_lock_carries_the_respawn_pin_too()
+        {
+            var m = Load();
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "Lock: 326; Optimize+Respawn: Adventure", "", null).Ok);
+            Assert.Equal(new List<int> { 326 }, m.Gear[0].Items);
+            Assert.Equal("Adventure", m.Gear[0].Objective);
+            Assert.True(m.Gear[0].ForceRespawn);
+        }
+
+        // The clause ORDER is the user's to choose — the canonical form writes Lock first, but a
+        // hand-edited profile that writes the objective first must mean the same thing.
+        [Fact]
+        public void Clause_order_does_not_change_the_meaning()
+        {
+            var m = Load();
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "Optimize: Gold Drops; Lock: 400, 401", "", null).Ok);
+            Assert.Equal(new List<int> { 400, 401 }, m.Gear[0].Items);
+            Assert.Equal("Gold Drops", m.Gear[0].Objective);
+        }
+
+        // "specify certain items via ID, and then do 'Optimize: X'" — the request, spelled the way it
+        // was phrased. A bare ID clause beside an objective is the lock list.
+        [Fact]
+        public void A_bare_id_clause_beside_an_objective_is_the_lock_list()
+        {
+            var m = Load();
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "326, 100; Optimize: Time Machine", "", null).Ok);
+            Assert.Equal(new List<int> { 326, 100 }, m.Gear[0].Items);
+            Assert.Equal("Time Machine", m.Gear[0].Objective);
+        }
+
+        // A lock with nothing to optimise around IS just an item list, and must not leave a stale
+        // objective standing from whatever the row said before.
+        [Fact]
+        public void A_lock_clause_with_no_objective_is_a_plain_item_list()
+        {
+            var m = Load();
+            m.SetGearObjective(0, "PreviousObjective", true);
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "Lock: 300, 400", "", null).Ok);
+            Assert.Equal(new List<int> { 300, 400 }, m.Gear[0].Items);
+            Assert.Equal("", m.Gear[0].Objective);
+            Assert.False(m.Gear[0].ForceRespawn);
+        }
+
+        // Switching a Gear Lock row back to a pure objective must CLEAR the locks, or a set the user
+        // deleted would keep being worn with nothing on screen saying why.
+        [Fact]
+        public void Dropping_the_lock_clause_clears_the_locked_items()
+        {
+            var m = Load();
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "Lock: 326; Optimize: Adventure", "", null).Ok);
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, "Optimize: Adventure", "", null).Ok);
+            Assert.Empty(m.Gear[0].Items);
+            Assert.Equal("Adventure", m.Gear[0].Objective);
+        }
+
+        [Theory]
+        [InlineData("Lock: 326; Optimize: A; Optimize: B")]   // two objectives is not a plan
+        [InlineData("Lock 326; Optimize: A")]                 // no colon after Lock
+        [InlineData("Lock: ; Optimize: A")]                   // an empty lock clause
+        [InlineData("Lock: 326, banana; Optimize: A")]
+        [InlineData("Lock: 326, 326; Optimize: A")]           // one copy per item id is a game rule
+        public void Malformed_gear_lock_payloads_are_refused(string payload)
+        {
+            var r = BreakpointEditor.Apply(Load(), "gear", 0, 0, payload, "", null);
+            Assert.False(r.Ok);
+            Assert.False(string.IsNullOrEmpty(r.Error));
+        }
+
+        // The round trip the companion actually performs: the editor pre-fills from `payload`, the
+        // user saves it back verbatim, and the row must be the row it started as.
+        [Fact]
+        public void The_canonical_gear_lock_payload_round_trips()
+        {
+            var m = Load();
+            const string payload = "Lock: 326, 100; Optimize+Respawn: Time Machine";
+            Assert.True(BreakpointEditor.Apply(m, "gear", 0, 0, payload, "", null).Ok);
+            var reloaded = ProfileModel.Load(m.ToJson());
+            Assert.Equal(new List<int> { 326, 100 }, reloaded.Gear[0].Items);
+            Assert.Equal("Time Machine", reloaded.Gear[0].Objective);
+            Assert.True(reloaded.Gear[0].ForceRespawn);
+        }
+
+        // BACKWARD COMPATIBILITY. The feature added NO json key: "ID" has always meant "these items
+        // are in the set". A profile written before Gear Lock existed carries an ID list with no
+        // Objective, which is still exactly "wear these" — and one with an Objective and no ID list is
+        // still exactly "optimise everything".
+        [Fact]
+        public void Profiles_written_before_gear_lock_load_and_save_unchanged()
+        {
+            var m = Load();                                  // Gear: { ID: [100, 200] }, no Objective
+            Assert.Equal(new List<int> { 100, 200 }, m.Gear[0].Items);
+            Assert.Equal("", m.Gear[0].Objective);
+            var reloaded = ProfileModel.Load(m.ToJson());
+            Assert.Equal(new List<int> { 100, 200 }, reloaded.Gear[0].Items);
+            Assert.Equal("", reloaded.Gear[0].Objective);
+        }
+
         // ---- Rebirth (Type + optional Target) ----
 
         [Fact]

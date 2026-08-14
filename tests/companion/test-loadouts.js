@@ -642,6 +642,29 @@ window.addEventListener("load", guard(() => {
       ok("the run clock and phase are shown", /push phase/.test(plan.textContent) && /15\.6h/.test(plan.textContent),
          plan.textContent);
 
+      // The EVIL chain is a different, longer set of segment names than the Normal one, and two of them
+      // (NGU+AT, EVIL NGU) did not exist until the guide's ch.5 phases 3-4 were authored. The strip is
+      // built from the published `chain` array rather than any hardcoded list, so this is a guard that it
+      // stays that way — a future edit that enumerates the Normal segments would silently blank the Evil
+      // plan for every Evil player.
+      send(baseSnapshot({
+        autoProfile: { on: true, profile: "24hr-Evil", segment: "NGU+AT", phase: "growth",
+                       index: 2, runHours: 8.4,
+                       chain: ["TM HOUR", "AUGMENTATION", "NGU+AT", "EVIL NGU"] }
+      }));
+      const evilPlan = $("stagePlan");
+      ok("the Evil four-phase chain is shown whole", evilPlan.querySelectorAll(".chip").length >= 4,
+         String(evilPlan.querySelectorAll(".chip").length));
+      ok("the Evil chain reads in guide order",
+         /TM HOUR[\s\S]*AUGMENTATION[\s\S]*NGU\+AT[\s\S]*EVIL NGU/.test(evilPlan.textContent),
+         evilPlan.textContent);
+      ok("the current Evil segment is marked", /NGU\+AT\s*now/.test(evilPlan.textContent.replace(/\s+/g," ")),
+         evilPlan.textContent);
+      const evilChips = Array.from(evilPlan.querySelectorAll(".chip"));
+      ok("the Evil-NGU tail renders as a future step, not as the current one",
+         evilChips[3] && evilChips[3].className.indexOf("max") < 0,
+         evilChips.map(c => c.className).join(" | "));
+
       // A manual profile has no segments — name the profile instead of inventing a plan.
       send(baseSnapshot({ autoProfile: { on: false, profile: "24hr-EarlyEvil.json" } }));
       ok("manual profile is named as such", /Manual profile/.test($("stagePlan").textContent),
@@ -855,6 +878,109 @@ window.addEventListener("load", guard(() => {
          !!(ed && /Stats/.test(ed.querySelector("#peSlots").textContent) &&
                   /Adv/.test(ed.querySelector("#peSlots").textContent)),
          ed ? ed.querySelector("#peSlots").textContent : "");
+
+      // ---- 12l. GEAR LOCK: the breakpoint editor's gear form -----------------------------------
+      // A gear breakpoint used to be one free-text field that took EITHER item IDs OR
+      // "Optimize: X", with no way to write both — which is precisely what was asked for ("2
+      // respawn + doll + optimize:TM"). The form states the whole plan, and the hidden payload it
+      // serialises has to be exactly BreakpointEditor.ApplyGear's grammar or a saved row changes
+      // meaning. That round trip is what these assert.
+      ed = openBp("gear", "Lock: 188, 301; Optimize: NGUs");
+      ok("editing a gear breakpoint opens the Gear Lock form", !!(ed && ed.querySelector("#peLocks")),
+         ed ? ed.className : "no editor");
+      if (ed && ed.querySelector("#peLocks")) {
+        const lockRows = () => Array.from(ed.querySelectorAll("#peLocks .le-row"));
+        const objSel = ed.querySelector('[data-k="gearobj"]');
+        const respBox = ed.querySelector('[data-k="gearresp"]');
+
+        ok("the locked items load as rows", lockRows().length === 2, String(lockRows().length));
+        ok("locked items are NAMED, not bare ids",
+           /Edgy Helmet/.test(lockRows()[0].textContent) && /Sturdy Pants/.test(lockRows()[1].textContent),
+           lockRows().map(r => r.textContent.trim()).join(" | "));
+        ok("the id stays visible, because the profile stores the id",
+           /\[188\]/.test(lockRows()[0].textContent), lockRows()[0].textContent);
+        ok("locked rows are draggable — order decides which slot each takes",
+           lockRows().every(r => r.getAttribute("draggable") === "true"));
+        ok("the objective loads into the picker", objSel && objSel.value === "NGUs", objSel && objSel.value);
+        ok("the objective picker is built from the injector's own list",
+           objSel.tagName === "SELECT" &&
+           GEAR_OBJECTIVES.every(n => Array.from(objSel.options).some(o => o.value === n)),
+           Array.from(objSel.options).map(o => o.value).join(","));
+        ok("the payload round-trips unchanged when nothing is touched",
+           payloadOf(ed) === "Lock: 188, 301; Optimize: NGUs", payloadOf(ed));
+        ok("the form says what the row will actually do",
+           /2 items are locked in/.test(ed.querySelector(".peg-say").textContent) &&
+           /NGUs/.test(ed.querySelector(".peg-say").textContent),
+           ed.querySelector(".peg-say").textContent);
+
+        // Removing a lock rewrites the payload and must NOT post a setting — this list belongs to
+        // the breakpoint, not to settings.
+        SENT.length = 0;
+        lockRows()[0].querySelector("[data-lremove]").dispatchEvent(new window.Event("click", { bubbles: true }));
+        ok("removing a locked item rewrites the payload",
+           payloadOf(ed) === "Lock: 301; Optimize: NGUs", payloadOf(ed));
+        ok("the gear lock list never posts a setting",
+           SENT.filter(m => m.cmd === "setSettingList").length === 0, JSON.stringify(SENT));
+
+        // Adding by id.
+        const addIn = $("peLocksAdd");
+        addIn.value = "94";
+        $("peLocksAddBtn").dispatchEvent(new window.Event("click", { bubbles: true }));
+        ok("adding an item id appends it to the lock list",
+           payloadOf(ed) === "Lock: 301, 94; Optimize: NGUs", payloadOf(ed));
+        ok("the add box clears after a successful add", addIn.value === "");
+
+        // The respawn pin serialises into the same payload.
+        respBox.checked = true;
+        respBox.dispatchEvent(new window.Event("change", { bubbles: true }));
+        ok("the respawn pin becomes Optimize+Respawn",
+           payloadOf(ed) === "Lock: 301, 94; Optimize+Respawn: NGUs", payloadOf(ed));
+
+        // Clearing the objective turns the SAME list back into a plain loadout — the old ID-only
+        // shape — which is the backward-compatible half of the grammar.
+        objSel.value = "";
+        objSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+        ok("with no objective the row is a plain item list again",
+           payloadOf(ed) === "301, 94", payloadOf(ed));
+        ok("the list relabels itself when it stops being a lock",
+           ed.querySelector(".peg-locklabel").textContent === "Items to wear",
+           ed.querySelector(".peg-locklabel").textContent);
+        ok("the respawn pin is disabled when there is no optimize pass to pin into",
+           respBox.disabled === true);
+      }
+
+      // An objective with NO locked items must still serialise to exactly the old payload, or every
+      // pre-Gear-Lock row would be rewritten just by being opened.
+      ed = openBp("gear", "Optimize+Respawn: Adventure");
+      if (ed) {
+        ok("an objective-only gear row round-trips to the old payload verbatim",
+           payloadOf(ed) === "Optimize+Respawn: Adventure", payloadOf(ed));
+        ok("an objective-only row shows an empty lock list",
+           ed.querySelectorAll("#peLocks .le-row").length === 0);
+        ok("an objective-only row says it optimises everything",
+           /Optimises every slot/.test(ed.querySelector(".peg-say").textContent),
+           ed.querySelector(".peg-say").textContent);
+      }
+
+      // …and so must an ID-only row, which is what every profile written before this contains.
+      ed = openBp("gear", "188, 301");
+      if (ed) {
+        ok("an id-only gear row round-trips verbatim", payloadOf(ed) === "188, 301", payloadOf(ed));
+        ok("an id-only row has no objective selected",
+           ed.querySelector('[data-k="gearobj"]').value === "",
+           ed.querySelector('[data-k="gearobj"]').value);
+        ok("an id-only row calls the list what it is",
+           ed.querySelector(".peg-locklabel").textContent === "Items to wear");
+      }
+
+      // An empty gear row must not invent content, and must say what to do.
+      ed = openBp("gear", "");
+      if (ed) {
+        ok("an empty gear row serialises to an empty payload", payloadOf(ed) === "", payloadOf(ed));
+        ok("an empty gear row says it would equip nothing",
+           /would equip nothing/.test(ed.querySelector(".peg-say").textContent),
+           ed.querySelector(".peg-say").textContent);
+      }
 
       // A system WITHOUT a slot vocabulary must keep the plain text field.
       ed = openBp("energy", "NGU-3, WAN");

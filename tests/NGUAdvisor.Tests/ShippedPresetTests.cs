@@ -79,6 +79,113 @@ namespace NGUAdvisor.Tests
             }
         }
 
+        // R-DUP — A `Priorities` ARRAY MAY NOT CONTAIN THE SAME TOKEN TWICE.
+        //
+        // audit 01 §R-DUP named THIS FILE as the gap, correctly: the duplicate-key test above walks INTO
+        // arrays but only ever compares OBJECT KEYS, so two identical ELEMENTS of one array are invisible to
+        // it. The failure mode is arithmetic, not style — a token listed twice expands twice, both copies are
+        // counted in prioCount, and every other lane in that breakpoint is divided down to match.
+        //
+        // ⚠ MEASURED 2026-08-07 AGAINST e12de0d, AND THE COUNT IS ZERO: no duplicate element in any array, in
+        // any of the 30 shipped presets, the 49 SampleProfiles, or the operator's 31 installed profiles. This
+        // test PINS that zero. It did not fix anything, because there was nothing to fix.
+        //
+        // ⚠ THE FINDING BEHIND THIS RULE WAS REAL, AND IT WAS NEVER IN THIS REPO. Worth stating precisely,
+        // because the shorthand "24hr-EarlyEvil listed ALLNGU twice" has been repeated into two source
+        // comments and reads as if a shipped preset was broken:
+        //
+        //   * audit 01 #11 / audit 36 §3a measured the operator's INSTALLED copy under %LOCALAPPDATA%Low,
+        //     which really did carry `[ "ALLNGU", "CAPWAN", "ALLAT", "ALLNGU" ]` at Energy[3] t=h:20 and
+        //     `[ "ALLNGU", "BR:20", "WAN", "ALLNGU" ]` at Magic[3]. Both duplicate seats are non-CAP, so
+        //     prioCount really did count nine NGU lanes as eighteen. 36 §3a says outright that 01's line
+        //     numbers "resolve against this live file — not against Presets/".
+        //   * `Presets\24hr-EarlyEvil.json` never had it. Energy h22 and Magic h22 hold one bare `ALLNGU`
+        //     each — two pools, one token apiece — in every revision back to 679e1d8.
+        //   * The installed copy no longer has it either: it was hand-edited on 2026-08-04, ~20h after 36
+        //     measured it, and now matches the repo's h22 shape. That hand-edit is also why it is the one
+        //     file on that machine taking PreserveUserEdit forever.
+        //
+        // So the rule is sound and the instance was genuine; what was never true is that a SHIPPED preset
+        // carried it. This test is what makes that checkable instead of re-litigated.
+        //
+        // Scoped to the keys the RUNTIME reads — Breakpoints.<section>[].Priorities. BaseBreakpoints reads
+        // Time / Priorities / Challenge and nothing else (ProfileTokenCorpusTests:66-69), so a repeat inside
+        // PrioritiesDefault / Before30 / AdvDC / a gear list is inert documentation and is not failed on here.
+        private static readonly string[] TokenSections = { "Energy", "Magic", "R3" };
+
+        // Returns one line per offending array. Shared with the negative control below so the sweep is
+        // demonstrably capable of failing rather than being a test that can only ever pass.
+        internal static List<string> DuplicatePriorityTokens(string json, string label)
+        {
+            var bad = new List<string>();
+            var root = SimpleJSON.JSON.Parse(json)["Breakpoints"];
+            if (root == null) return bad;
+
+            foreach (var section in TokenSections)
+            {
+                var arr = root[section];
+                if (arr == null || !arr.IsArray) continue;
+                for (var b = 0; b < arr.Count; b++)
+                {
+                    var prios = arr[b]["Priorities"];
+                    if (prios == null || !prios.IsArray) continue;
+
+                    var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    for (var t = 0; t < prios.Count; t++)
+                    {
+                        var token = prios[t].Value;
+                        if (token == null) continue;
+                        int n;
+                        seen.TryGetValue(token, out n);
+                        seen[token] = n + 1;
+                    }
+
+                    foreach (var kv in seen)
+                    {
+                        if (kv.Value < 2) continue;
+                        bad.Add(label + " " + section + "[" + b + "] lists \"" + kv.Key + "\" " + kv.Value +
+                                " times — it expands " + kv.Value + "x into prioCount and divides every other " +
+                                "lane in that breakpoint down to match");
+                    }
+                }
+            }
+            return bad;
+        }
+
+        [Fact]
+        public void No_shipped_preset_lists_the_same_priority_token_twice_in_one_array()
+        {
+            var bad = new List<string>();
+            var files = 0;
+            foreach (var f in Presets())
+            {
+                files++;
+                bad.AddRange(DuplicatePriorityTokens(File.ReadAllText(f), Path.GetFileName(f)));
+            }
+            Assert.True(files >= 30, "the preset walk found only " + files + " files — the root is wrong");
+            Assert.True(bad.Count == 0, "duplicate priority tokens:\n  " + string.Join("\n  ", bad));
+        }
+
+        // The negative control. Without this the sweep above is unfalsifiable, which is the exact way audit
+        // 01's own R-DUP finding survived unmeasured for five days.
+        [Fact]
+        public void The_duplicate_token_check_actually_catches_a_duplicate()
+        {
+            const string doubled =
+                "{\"Breakpoints\":{\"Energy\":[{\"Time\":0,\"Priorities\":[\"ALLNGU\",\"WAN\",\"ALLNGU\"]}]}}";
+            var hits = DuplicatePriorityTokens(doubled, "synthetic.json");
+            Assert.Single(hits);
+            Assert.Contains("ALLNGU", hits[0]);
+            Assert.Contains("2 times", hits[0]);
+
+            // …and the shape that is NOT a duplicate: the same token once in each of two pools, which is what
+            // 24hr-EarlyEvil actually carries and what finding #11 misread.
+            const string twoPools =
+                "{\"Breakpoints\":{\"Energy\":[{\"Time\":0,\"Priorities\":[\"ALLNGU\"]}]," +
+                "\"Magic\":[{\"Time\":0,\"Priorities\":[\"ALLNGU\"]}]}}";
+            Assert.Empty(DuplicatePriorityTokens(twoPools, "synthetic.json"));
+        }
+
         [Fact]
         public void Preset_filenames_do_not_collide_when_installed_flat()
         {
@@ -213,7 +320,11 @@ namespace NGUAdvisor.Tests
                 Assert.Equal(ProfileModel.Load(File.ReadAllText(twin)).Challenges,
                              ProfileModel.Load(File.ReadAllText(preset)).Challenges);
             }
-            Assert.Equal(17, compared);   // 16, plus C-Miniblock2.3-NoRB promoted once it was written
+            // 16, plus C-Miniblock2.3-NoRB promoted once it was written, plus the five Evil DAILY DRIVERS
+            // (24hr-EarlyEvil/-Evil/-MidEvil/-EndEvil, LRB-Evil). Those five existed in SampleProfiles/Evil
+            // from the start but were never promoted, so PresetInstaller could not deliver them and
+            // ProgressionAnalyzer had nothing to recommend on Evil but the Normal-track Goal-NGU.
+            Assert.Equal(22, compared);
         }
     }
 }

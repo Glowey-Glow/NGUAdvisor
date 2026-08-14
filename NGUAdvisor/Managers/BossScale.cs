@@ -49,6 +49,35 @@ namespace NGUAdvisor.Managers
             return effectiveBossId >= zoneUnlocks[zone];
         }
 
+        // Highest EFFECTIVE boss number that still unlocks a zone AT THIS DIFFICULTY.
+        //
+        // The previous rule scanned zones 0..TitanZones[DifficultyMaxTitanIndex()] — the ceiling TITAN's
+        // zone — on the assumption that the last titan of an era is also its last unlock. It is not:
+        //   Evil   ceiling titan 8 = THE EXILE, zone 30, threshold 491 … but The Rad-Lands is zone 31 at
+        //          501, so the ceiling came out TEN bosses short.
+        //   Normal ceiling titan 5 = zone 19, threshold 132 … but Chocolate World is zone 20 at 137.
+        // Being short makes IsPastBossCeiling flip true early, which announces "unlocks done at this
+        // difficulty" while a zone is still ahead and prematurely trips the digger/EXP-farm promotion
+        // that hangs off the same flag.
+        //
+        // Bound by DIFFICULTY BAND instead, which is what the ZoneUnlocks table is actually built on: a
+        // zone belongs to this era when its threshold falls in [offset, offset + EvilStep). That is
+        // independent of where the titans happen to sit, so a future table edit cannot re-open this.
+        public static int BossUnlockCeiling(int[] zoneUnlocks, GameDifficulty difficulty)
+        {
+            if (zoneUnlocks == null) return 0;
+            int lo = OffsetFor(difficulty);
+            int hi = lo + EvilStep;               // exclusive — the next era's band starts here
+            int best = 0;
+            for (int z = 0; z < zoneUnlocks.Length; z++)
+            {
+                int thr = zoneUnlocks[z];
+                if (thr >= lo && thr < hi && thr > best)
+                    best = thr;
+            }
+            return best;
+        }
+
         // "Past the boss-unlock ceiling": the player has cleared the highest zone this difficulty
         // unlocks, so further boss progress is EXP-only (the guide's NUMBER-ritual phase). ceiling <= 0
         // means "no known ceiling" (early game, or BossUnlockCeiling() hit its catch) and is NOT past —

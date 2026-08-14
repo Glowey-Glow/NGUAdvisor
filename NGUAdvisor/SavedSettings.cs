@@ -192,6 +192,7 @@ namespace NGUAdvisor
         // Advisor zone-routing strategies (Combat > ZONES): gear-capping farm + demand-gated boost farm.
         [SerializeField] private bool _advisorFarmGear;
         [SerializeField] private bool _advisorFarmBoost;
+        [SerializeField] private bool _advisorFarmRares;
         [SerializeField] private bool _advisorTitans;
         // Gold pipeline (E1): advisor manages gold end-to-end; manual snipe triggers (S3 event model).
         [SerializeField] private bool _advisorGold;
@@ -206,6 +207,13 @@ namespace NGUAdvisor
         [SerializeField] private bool _lscTargetsSaved;
         [SerializeField] private long _lscSavedAugTarget;
         [SerializeField] private long _lscSavedUpgTarget;
+        // Inverted (default false = constraint layer ON), same reason as _companionLaunchDisabled:
+        // JsonUtility.FromJson does not run field initializers, so an ABSENT bool loads as false and
+        // every existing settings.json must come out with the NEW path on. The kill switch is
+        // therefore "set ConstraintAllocatorDisabled": a config change, never a rebuild.
+        [SerializeField] private bool _constraintAllocatorDisabled;
+        [SerializeField] private bool _constraintParityLog;
+        [SerializeField] private bool _objectiveCompareLog;
         // Per-STEP flags: each element is a per-tier BITMASK (bit t = tier t of that chain), so per-item
         // Promote / Keep / Filter fit the existing int[5] schema with no serialization change.
         [SerializeField] private int[] _transformAutoClimb;
@@ -543,6 +551,7 @@ namespace NGUAdvisor
             _advisorZones = other?.AdvisorZones ?? false;
             _advisorFarmGear = other?.AdvisorFarmGear ?? false;
             _advisorFarmBoost = other?.AdvisorFarmBoost ?? false;
+            _advisorFarmRares = other?.AdvisorFarmRares ?? false;
             _advisorTitans = other?.AdvisorTitans ?? false;
             _advisorGold = other?.AdvisorGold ?? false;
             _snipeOnNewZone = other?.SnipeOnNewZone ?? true;
@@ -557,6 +566,10 @@ namespace NGUAdvisor
             _lscTargetsSaved = other?.LscTargetsSaved ?? false;
             _lscSavedAugTarget = other?.LscSavedAugTarget ?? 0;
             _lscSavedUpgTarget = other?.LscSavedUpgTarget ?? 0;
+            // Inverted field: absent/false = constraint layer ON. Parity logging defaults OFF.
+            _constraintAllocatorDisabled = !(other?.ConstraintAllocator ?? true);
+            _constraintParityLog = other?.ConstraintParityLog ?? false;
+            _objectiveCompareLog = other?.ObjectiveCompareLog ?? false;
             // Per-step model: flags are per-tier bitmasks and NEW tiers default to Keep (held) via
             // TransformManager's default-on-unlock pass — so there is no blanket auto-climb default now
             // (a freshly-unlocked tier holds until the user opts it into Promote).
@@ -2182,6 +2195,21 @@ namespace NGUAdvisor
             set { if (value == _advisorFarmBoost) return; _advisorFarmBoost = value; SaveSettings(); }
         }
 
+        // Farm Rare Accessories: chase set-LESS accessories and the Looty/Pendant chains once every
+        // zone SET is capped. Off = set farms only, and the advisor merely REPORTS what is available
+        // ("N rare accessories available to farm ..."), so the choice to spend the hours is the
+        // user's [OPERATOR 2026-08-05].
+        //
+        // ⚠ DEFAULTS OFF, and that is a deliberate behaviour change from the commit that introduced
+        // the rare track. These are long commitments — measured on the operator's own save, the
+        // cheapest rare was ~35h and the dearest 642h — and the advisor should not sign up for that
+        // silently. Sets are unaffected: SetTarget outranks this and is not gated by it.
+        public bool AdvisorFarmRares
+        {
+            get => _advisorFarmRares;
+            set { if (value == _advisorFarmRares) return; _advisorFarmRares = value; SaveSettings(); }
+        }
+
         // Titans hero toggle: advisor writes TitanSwapTargets (spawnable titans below auto-kill,
         // riddle titans only once their quest flags unlock); off = the manual kill-toggle grid.
         public bool AdvisorTitans
@@ -2274,6 +2302,39 @@ namespace NGUAdvisor
         {
             get => _lscSavedUpgTarget;
             set { if (value == _lscSavedUpgTarget) return; _lscSavedUpgTarget = value; SaveSettings(); }
+        }
+
+        // THE KILL SWITCH (constraint-layer wiring). ON (default): energy/magic allocation runs the
+        // four-pass constraint layer (ConstraintLayerBridge). OFF: the original prioCount share path
+        // in Energy/MagicBreakpoints.PerformSwap runs, byte-unchanged. A config change, not a
+        // rebuild — the stored field is inverted (see _constraintAllocatorDisabled) so settings
+        // files predating it come out ON.
+        public bool ConstraintAllocator
+        {
+            get => !_constraintAllocatorDisabled;
+            set { if (value == !_constraintAllocatorDisabled) return; _constraintAllocatorDisabled = !value; SaveSettings(); }
+        }
+
+        // Parity logging: while the constraint layer allocates, ALSO compute what the old prioCount
+        // model would have done and log every lane where they differ (throttled on the divergence
+        // signature — ConstraintParity). Divergence is expected; this is the operator's audit trail.
+        public bool ConstraintParityLog
+        {
+            get => _constraintParityLog;
+            set { if (value == _constraintParityLog) return; _constraintParityLog = value; SaveSettings(); }
+        }
+
+        // The objective layer's comparison run (amendment 34 §7.1, [OPERATOR]'s additive path): while
+        // the PROFILE allocates, ALSO compute what the objective table says about this pool's
+        // membership for the current (chapter, track) and log where the two differ — throttled on the
+        // comparison signature, exactly like parity above. ⚠ Nothing it computes is ever applied; the
+        // profile remains the sole membership source. Defaults OFF, and like ConstraintParityLog it
+        // is a settings-file switch rather than a UI toggle: it is an operator instrument for one
+        // decision, not a feature.
+        public bool ObjectiveCompareLog
+        {
+            get => _objectiveCompareLog;
+            set { if (value == _objectiveCompareLog) return; _objectiveCompareLog = value; SaveSettings(); }
         }
 
         public int[] TransformAutoClimb

@@ -6,7 +6,7 @@ namespace NGUAdvisor.Managers
 {
     public static class QuestManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly BeastQuestController _qc = _character.beastQuestController;
         private static bool shouldQuest;
         private static bool questBankOverfill;
@@ -15,45 +15,56 @@ namespace NGUAdvisor.Managers
 
         public static bool BankOverfill => questBankOverfill;
 
-        // Gear item IDs droppable per adventure zone (extracted from the game's LootDrop.zoneNDrop
-        // functions; static game data like the titan AK table). Drives the capstone hold.
+        // EQUIPMENT item ids droppable per MAJOR-QUEST zone. The capstone hold (:CapstoneHold) is the
+        // only consumer, and it holds a finished quest while any of these is still un-maxed.
+        //
+        // THE EXTRACTION RULE, and the two ways the previous table broke it:
+        //
+        //   ids = { every makeLoot(id) AND makeLevelledLoot(id, ...) in LootDrop.zone<N>Drop }
+        //         filtered to Equipment.isEquipment() -- i.e. type[id] is one of
+        //         Head/Chest/Legs/Boots/Weapon/Accessory  [DECOMP] Equipment.cs:570-577, part.cs
+        //
+        //   1. The old table captured only makeLevelledLoot(...) and MISSED EVERY makeLoot(...) gear
+        //      id. Five of the ten reachable rows were materially incomplete as a result: zone 9 held
+        //      exactly one id (437) where the game drops eight, and zones 2/5/12/13 each missed a
+        //      whole boss set. The hold ended early -- or never started -- in half the zones it can
+        //      run in, which is the entire feature. (audit/12 §Q-1)
+        //
+        //   2. The old table included part.Misc ids -- 66, 339, 367, 368, 369, 370, 371, 163. Misc
+        //      items are not equipment, so the advisor never merges or boosts them
+        //      (InventoryManager.cs:242), Equipment.level never leaves 0, and markItemAsMaxxed needs
+        //      level >= 100 [DECOMP] AllItemListController.cs:144-153. itemMaxxed[id] could therefore
+        //      NEVER become true, and because CapstoneHold breaks on the FIRST un-maxed id, the three
+        //      cooking ids (367 in zone 15, 369 in zone 20, 370 in zone 22) pinned a 3-hour hold
+        //      forever, on exactly the zones whose ordinary gear was already capped. (audit/12 §Q-2)
+        //
+        // ONLY THESE TEN ZONES CAN EVER BE ASKED FOR. CapstoneHold reads _qc.curQuestZone(), whose
+        // switch returns exactly { 1, 2, 5, 9, 12, 13, 15, 20, 21, 22 } or -100
+        // [DECOMP] BeastQuestController.cs:997-1013. The previous table carried 25 further rows that
+        // no code path could reach; they are removed rather than left to rot un-exercised, since a
+        // TryGetValue miss on an unreachable zone is unreachable too.
         public static readonly Dictionary<int, int[]> ZoneItems = new Dictionary<int, int[]>
         {
-            { 0, new[] { 62,63,64,65,75,120 } },
+            // [DECOMP] LootDrop.cs:158  zone1Drop   (quest 278)
             { 1, new[] { 40,41,42,43,44,45,46,77 } },
-            { 2, new[] { 47,48,49,50,51,52,135,432 } },
-            { 3, new[] { 53,433 } },
-            { 4, new[] { 53,434 } },
-            { 5, new[] { 53,66,435 } },
-            { 7, new[] { 66,368,436 } },
-            { 9, new[] { 437 } },
-            { 10, new[] { 66,110,438 } },
-            { 12, new[] { 66,127,439 } },
-            { 13, new[] { 339,440 } },
-            { 15, new[] { 76,143,144,145,146,147,148,367,441 } },
-            { 17, new[] { 67,94,128,163,164,165,166,167,168,442 } },
-            { 18, new[] { 94,128,163,173,174,175,176,177,178,443 } },
-            { 19, new[] { 179 } },
-            { 20, new[] { 142,221,222,223,224,225,226,227,369,444 } },
+            // [DECOMP] LootDrop.cs:252  zone2Drop   (quest 281) -- 53 was the missing makeLoot id
+            { 2, new[] { 47,48,49,50,51,52,53,135,432 } },
+            // [DECOMP] LootDrop.cs:614  zone5Drop   (quest 283) -- 68-74 were missing; 66 was Misc
+            { 5, new[] { 53,68,69,70,71,72,73,74,435 } },
+            // [DECOMP] LootDrop.cs:1114 zone9Drop   (quest 279) -- 95-101 were missing; row held only 437
+            { 9, new[] { 95,96,97,98,99,100,101,437 } },
+            // [DECOMP] LootDrop.cs:1492 zone12Drop  (quest 282) -- 122-126 were missing; 66 was Misc
+            { 12, new[] { 122,123,124,125,126,127,439 } },
+            // [DECOMP] LootDrop.cs:1602 zone13Drop  (quest 287) -- 76,130-134 were missing; 339 was Misc
+            { 13, new[] { 76,130,131,132,133,134,440 } },
+            // [DECOMP] LootDrop.cs:1780 zone15Drop  (quest 285) -- 367 was the cooking-item deadlock
+            { 15, new[] { 76,143,144,145,146,147,148,441 } },
+            // [DECOMP] LootDrop.cs:2467 zone20Drop  (quest 280) -- 369 was the cooking-item deadlock
+            { 20, new[] { 142,221,222,223,224,225,226,227,444 } },
+            // [DECOMP] LootDrop.cs:2624 zone21Drop  (quest 284) -- already correct
             { 21, new[] { 142,213,214,215,216,217,218,219,220,445 } },
-            { 22, new[] { 142,231,232,233,234,235,236,370,446 } },
-            { 24, new[] { 128,142,251,252,253,254,255,256,257,447 } },
-            { 25, new[] { 128,142,258,259,260,261,262,263,264,448 } },
-            { 27, new[] { 128,142,301,302,303,304,305,306,307,449 } },
-            { 28, new[] { 128,142,308,309,310,311,312,313,314,450 } },
-            { 29, new[] { 128,142,315,316,317,318,319,320,321,371,451 } },
-            { 30, new[] { 336 } },
-            { 31, new[] { 169,170,345,346,347,348,349,350,351,452 } },
-            { 32, new[] { 229,230,352,353,354,355,356,357,358 } },
-            { 33, new[] { 229,230,359,360,361,362,363,364,365,366 } },
-            { 35, new[] { 229,230,392,393,394,395,396,397,398,399 } },
-            { 36, new[] { 229,230,400,401,402,403,404,405,406,407 } },
-            { 37, new[] { 229,230,408,409,410,411,412,413,414,415 } },
-            { 39, new[] { 295,296,453,454,455,456,457,458,459,460 } },
-            { 40, new[] { 295,296,496,497,498,499,500,501,502,503 } },
-            { 41, new[] { 295,296,461,462,463,464,465,466,467,468 } },
-            { 43, new[] { 295,296,507,508,509,510,511,512,513,514 } },
-            { 45, new[] { 180,181,182,183,337,491,495 } },
+            // [DECOMP] LootDrop.cs:2771 zone22Drop  (quest 286) -- 370 was the cooking-item deadlock
+            { 22, new[] { 142,231,232,233,234,235,236,446 } },
         };
 
         // Capstone hold (advisor): a major quest is free forced-farming time in its zone — if the
@@ -203,8 +214,18 @@ namespace NGUAdvisor.Managers
             }
             else if (Settings.CombatEnabled)
             {
-                // Don't quest if combat is enabled, the snipe zone is unlocked, not farming ITOPOD and Fallthrough is not allowed
-                var isSniping = CombatManager.IsZoneUnlocked(Settings.SnipeZone) && !Settings.AdventureTargetITOPOD && !Settings.AllowZoneFallback;
+                // Don't quest if combat is enabled, the zone that would route is unlocked, it is not
+                // the ITOPOD, and Fallthrough is not allowed.
+                //
+                // audit/40 §3 item 7. This used to read Settings.SnipeZone and
+                // Settings.AdventureTargetITOPOD — layer-1 INTENT fields — and so decided from a zone
+                // the character was not in whenever layer 2 overrode. The zone now comes from
+                // Main.ResolveIntentZone, the single owner of the R10 chain, and the second copy of
+                // its Target ITOPOD row is deleted; QuestStandDown carries the whole argument,
+                // including why THIS consumer wants the intent rather than the routed zone.
+                int intentZone = Main.ResolveIntentZone();
+                var isSniping = QuestStandDown.IsSniping(intentZone,
+                    CombatManager.IsZoneUnlocked(intentZone), Settings.AllowZoneFallback);
 
                 if (isSniping)
                 {

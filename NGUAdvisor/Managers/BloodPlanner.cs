@@ -62,8 +62,8 @@ namespace NGUAdvisor.Managers
                     double dt = (now - _capSampleAt).TotalSeconds;
                     if (dt >= 60)
                     {
-                        double r = Math.Max(0, (cap / _capSample - 1.0) / dt);
-                        _capGrowthPerSec = _capGrowthPerSec <= 0 ? r : _capGrowthPerSec * 0.7 + r * 0.3;
+                        double r = BloodPillMath.RelativeGrowthPerSec(cap, _capSample, dt);
+                        _capGrowthPerSec = BloodPillMath.GrowthEma(_capGrowthPerSec, r);
                         _capSample = cap;
                         _capSampleAt = now;
                     }
@@ -103,6 +103,9 @@ namespace NGUAdvisor.Managers
             return _pillWorthCache;
         }
 
+        // Live reads, then BloodPillMath.Decide, then the presentation. The LADDER — every branch and
+        // its order — is in the core and under characterisation test; what is left here is the game
+        // state it needs and the text each verdict produces.
         public static Plan Analyze()
         {
             var p = new Plan();
@@ -122,139 +125,105 @@ namespace NGUAdvisor.Managers
                 // here (MaxValue when no rebirth is scheduled: the pill will eventually come off cooldown).
                 double trueRunLeft = RunLeftSeconds(c);
                 double cdLeft = Math.Max(0, spells.adventureSpellCooldown - c.bloodMagic.adventureSpellTime.totalseconds);
-                double minBlood = spells.minAdventureBlood();
+                double availableFor = c.bloodMagic.adventureSpellTime.totalseconds - spells.adventureSpellCooldown;
+
+                // Worth yardstick (user rule): the pill grants FLAT blood^0.25 to the BASE Adventure
+                // Power/Toughness (game: character.adventure.attack/defense += num — the summand gear
+                // multipliers then scale). So the yardstick is the BASE stat, not totalAdvAttack:
+                // measuring against the gear-inflated total made the pill look worthless long after it
+                // stopped being so (user-caught). Evil+ pills are further multiplied by the ITOPOD
+                // ironPillBonus, which is 1.0 below Evil.
+                double advNow = 1;
+                try { advNow = Math.Max(1, c.adventure.attack); } catch { }
+                double ironBonus = 1.0;
+                try { if (c.settings.rebirthDifficulty >= difficulty.evil) ironBonus = c.adventureController.itopod.ironPillBonus(); } catch { }
+
+                var d = BloodPillMath.Decide(new BloodPillMath.PillInputs
+                {
+                    Blood = blood,
+                    Bps = bps,
+                    RunLeftSec = runLeft,
+                    TrueRunLeftSec = trueRunLeft,
+                    CdLeftSec = cdLeft,
+                    MinBlood = spells.minAdventureBlood(),
+                    AdvBaseAttack = advNow,
+                    IronPillBonus = ironBonus,
+                    // While any investment auto-spell toggle is on, the game drains the pool every
+                    // second, so blood only actually accumulates once the pooling window opens.
+                    AutosDraining = c.bloodMagic.rebirthAutoSpell || c.bloodMagic.lootAutoSpell || c.bloodMagic.goldAutoSpell,
+                    CapGrowthPerSec = MagicGrowthPerSec(c),
+                    CooldownSec = spells.adventureSpellCooldown,
+                    AvailableForSec = availableFor,
+                    PillWorthFraction = BloodMagicManager.PillWorthFraction,
+                    PillMinAvailableSec = BloodMagicManager.PillMinAvailableSec,
+                    PillPoolingHorizonSec = PillPoolingHorizonSec
+                });
 
                 p.Known = true;
                 p.CdLeftSec = cdLeft;
                 p.CdTotalSec = Math.Max(1.0, spells.adventureSpellCooldown);
                 // Display-only cast value (decomp castAdventurePowerupSpell): floor(blood^0.25),
-                // ×ironPillBonus on Evil+, capped 1e8. The planner's breakpoint math below keeps
-                // using the raw root — the bonus is a flat multiplier that cancels out of timing.
-                long powerNow = blood >= minBlood ? (long)Math.Floor(Math.Pow(blood, 0.25)) : 0;
-                try
-                {
-                    if (powerNow > 0 && c.settings.rebirthDifficulty >= difficulty.evil)
-                        powerNow = (long)(powerNow * c.adventureController.itopod.ironPillBonus());
-                }
-                catch { }
-                p.PillPowerNow = Math.Min(powerNow, 100000000L);
+                // ×ironPillBonus on Evil+, capped 1e8. The breakpoint math keeps using the raw root —
+                // the bonus is a flat multiplier that cancels out of timing.
+                p.PillPowerNow = d.PowerNow;
+                p.PillWorthwhile = d.Verdict != BloodPillMath.PillVerdict.NotWorthwhile;
+                p.UnreachableThisRun = d.Verdict == BloodPillMath.PillVerdict.UnreachableThisRun;
+                p.CastIronNow = d.CastNow;
 
-                // Worth gate (user rule): the pill grants FLAT blood^0.25 to the BASE Adventure
-                // Power/Toughness (game: character.adventure.attack/defense += num — the summand
-                // gear multipliers then scale). So the yardstick is the BASE stat, not
-                // totalAdvAttack: measuring against the gear-inflated total made the pill look
-                // worthless long after it stopped being so (user-caught). Evil+ pills are further
-                // multiplied by the ITOPOD ironPillBonus.
-                double advNow = 1;
-                try { advNow = Math.Max(1, c.adventure.attack); } catch { }
-                double bestPossible = Math.Pow(Math.Max(blood, blood + bps * runLeft), 0.25);
-                try
+                switch (d.Verdict)
                 {
-                    if (c.settings.rebirthDifficulty >= difficulty.evil)
-                        bestPossible *= c.adventureController.itopod.ironPillBonus();
-                }
-                catch { }
-                bool pillWorth = bestPossible >= advNow * BloodMagicManager.PillWorthFraction;
-                p.PillWorthwhile = pillWorth;
-                if (!pillWorth)
-                {
-                    p.Text = $"Iron Pill skipped: +{bestPossible:0} vs {ExpBalancer.Fmt(advNow)} BASE adv power — no meaningful gain at this stage";
-                    p.Optimal = true;
-                    return p;
-                }
+                    case BloodPillMath.PillVerdict.NotWorthwhile:
+                        p.Text = $"Iron Pill skipped: +{d.BestPossible:0} vs {ExpBalancer.Fmt(advNow)} BASE adv power — no meaningful gain at this stage";
+                        p.Optimal = true;
+                        break;
 
-                if (cdLeft > 0 && cdLeft >= trueRunLeft)
-                {
-                    p.UnreachableThisRun = true;
-                    p.Text = $"Iron Pill on cooldown ({FmtH(cdLeft)}) — won't be ready before rebirth ({FmtH(trueRunLeft)} left); not pooling blood for it";
-                    p.Optimal = true;
-                    return p;
-                }
+                    case BloodPillMath.PillVerdict.UnreachableThisRun:
+                        p.Text = $"Iron Pill on cooldown ({FmtH(cdLeft)}) — won't be ready before rebirth ({FmtH(trueRunLeft)} left); not pooling blood for it";
+                        p.Optimal = true;
+                        break;
 
-                // Effect now and best achievable before the run ends. Audit fix: while any investment
-                // auto-spell toggle is on, the game drains the pool every second — blood only actually
-                // accumulates once the pooling window opens (15m before the pill is ready), so project
-                // growth over that window, not the whole run. bps itself GROWS with magic cap over the
-                // run — PoolOver projects pooled blood over [t0, t0+T] with the measured growth rate.
-                long eNow = blood >= minBlood ? (long)Math.Floor(Math.Pow(blood, 0.25)) : 0;
-                bool autosDraining = c.bloodMagic.rebirthAutoSpell || c.bloodMagic.lootAutoSpell || c.bloodMagic.goldAutoSpell;
-                double capGrowth = MagicGrowthPerSec(c);
-                double PoolOver(double t0, double T) => T <= 0 ? 0 : bps * T * (1.0 + capGrowth * (t0 + T / 2.0));
+                    case BloodPillMath.PillVerdict.Charging:
+                        p.Text = d.PoolingTooFarOut
+                            ? $"Iron Pill ready in {FmtH(cdLeft)} — too far out to pool for (magic feeds NGUs until the last hour)"
+                            : $"Iron Pill ready in {FmtH(cdLeft)} — projected power {d.EEnd} by rebirth (+{ExpBalancer.Fmt(bps)}/s blood)";
+                        p.Severity = 0;
+                        break;
 
-                double poolStart = autosDraining ? Math.Max(0, cdLeft - 900) : 0;
-                double bloodAtEnd = blood + PoolOver(poolStart, Math.Max(0, runLeft - poolStart));
-                long eEnd = bloodAtEnd >= minBlood ? (long)Math.Floor(Math.Pow(bloodAtEnd, 0.25)) : 0;
+                    case BloodPillMath.PillVerdict.NoBloodYet:
+                        p.Text = bps > 0
+                            ? $"Iron Pill ready — accruing blood ({ExpBalancer.Fmt(blood)}, +{ExpBalancer.Fmt(bps)}/s)"
+                            : "Iron Pill ready but NO blood income — allocate magic to rituals";
+                        p.Severity = bps > 0 ? 0 : 1;
+                        break;
 
-                if (cdLeft > 0)
-                {
-                    p.Text = cdLeft > PillPoolingHorizonSec
-                        ? $"Iron Pill ready in {FmtH(cdLeft)} — too far out to pool for (magic feeds NGUs until the last hour)"
-                        : $"Iron Pill ready in {FmtH(cdLeft)} — projected power {eEnd} by rebirth (+{ExpBalancer.Fmt(bps)}/s blood)";
-                    p.Severity = 0;
-                    return p;
-                }
+                    case BloodPillMath.PillVerdict.HoldingFailSafe:
+                        // The caster's own fail-safe (BloodMagicManager.IronPill.FailSafeHold) would
+                        // refuse this cast, so don't advertise "CAST NOW" for it; keep pooling instead
+                        // (PoolForPill stays set by FillRouting while cdLeft < 900).
+                        p.Text = availableFor < BloodMagicManager.PillMinAvailableSec
+                            ? $"Iron Pill ready — pooling {FmtH(Math.Max(0, BloodMagicManager.PillMinAvailableSec - availableFor))} more (fail-safe holds the first 30m for a stronger cast)"
+                            : $"Iron Pill ready — holding: cast {p.PillPowerNow} < 10% of base adv power {ExpBalancer.Fmt(advNow)}";
+                        p.Severity = 0;
+                        break;
 
-                // Pill is ready. Next breakpoint and whether it's reachable before rebirth.
-                if (eNow < 1)
-                {
-                    p.Text = bps > 0
-                        ? $"Iron Pill ready — accruing blood ({ExpBalancer.Fmt(blood)}, +{ExpBalancer.Fmt(bps)}/s)"
-                        : "Iron Pill ready but NO blood income — allocate magic to rituals";
-                    p.Severity = bps > 0 ? 0 : 1;
-                    return p;
-                }
+                    case BloodPillMath.PillVerdict.CastNowSecondPill:
+                        p.Text = $"Cast Iron Pill NOW at power {d.ENow} — a second pill (~{d.PillSecond}) brews by rebirth; {d.ENow}+{d.PillSecond} beats holding for {d.EEnd}";
+                        p.Severity = 1;
+                        break;
 
-                // Mirror the caster fail-safe (BloodMagicManager.IronPill.FailSafeHold): it holds for the
-                // first 30 minutes the pill is available (pooling a stronger cast) and refuses any cast under
-                // 10% of base adventure power. Don't advertise "CAST NOW" for a cast the caster will refuse;
-                // keep pooling instead (PoolForPill stays set by FillRouting while cdLeft<900).
-                double availableFor = c.bloodMagic.adventureSpellTime.totalseconds - spells.adventureSpellCooldown;
-                if (availableFor < BloodMagicManager.PillMinAvailableSec
-                    || p.PillPowerNow < advNow * BloodMagicManager.PillWorthFraction)
-                {
-                    p.Text = availableFor < BloodMagicManager.PillMinAvailableSec
-                        ? $"Iron Pill ready — pooling {FmtH(Math.Max(0, BloodMagicManager.PillMinAvailableSec - availableFor))} more (fail-safe holds the first 30m for a stronger cast)"
-                        : $"Iron Pill ready — holding: cast {p.PillPowerNow} < 10% of base adv power {ExpBalancer.Fmt(advNow)}";
-                    p.Severity = 0;
-                    return p;
-                }
+                    case BloodPillMath.PillVerdict.CastNowLastBreakpoint:
+                        p.Text = $"Cast Iron Pill NOW at power {d.ENow} — next breakpoint ({d.ENow + 1}) is out of reach this run";
+                        p.Severity = 1;
+                        break;
 
-                double nextBp = Math.Pow(eNow + 1, 4);
-                double toNext = bps > 0 ? (nextBp - blood) / bps : double.MaxValue;
-
-                // Two-plan comparison (user ask: "is NOW the best time to cast?"). Pills grant FLAT
-                // base stats, so total gain is the SUM of casts: casting now frees the cooldown to
-                // brew a SECOND pill from the growth-projected income; holding grows this one pill
-                // toward eEnd. Recommend whichever total is higher.
-                double cd = spells.adventureSpellCooldown;
-                long pillSecond = 0;
-                if (runLeft > cd)
-                {
-                    double t2 = autosDraining ? Math.Max(0, cd - 900) : 0;
-                    double blood2 = PoolOver(t2, Math.Max(0, runLeft - t2));
-                    if (blood2 >= minBlood) pillSecond = (long)Math.Floor(Math.Pow(blood2, 0.25));
-                }
-
-                if (pillSecond > 0 && eNow + pillSecond > eEnd)
-                {
-                    p.CastIronNow = true;
-                    p.Text = $"Cast Iron Pill NOW at power {eNow} — a second pill (~{pillSecond}) brews by rebirth; {eNow}+{pillSecond} beats holding for {eEnd}";
-                    p.Severity = 1;
-                }
-                else if (toNext > runLeft - 60)
-                {
-                    p.CastIronNow = true;
-                    p.Text = $"Cast Iron Pill NOW at power {eNow} — next breakpoint ({eNow + 1}) is out of reach this run";
-                    p.Severity = 1;
-                }
-                else
-                {
-                    // Cast on cooldown: the pill is a FLAT permanent add on a ^0.25 curve, so N frequent
-                    // casts sum to ~(T/CD)^0.75 MORE than one bigger pooled cast — holding for a higher
-                    // single breakpoint is never worth it and it starves the investment sinks meanwhile.
-                    p.CastIronNow = true;
-                    p.Text = $"Cast Iron Pill NOW at power {eNow} — frequent casts beat holding (flat ^0.25 stat sums)";
-                    p.Severity = 1;
+                    default:
+                        // CastNowCadence. The pill is a FLAT permanent add on a ^0.25 curve, so N
+                        // frequent casts sum to ~(T/CD)^0.75 MORE than one bigger pooled cast — holding
+                        // for a higher single breakpoint is never worth it and it starves the
+                        // investment sinks meanwhile.
+                        p.Text = $"Cast Iron Pill NOW at power {d.ENow} — frequent casts beat holding (flat ^0.25 stat sums)";
+                        p.Severity = 1;
+                        break;
                 }
                 return p;
             }
@@ -266,7 +235,9 @@ namespace NGUAdvisor.Managers
         //  - While the Iron Pill is charging (ready or ready soon), everything is OFF to pool.
         //  - Counterfeit Gold only helps if the Time Machine has base gold to multiply, and matters
         //    most while gold-starved for augments.
-        //  - Spaghetti (drop chance) while the farm zone's recommended DC isn't met.
+        //  - Spaghetti (drop chance) while the farm zone's recommended DC isn't met AND the user's
+        //    SpaghettiThreshold cap hasn't been bought yet. Titans are deliberately not part of this
+        //    test — their loot does not roll against drop chance at all; see DcBelowZoneRec.
         //  - NUMBER boost is the default sink — dead only in NORB (no rebirth = the banked multi is
         //    never cashed) and when no rebirth is scheduled.
         public static void FillRouting(ref Plan p)
@@ -311,7 +282,22 @@ namespace NGUAdvisor.Managers
                 // NUMBER floor > gold > loot (while the investment window is open) > NUMBER.
                 bool norb = false;
                 try { norb = ChallengeDetector.Current() == "NORB"; } catch { }
-                bool rebirthOn = Main.Profile != null && Main.Profile.NextRebirthTargetSeconds() > 0;
+                // ⚠ ASK WHETHER A REBIRTH IS COMING — DO NOT ASK WHEN IT IS.
+                // This used to be `NextRebirthTargetSeconds() > 0`, which is a SECONDS figure and only
+                // exists for a target expressed in seconds. A NUMBER/BOSSES rebirth entry written
+                // without a "Time" key parses to RebirthTime 0 (BreakpointWrapper starts every entry
+                // at 0 and only overwrites it when "Time" is present), so that test read it as "no
+                // rebirth" and blood went idle on eleven shipped profiles — including CBlock3.2-E,
+                // whose whole rebirth trigger IS rebirth power at 1000x, the very quantity the NUMBER
+                // spell banks. [OPERATOR] caught it live mid-CBlock3.2-E, 2026-08-08, with blood
+                // pooling uncast behind "no rebirth scheduled to bank NUMBER for".
+                //
+                // RebirthSchedule composes the four facts that actually decide it, and covers all five
+                // trigger types: the profile's four (armed iff any entry has RebirthTime >= 0, the
+                // same filter DoRebirth uses) plus MoneyPitRunRebirth, which lives outside the profile
+                // entirely. NORB and AutoRebirth stay as they were — both must still route to idle.
+                var outlook = RebirthOutlook(norb);
+                bool rebirthOn = outlook == RebirthSchedule.Outlook.Coming;
                 double bps = 0;
                 try { bps = c.bloodMagicController.totalBloodGainedPerSecond(); } catch { }
                 double rebirthPower = 1;
@@ -320,7 +306,12 @@ namespace NGUAdvisor.Managers
 
                 p.WantGold = p.WantLoot = p.WantRebirth = false;
 
-                bool numberEligible = !norb && rebirthOn;
+                // This was `!norb && rebirthOn`. NORB is now one of the four facts RebirthOutlook
+                // weighs — and the FIRST it weighs, so it still overrides everything — which means
+                // re-testing it here would be a second copy of a test that already ran. The idle
+                // message below reads the same `outlook`, so the routing decision and the sentence
+                // explaining it cannot disagree about which challenge is on.
+                bool numberEligible = rebirthOn;
 
                 // Routing PRIORITY is the pure ladder in BloodRouter.DecideRoute (audit M5): NUMBER floor
                 // > gold > loot (while the investment window is open) > NUMBER default > idle. The
@@ -340,7 +331,23 @@ namespace NGUAdvisor.Managers
                 var route = BloodRouter.DecideRoute(
                     numberEligible, numTarget, rebirthPower,
                     window,
-                    () => c.machine.realBaseGold > 0
+                    // ⚠ ASK THE GAME WHETHER GOLD IS BEING EARNED — DO NOT READ realBaseGold.
+                    // This used to gate on `c.machine.realBaseGold > 0`, which is the PERSISTED Time
+                    // Machine stat: it keeps its pre-challenge value, so it stays > 0 during the No
+                    // Time Machine challenge and the gate passed. But NOTM zeroes the whole engine —
+                    // [DECOMP] Character.grossGoldPerSecond() opens with
+                    //     if (challenges.timeMachineChallenge.inChallenge) { return 0.0; }
+                    // and `bloodMagicController.goldBonus()`, the multiplier Counterfeit Gold BUYS, is
+                    // a term inside the branch that never executes. So blood spent on Counterfeit
+                    // during NOTM is multiplied by zero — not merely worth less, provably worth
+                    // NOTHING. [OPERATOR] caught it live in CBlock3.2-E's NOTM-1 run, 2026-08-08.
+                    //
+                    // Gating on grossGoldPerSecond() > 0 asks the game's own authority instead of a
+                    // proxy for it, so this also covers every OTHER reason the engine can be dead
+                    // (TM not yet unlocked, bar not filling) without enumerating them here — the same
+                    // reason LaneTargets defers to the game's own target predicates. `norb` eleven
+                    // lines above was already challenge-aware; this gate was the one that was not.
+                    () => GrossGoldPerSecond(c) > 0
                         && (OptimizationAdvisor.GoldStarvedForAugs(c, 2.0) || OptimizationAdvisor.GoldStarvedForDiggers(c))
                         && GoldBelowKnee(c, bps, out goldReason),
                     () => DcBelowZoneRec(c, out dcReason));
@@ -374,13 +381,48 @@ namespace NGUAdvisor.Managers
                     default:
                         // Genuinely nothing to bank: keep every auto-spell OFF so blood magic doesn't
                         // drain the marathon's magic cap (BR-30 gates on a live sink).
-                        p.RouteReason = norb
-                            ? "blood idle — NORB: no rebirth to cash a NUMBER multi into"
-                            : "blood idle — no rebirth scheduled to bank NUMBER for";
+                        //
+                        // NAME THE ACTUAL CAUSE. One sentence used to cover three different situations
+                        // and asserted the wrong one for two of them — "no rebirth scheduled" was
+                        // printed against a profile that had scheduled a rebirth, which is what made
+                        // the defect read as correct behaviour for as long as it did.
+                        switch (outlook)
+                        {
+                            case RebirthSchedule.Outlook.NoRebirthChallenge:
+                                p.RouteReason = "blood idle — NORB: no rebirth to cash a NUMBER multi into";
+                                break;
+                            case RebirthSchedule.Outlook.AutoRebirthOff:
+                                p.RouteReason = "blood idle — Auto Rebirth is off, so a banked NUMBER multi is never cashed";
+                                break;
+                            default:
+                                p.RouteReason = "blood idle — the profile schedules no rebirth to bank NUMBER for";
+                                break;
+                        }
                         break;
                 }
             }
             catch (Exception e) { Main.LogDebug($"BloodPlanner routing: {e.Message}"); }
+        }
+
+        // The four live facts behind "is a rebirth coming"; the decision itself is RebirthSchedule.
+        // `norb` is passed in rather than re-read so the routing decision and the message it prints
+        // cannot disagree with each other about the challenge.
+        //
+        // FAILS CLOSED. A null Settings or Profile reads as "no rebirth", which routes blood to idle —
+        // the same direction the old `Main.Profile != null && ... > 0` failed in, and the safe one:
+        // idling banks nothing, whereas casting on a run that never rebirths spends the marathon's
+        // magic cap for a multi that is wiped unclaimed.
+        private static RebirthSchedule.Outlook RebirthOutlook(bool norb)
+        {
+            bool autoRebirth = false, moneyPit = false, armed = false;
+            try
+            {
+                var s = Main.Settings;
+                if (s != null) { autoRebirth = s.AutoRebirth; moneyPit = s.MoneyPitRunMode; }
+            }
+            catch { }
+            try { armed = Main.Profile != null && Main.Profile.RebirthIsArmed(); } catch { }
+            return RebirthSchedule.Current(autoRebirth, norb, armed, moneyPit);
         }
 
         // TRUE seconds to the scheduled rebirth; MaxValue when none is scheduled.
@@ -398,16 +440,13 @@ namespace NGUAdvisor.Managers
         // Gold/loot only outrank NUMBER while enough of the run remains for their LOG-scaled, in-run
         // bonus to earn back the blood it costs — both are wiped at rebirth and must be re-earned, so
         // their value decays to nothing as the deadline approaches. NUMBER is time-indifferent, so it
-        // always owns the tail of the run.
-        private const double InvestmentWindowFraction = 0.5;
-
+        // always owns the tail of the run. The predicate is BloodPillMath.InvestmentWindowOpen.
         private static bool InvestmentWindowOpen(Character c)
         {
             try
             {
                 double tgt = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
-                if (tgt <= 0) return true;
-                return Math.Max(0, tgt - c.rebirthTime.totalseconds) > tgt * InvestmentWindowFraction;
+                return BloodPillMath.InvestmentWindowOpen(tgt, c.rebirthTime.totalseconds);
             }
             catch { return true; }
         }
@@ -467,18 +506,26 @@ namespace NGUAdvisor.Managers
         // old "<100%" cutoff here discredited Counterfeit far too early). The only knee is the cost
         // curve itself: eligible while the next +1% is reachable within ~20min of the FULL blood
         // income (single-sink → no sharing). Past that the step is too slow to be worth the pool.
+        // The game's own answer to "is the gold engine producing anything right now", guarded because
+        // it is a live read used inside a routing predicate: a throw here would abort FillRouting's
+        // whole try and silently leave the routing unset, so it FAILS CLOSED — a gold engine we cannot
+        // read is treated as dead, which declines Counterfeit rather than funding it on a guess.
+        // ⚠ Deliberately NOT `machine.realBaseGold` — see the call site for why that proxy is wrong
+        // during the No Time Machine challenge.
+        private static double GrossGoldPerSecond(Character c)
+        {
+            try { return c.grossGoldPerSecond(); }
+            catch (Exception e) { Main.LogDebug($"BloodPlanner gold engine: {e.Message}"); return 0; }
+        }
+
         private static bool GoldBelowKnee(Character c, double bps, out string reason)
         {
             reason = null;
             try
             {
-                double gb = Math.Max(0, c.bloodMagic.goldSpellBlood);
-                double gm = c.bloodSpells.minGoldBlood();
-                if (gm <= 0) return false;
-                double cur = gb >= gm ? Math.Floor(Math.Pow(Math.Log(gb / gm, 2.0) + 1.0, 2.0)) : 0;
-                double nextInvest = gm * Math.Pow(2.0, Math.Sqrt(cur + 1.0) - 1.0);
-                double eta = bps > 0 ? (nextInvest - gb) / bps : double.MaxValue;
-                if (eta > 20 * 60) return false;
+                if (!BloodPillMath.GoldBelowKnee(c.bloodMagic.goldSpellBlood, c.bloodSpells.minGoldBlood(), bps,
+                                                 out double cur, out double eta))
+                    return false;
                 reason = $"Counterfeit gold +{cur:0}% GPS (next +1% in ~{Math.Max(1, eta / 60):0}m)";
                 return true;
             }
@@ -487,17 +534,42 @@ namespace NGUAdvisor.Managers
 
         // Spaghetti drop chance: worth it only while zone-farming a zone whose recommended drop chance
         // isn't met yet. Cost DOUBLES per +1%, so there's no reason to push past the zone target.
+        //
+        // NOT gated on GoldCBlockMode. It used to be, and that was a category error — drop chance has
+        // nothing to do with the gold C-block mode, and the gate made a correct decision UNREACHABLE:
+        // move to a zone whose recommendation exceeds your drop chance and Spaghetti becomes genuinely
+        // worth funding, but the mode flag would still refuse. The zone test is the real question and
+        // now the only one.
+        //
+        // ⚠ TITAN ZONES ARE ABSENT FROM RecommendedDcPercent ON PURPOSE, not by oversight. Titan loot
+        // does not roll against drop chance: [DECOMP] LootDrop.cs makeTitanLoot and the first
+        // Random.Range(1,6) gear piece are UNCONDITIONAL, and the only roll (the second piece) is
+        // `value < 0.5 * lootFactor` with value in [0,1) — guaranteed from lootFactor >= 2. What gates
+        // titan gear is the 5-way piece lottery, which no amount of drop chance affects. Ordinary zones
+        // need a table because they roll against the CUBE-ROOTED factor with 4-15% caps; titans bypass
+        // both. Do not "fix" the table by adding titan zones to it.
         private static bool DcBelowZoneRec(Character c, out string reason)
         {
             reason = null;
             try
             {
-                if (Main.Settings == null || !Main.Settings.GoldCBlockMode) return false;
+                if (Main.Settings == null) return false;
                 int zone = ZoneStatHelper.GetBestZone()?.Zone ?? -1;
                 if (zone < 0 || !ZoneStatHelper.RecommendedDcPercent.TryGetValue(zone, out var rec)) return false;
                 double cur = c.lootFactor() * 100.0;
-                if (cur >= rec) return false;
-                reason = $"Spaghetti DC — {cur:0}% < zone rec {rec:0}%";
+                if (!BloodPillMath.DcBelowRecommendation(cur, rec)) return false;
+
+                // The user's SpaghettiThreshold as a CAP. Main.cs owns the same setting but only while
+                // the advisor is NOT managing blood, so with CastBloodSpells on it was read by nobody
+                // and the configured number silently did nothing. Honouring it here gives it one
+                // meaning under both writers: how many percent to buy before stopping. 0 = don't.
+                int cap = Main.Settings.SpaghettiThreshold;
+                if (cap <= 0) return false;
+                double lb = c.bloodMagic.lootSpellBlood, lm = c.bloodSpells.minLootBlood();
+                int have = lm > 0 && lb >= lm ? BloodPillMath.LootPercentNow(lb, lm) : 0;
+                if (have >= cap) return false;
+
+                reason = $"Spaghetti DC — {cur:0}% < zone rec {rec:0}% · +{have}% of {cap}% bought";
                 return true;
             }
             catch { return false; }
@@ -514,15 +586,15 @@ namespace NGUAdvisor.Managers
                 double lb = c.bloodMagic.lootSpellBlood, lm = s.minLootBlood();
                 if (lb >= lm && lm > 0)
                 {
-                    int cur = (int)Math.Floor(Math.Log(lb / lm, 2.0));
+                    int cur = BloodPillMath.LootPercentNow(lb, lm);
                     parts.Add($"Spaghetti +{cur}% DC (next at {ExpBalancer.Fmt(lm * Math.Pow(2, cur + 1))})");
                 }
                 double gb = c.bloodMagic.goldSpellBlood, gm = s.minGoldBlood();
                 if (gb >= gm && gm > 0)
                 {
                     // Exact game formula: floor((log2(invested/min)+1)^2).
-                    double cur = Math.Floor(Math.Pow(Math.Log(gb / gm, 2.0) + 1.0, 2.0));
-                    double nextAt = gm * Math.Pow(2.0, Math.Sqrt(cur + 1.0) - 1.0);
+                    double cur = BloodPillMath.GoldPercentNow(gb, gm);
+                    double nextAt = BloodPillMath.GoldNextInvestment(gm, cur);
                     parts.Add($"Gold +{cur:0}% GPS (next at {ExpBalancer.Fmt(nextAt)})");
                 }
                 if (c.bloodMagic.rebirthPower > 1)

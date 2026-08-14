@@ -20,10 +20,8 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             try
             {
                 double cap = energy ? _character.totalCapEnergy() : _character.totalCapMagic();
-                if (cap <= 0 || maxAllocation <= 0) return;
-                double share = maxAllocation / cap;
-                if (double.IsNaN(share) || share <= 0) return;
-                if (share > 1.0) share = 1.0;
+                double share = Managers.LaneCapMath.ShareOfCap(maxAllocation, cap);
+                if (share < 0) return;   // unreadable cap / empty budget — keep the previous observation
                 if (energy) LastShareEnergy = share; else LastShareMagic = share;
             }
             catch { }
@@ -33,7 +31,23 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 
         protected override bool Unlocked() => _character.buttons.wandoos.interactable && !_character.wandoos98.disabled;
 
-        protected override bool TargetMet() => false;
+        // THE `false` STAYS, AND IT IS FAITHFUL. Do not "fix" this to match the other lanes.
+        //
+        // Audit 20 §2.8 establishes it by exhaustive search and it was re-run before this comment was
+        // written: the string `target` does not occur ANYWHERE in [DECOMP] Wandoos98Controller.cs or
+        // Wandoos98.cs — zero hits, case-insensitive, in either file — and neither carries a level cap,
+        // hard cap or max-level test. There is no cascade and no reclaim either, not even the
+        // hardcoded-constant kind Basic Training turns out to have (20 §2.2).
+        //
+        // Wandoos is THE ONLY SURVIVOR of the energy pool's seven consumers: every other one carries a
+        // target field with a game-side cascade or reclaim, a hard ceiling, or a game-supplied maximum
+        // (20 §2.8, amendment 16 §4). That is not an oversight to be patched — it is load-bearing.
+        // Amendment 16 §4 answers "what is the smallest set of consumers needing a common value unit?"
+        // with ZERO, and the reason it comes out that way is precisely that the surplus has exactly one
+        // unterminated destination: a sink that is alone needs no comparison to route to it. Giving
+        // Wandoos a synthetic target would manufacture a second unterminated consumer and re-open a
+        // question the audit closed.
+        protected override bool TargetMet() => Managers.LaneTargets.NeverDone();
 
         public override bool Allocate()
         {
@@ -44,35 +58,28 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             return true;
         }
 
+        // Live reads only — the arithmetic is Managers.LaneCapMath.WandoosCap, which keeps this lane's
+        // 1.000002f epsilon rather than the 1.00000202655792 the other seven copies use. That is
+        // deliberate and game-verbatim ([DECOMP] Wandoos98Controller.cs:577); see LaneCapMath.
         private void AllocateEnergy()
         {
             RecordShare(true, MaxAllocation);
-            var num = Math.Ceiling((double)_character.wandoos98Controller.baseEnergyTime() / _character.totalWandoosEnergySpeed());
-            if (num < 1.0)
-                num = 1.0;
-            var num1 = Math.Ceiling(num / Math.Ceiling(num / MaxAllocation) * 1.000002f);
-            long num2;
-            if (num1 > _character.idleEnergy)
-                num2 = _character.idleEnergy;
-            else
-                num2 = (long)num1;
-            SetInput(num2);
+            SetInput(Managers.LaneCapMath.WandoosCap(
+                _character.wandoos98Controller.baseEnergyTime(),
+                _character.totalWandoosEnergySpeed(),
+                MaxAllocation,
+                _character.idleEnergy));
             _character.wandoos98Controller.addEnergy();
         }
 
         private void AllocateMagic()
         {
             RecordShare(false, MaxAllocation);
-            var num = Math.Ceiling((double)_character.wandoos98Controller.baseMagicTime() / _character.totalWandoosMagicSpeed());
-            if (num < 1.0)
-                num = 1.0;
-            var num1 = Math.Ceiling(num / Math.Ceiling(num / MaxAllocation) * 1.000002f);
-            long num2;
-            if (num1 > _character.magic.idleMagic)
-                num2 = _character.magic.idleMagic;
-            else
-                num2 = (long)num1;
-            SetInput(num2);
+            SetInput(Managers.LaneCapMath.WandoosCap(
+                _character.wandoos98Controller.baseMagicTime(),
+                _character.totalWandoosMagicSpeed(),
+                MaxAllocation,
+                _character.magic.idleMagic));
             _character.wandoos98Controller.addMagic();
         }
     }

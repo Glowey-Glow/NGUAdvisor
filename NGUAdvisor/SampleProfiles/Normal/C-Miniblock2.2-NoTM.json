@@ -55,6 +55,10 @@
 	    "Type": "Number",
 	    "Target": 100,
         "Comment": "Option: Disable rebirth when close and eat a Fruit of Power to get past the final stretch, maybe also bump up the Target once rebirths last >20 minutes?"
+	  },
+	  {
+	    "Type": "Time",
+	    "Time": { "m": 32 }
 	  }
 	],
 	"Challenges": [ "NOTM-1" ]

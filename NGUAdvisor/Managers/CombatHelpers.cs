@@ -24,7 +24,7 @@ namespace NGUAdvisor.Managers
             MegaBuff
         }
 
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AdventureController _ac = _character.adventureController;
         private static readonly PlayerController _pc = _ac.playerController;
         private static readonly Move69 move69 = Object.FindObjectOfType<Move69>();

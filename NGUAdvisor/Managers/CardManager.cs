@@ -7,7 +7,7 @@ namespace NGUAdvisor.Managers
 {
     public static class CardManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly CardsController _cc = _character.cardsController;
         private static readonly IDictionary<cardBonus, float> _cardValues = new Dictionary<cardBonus, float>();
         public static readonly string[] sortList;

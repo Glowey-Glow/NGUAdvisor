@@ -5,7 +5,7 @@ namespace NGUAdvisor.Managers
 {
     public static class BeardManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AllBeardsController _bc = _character.allBeards;
 
         private static int[] _savedBeards;
@@ -45,6 +45,17 @@ namespace NGUAdvisor.Managers
         {
             if (!_character.buttons.beards.interactable)
                 return false;
+
+            // THE CHALLENGE RULE, at the one point every writer funnels through — the advisor set
+            // (AdvisorApply), the profile timeline (BeardBreakpoints), the QuickBeards hotkey
+            // (Main.cs:627), the three mode-lock swaps (LockManager.cs:190/:237/:279) and both
+            // restores all arrive here. Applying it once here is what makes it a RULE: a new writer
+            // cannot forget it, and the mode locks in particular would otherwise re-equip TitanBeards
+            // for the length of every titan window inside a 100LC run.
+            //
+            // Callers that FORM a set apply BeardRule themselves as well, so their log lines say what
+            // actually happened; this is the backstop under them, not a substitute for it.
+            beards = BeardRule.Apply(ChallengeDetector.Current(), beards);
 
             if (beards?.Length > 0 == false)
             {
@@ -95,6 +106,15 @@ namespace NGUAdvisor.Managers
                 _bc.activateBeard(beard);
 
             _bc.refreshMenu();
+
+            WriteLedger.Record("beards.active",
+                beards.Length == 0 ? "none" : string.Join(", ", Array.ConvertAll(beards, b => (b + 1).ToString())),
+                allEquipped ? "advisor or profile beard set for this phase"
+                            : "requested set was larger than the beard cap and was trimmed",
+                ChallengeOverlay.Segment,
+                "Cleared and re-activated as a whole set, not toggled individually",
+                "The 100LC challenge rule can empty this set deliberately — an empty set is a decision",
+                "Replaced on the next set change; nothing restores it on its own");
 
             return allEquipped;
         }

@@ -13,6 +13,18 @@ node test-loadouts.js "../../../NGUAdvisor-public/NGUAdvisorCompanion/wwwroot/in
 
 Exit code is non-zero if anything fails, so it drops straight into CI or a pre-port check.
 
+**It now runs in CI** — `.github/workflows/ci.yml`, job `companion`, on every push and PR. It was
+manual-only until 2026-08-06 (audit/42 §6: 57 KB of jsdom that executed only when someone typed
+`npm test` here). ⚠ The workflow uses `npm install`, **not `npm ci`, on purpose**: `package-lock.json`
+is gitignored in this folder, and `npm ci` hard-fails without a committed lockfile — it would pass
+locally and fail on every runner. The cost is an unpinned resolve (`jsdom: ^25.0.0` pins the major
+only). Changing that means either committing the lockfile or pinning jsdom exactly; both reverse a
+deliberate decision, so neither was taken silently.
+
+⚠ And note what a green tick here does **not** mean: CI cannot build `NGUAdvisor.csproj` at all (the
+Unity `HintPath`s do not exist on a runner), so **no deploy gap is detectable by CI, by
+construction** — this closes a verification gap, not a shipping one.
+
 ## What it covers
 
 The Gear › Loadouts surface: the arming-gate switches and their status lines, the objective

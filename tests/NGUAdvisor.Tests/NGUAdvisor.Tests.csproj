@@ -31,25 +31,233 @@
     <!-- The companion's ACTUAL Timeline-Editor write path (load->mutate->validate->write-in-place->re-read),
          so the end-to-end round-trip is exercised headlessly against a real temp profile file. -->
     <Compile Include="..\..\NGUAdvisorCompanion\ProfileService.cs" Link="Linked\ProfileService.cs" />
+    <!-- The companion's ACTUAL command transport, so the A7 ordering guarantee (one worker thread draining an
+         ordered queue) is exercised against a real named-pipe server rather than asserted in prose. It has no
+         WinForms/WebView2 dependency, which is why this one companion host file is linkable and MainForm is not. -->
     <Compile Include="..\..\NGUAdvisorCompanion\PipeClient.cs" Link="Linked\PipeClient.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\NumberFormatter.cs" Link="Linked\NumberFormatter.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\TitanTables.cs" Link="Linked\TitanTables.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\CampaignTables.cs" Link="Linked\CampaignTables.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BossScale.cs" Link="Linked\BossScale.cs" />
+    <!-- The one-shot zone gate. Extracted from the two farm advisors precisely so it could be linked:
+         ZoneStatHelper itself still reaches Main.Character and cannot be compiled here, but the DECISION
+         it feeds is Unity-free, and the decision is where the fail-open bug lived. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ZoneGate.cs" Link="Linked\ZoneGate.cs" />
+    <!-- Which sections of the loaded profile are actually driving the game. Linked for the same reason
+         ZoneGate was: the rules it encodes live scattered across CustomAllocation's per-step guards,
+         ChallengeOverlay's priority substitution and three independent Advisor* toggles, none of which
+         can compile here — but the VERDICT is pure boolean logic, and a readout that gets it wrong tells
+         an operator their profile is driving something the advisor quietly took over. It also pins the
+         gear gap (auto profile on + gear refresh off = nobody), which is a real defect, not a display. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ProfileSections.cs" Link="Linked\ProfileSections.cs" />
+    <!-- The advisor-writes ledger. Linked because its promise is a NARROW one — persistent state only,
+         not all 129 write sites the census found — and a narrow promise is worth exactly as much as the
+         guarantees under it: that the declared scope is data the UI derives its coverage claim from,
+         that contested pairs name each other symmetrically, and that a writer re-asserting the same
+         value every tick produces ONE row rather than burying the one row that matters. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\WriteLedger.cs" Link="Linked\WriteLedger.cs" />
+    <!-- The "until done" vocabulary. Linked because its failure mode is SILENCE: a clause that can
+         never be met is a step that never advances, which from the outside looks exactly like a healthy
+         run that is simply slow. Parsing is string in, struct out, and evaluation takes a plain fact
+         bag, so every answer is checkable without the game build. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\UntilClause.cs" Link="Linked\UntilClause.cs" />
+    <!-- "Maximise X subject to Y >= floor". Linked for the same reason as the until grammar: the
+         decision is pure and the failure is quiet. A floor that cannot be met must surface as
+         INFEASIBLE with the shortfall named, not as a silently degraded set — that reporting is the
+         entire advantage over a weighted blend, and it is only worth anything if it is asserted. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearFloors.cs" Link="Linked\GearFloors.cs" />
+    <!-- GEAR LOCK: "wear THESE, optimise everything else around them". Linked for the same reason as
+         the floors it sits beside, plus a sharper one. The failure mode is a SILENT WRONG SET: an id
+         you don't own, a fifth accessory against four slots, a typo'd id that the game's item table
+         happens to answer for — each of those either takes a slot it shouldn't or vanishes, and from
+         the outside both look exactly like an optimiser that made a different call. The refusal
+         REASONS are the product here, not a nicety, so they are asserted. GearOptimizer itself reads
+         Main.Character and cannot compile here; the decision — which id takes which slot, and what
+         gets said about the ones that can't — is Unity-free by construction. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearLock.cs" Link="Linked\GearLock.cs" />
+    <!-- THE GEAR SEARCH ITSELF. This is the one that had no tests at all, and the reason is structural:
+         it used to be the body of GearOptimizer.Optimize, which reads Main.Character and
+         Main.InventoryController and therefore cannot compile here. So ~1979 pure-function tests ran
+         green beside a 300-line coordinate ascent that nothing could see, and three defects shipped
+         past them in one session — the clearest being that an unreachable GearFloorSet made phase 1
+         score EVERY candidate at negative infinity, so Optimize handed back Score = -Infinity to
+         callers that divide scores ("+x% from new drops"). A live probe found it. This suite could not.
+         Extracting the search behind an explicit Inputs bag (pools keyed by GearLockSlot rather than
+         the Assembly-CSharp `part` enum, cube/base/offhand/slot-counts/lookup passed in) is what makes
+         "an infeasible floor set still returns a finite score" a test that can exist. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearSolver.cs" Link="Linked\GearSolver.cs" />
+    <!-- "I must survive this fight" -> a gear-stat number. The arithmetic is separated from the live
+         read precisely so it can be linked here: a wrong multiplier is a SILENT wrong answer — no
+         throw, nothing odd-looking, just a floor in the wrong units marking an unsurvivable set
+         feasible. The round-trip property (a set meeting the floor exactly meets the requirement
+         exactly) is the one that has to hold. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\AdventureFloor.cs" Link="Linked\AdventureFloor.cs" />
+    <!-- The resolver's contention surface (audit/40 §3 items 1, 2, 4, 5, 6). Main.SnipeZone is the
+         live routing path and cannot compile here, but the DECISION — what displaced what, whether
+         it is worth a line, and what it says when it lets go — is Unity-free, and it is the whole
+         of the fix: the priority chain is deliberately unchanged, so the WORDING and the SILENCE
+         rules are the only thing to get wrong. Silence on an unset target (-1 is the SavedSettings
+         sentinel) and on a target the owner agrees with is load-bearing: this sits on a per-frame
+         path, and a line per frame is the same as no line at all. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ZoneRouting.cs" Link="Linked\ZoneRouting.cs" />
+    <!-- The gear-farm challenge pause. Extracted for the same reason ZoneGate was: ChallengeDetector
+         reaches Main.Character and AdvisorApply is the live writer, but the DECISION (pause on any
+         challenge EXCEPT Laser Sword, surface the transition once) is Unity-free — and it is a guard
+         on behaviour that is already live (amendment 26 §3), so it needs a test under it. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearFarmPause.cs" Link="Linked\GearFarmPause.cs" />
+    <!-- The three-phase zone rule (IDLE -> ITOPOD -> FARM). Extracted for the same reason ZoneGate and
+         GearFarmPause were: the live reads (itemInfo.type, itemMaxxed/itemFiltered, FindItemSlot,
+         EffectiveAdvAttack) all reach Main.Character and AdvisorApply is the writer, but the DECISION
+         is a pure function of four facts per droppable item plus two stat gates. The held-accessory
+         predicate in particular had never been written anywhere, and its two exclusions — the Misc
+         slot (the QuestManager trap that pinned a 3-hour hold open forever) and loot-filtered ids
+         (drops the game destroys on creation) — are each a phase that never advances if missed. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ZonePhase.cs" Link="Linked\ZonePhase.cs" />
+    <!-- The two cross-zone item chains and the rarity split. Pure data + predicates. Linked because
+         the MEMBERSHIP is the whole point: a chain id wrongly left in a zone's set rating lets one
+         shared pendant set that zone's HoursToCap (which is what rated a finished Chocolate World at
+         54.6h), and a set id wrongly called rare drops it out of the ranking silently. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ItemChains.cs" Link="Linked\ItemChains.cs" />
+    <!-- The game's own maxxedXxx() set memberships, generated from [DECOMP] ItemList.cs. Linked
+         because this table is now THE discriminator for what rates a zone: an id wrongly listed here
+         gets a zone ranked on it, an id wrongly omitted drops out of the ranking entirely. Two
+         earlier discriminators (chain membership, a 20x rate bar) both failed on live data. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ItemSets.cs" Link="Linked\ItemSets.cs" />
+    <!-- The DC/PP digger venue law. Linked because the law had a HOLE that inverted in practice: the
+         advisor's own farm was not a case, so it fell between the two branches while the ITOPOD
+         branch had already benched digger 0 to the tail where Take(slots) cuts it. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\FarmVenue.cs" Link="Linked\FarmVenue.cs" />
+    <!-- The quest stand-down decision (audit/40 §3 item 7). QuestManager reaches Main.Character and
+         cannot link, and neither can the resolver it now asks — but the DECISION is Unity-free, and
+         it is where a SECOND COPY of the R10 chain's Target ITOPOD row lived. That copy had drifted
+         from the row that decides it twice (the gear-hunt row, and the drop-farm row 271f5f8 added),
+         always the same way: quests took R7, which sits ABOVE R10, and pre-empted the very routing
+         those two rows exist to protect. The predicate takes a ZONE and no toggle, so the copy
+         cannot be reconstituted through it. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\QuestStandDown.cs" Link="Linked\QuestStandDown.cs" />
+    <!-- "How long to farm all the rares" — the number behind the opt-out offer. Linked because the
+         rule is counter-intuitive: same-zone rares advance TOGETHER (226/227 share one roll), so a
+         naive Sum roughly doubles that zone's quoted cost and could talk the operator out of a farm
+         at twice its real price. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\RareRollup.cs" Link="Linked\RareRollup.cs" />
+    <!-- The hysteresis instrument (audit/41 §6). Linked because the thing under test is arithmetic on
+         wall-clock times and a ring buffer, and because C4 — "this must not change routing" — is only
+         an assertion if something can run the routing decision with the instrument on and off and
+         compare. AdvisorApply is the live writer and cannot link; the measurement is Unity-free by
+         construction, in the ZoneGate / GearFarmPause shape. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\RouteChurn.cs" Link="Linked\RouteChurn.cs" />
+    <!-- The advisor/UI build-drift gate. Linked because the tolerance and the "unknown is not stale"
+         rule are the whole design: too tight and it becomes noise nobody reads, too loose and it
+         misses the six-day gap that hid a setting from the panel and cost a debugging round. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\BuildStamp.cs" Link="Linked\BuildStamp.cs" />
+    <!-- The preset overwrite policy. PresetInstaller itself is file IO + resource enumeration + Main.Log and
+         cannot link; the DECISION (install / adopt / update / back-up-then-replace / preserve-the-user's-edit)
+         is pure, and it is where the "never overwrite" one-liner used to live that kept audit 01 finding #11
+         undeliverable for a month. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\PresetInstallPlan.cs" Link="Linked\PresetInstallPlan.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\DiggerMath.cs" Link="Linked\DiggerMath.cs" />
-    <Compile Include="..\..\NGUAdvisor\Managers\WandoosMath.cs" Link="Linked\WandoosMath.cs" />
+    <!-- The R3 allocator's arithmetic. baseDivider is Unity scene data that exists nowhere in this repo, so
+         HackMath deliberately derives saturation from the game's own progressPerTickCap ratio instead — which
+         means every number it produces IS testable here, and the float stair-snap (the piece that can silently
+         halve a hack's level rate) is pinned against a faithful replay of the game's accumulate loop. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\HackMath.cs" Link="Linked\HackMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\HackPhase.cs" Link="Linked\HackPhase.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BloodRouter.cs" Link="Linked\BloodRouter.cs" />
+    <!-- "Is a rebirth coming?", as distinct from "when?". Linked because the two questions were the
+         same line of code for as long as every shipped profile answered them the same way, and the
+         eleven that do not are precisely the challenge-block profiles: CustomAllocation and
+         BloodPlanner both reach Main.Character and cannot link, but the DECISION is four booleans in
+         and one enum out. The negative half is the load-bearing half — NORB, Auto Rebirth off, and a
+         profile that disarmed rebirth must all still route blood to idle, and a fix for "the gate is
+         stuck off" that merely turns the gate on would pass every positive test. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\RebirthSchedule.cs" Link="Linked\RebirthSchedule.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\SnipeTrigger.cs" Link="Linked\SnipeTrigger.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\ExpRatio.cs" Link="Linked\ExpRatio.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\WandoosMath.cs" Link="Linked\WandoosMath.cs" />
     <!-- The gear optimizer's pure core. GearScorer was validated by hand against gmiclotte's tool and
          then had NO regression test under it; GearObjectives is pure data whose stat strings are matched
          by name at runtime, so a typo scores 0 forever and nothing else catches it. GearObjectiveResolver
-         is the precedence table the equip path and the companion both read, and GearSignature carries
+         is the precedence table the equip path and the companion both read, and GearWatch's hash carries
          the invariants that stop the drop trigger self-triggering. All four are Unity-free. -->
     <Compile Include="..\..\NGUAdvisor\Managers\GearScorer.cs" Link="Linked\GearScorer.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\GearObjectives.cs" Link="Linked\GearObjectives.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\GearObjectiveResolver.cs" Link="Linked\GearObjectiveResolver.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\GearSignature.cs" Link="Linked\GearSignature.cs" />
+    <!-- The No Equipment swap gate. LoadoutManager itself is the live equip path and cannot link, but
+         the DECISION (who is gated, who is exempt, and the once-per-transition narration) is Unity-free
+         and is the whole of F3 - including the restore exemption, which is the part that would strand a
+         user's loadout for a whole challenge if it were ever gated by accident. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearChangeGate.cs" Link="Linked\GearChangeGate.cs" />
+    <!-- The resource-lane decision cores, lifted out from behind the type-init Character weld
+         (audit/01-architecture-decision.md §3.4, sequencing step 1-2). Each is a parity-only move of
+         logic that previously lived inside an AllocationProfiles/ breakpoint or a Character-welded
+         manager, with the live reads hoisted into the caller and passed as plain-old data. The
+         matching *Tests.cs files are CHARACTERISATION tests: they pin current behaviour, including
+         the known-wrong parts, so a later fix has to be a visible, deliberate edit. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\AugmentMath.cs" Link="Linked\AugmentMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\NguValueMath.cs" Link="Linked\NguValueMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\LaneTargets.cs" Link="Linked\LaneTargets.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\RitualMath.cs" Link="Linked\RitualMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\BloodPillMath.cs" Link="Linked\BloodPillMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\LaneCapMath.cs" Link="Linked\LaneCapMath.cs" />
+    <!-- The constraint layer's Pass 1 and Pass 2 cores (audit/decisions/constraint-layer-spec.md §4-§6).
+         Built Unity-free from day one — unlike the lanes above these were never welded to Main.Character,
+         so what links here is the whole component, not an extraction from it. NOT wired into the live
+         allocation path; the target table (Pass 3) is blocked on operator content. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\FeasibilityPass.cs" Link="Linked\FeasibilityPass.cs" />
+    <!-- The challenge-layer lane locks. Pure strings, linked because the WORDING is what is under test:
+         F2 was a correct refusal carrying a sentence naming the wrong cause, and the only way that stays
+         fixed is an assertion that the Troll wording cannot appear on the NGU-Challenge path. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ChallengeLocks.cs" Link="Linked\ChallengeLocks.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\CapacityPass.cs" Link="Linked\CapacityPass.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\BeardGate.cs" Link="Linked\BeardGate.cs" />
+    <!-- The 100LC no-beards rule. Extracted for the same reason ZoneGate and GearFarmPause were: the
+         three writers that matter (OptimizationAdvisor, AdvisorApply, BeardManager) all reach
+         Main.Character and cannot compile here, but the DECISION is one challenge code in and one
+         bool out. It needs a test under it because the rule existed ONLY as data — an empty "Beards"
+         list in CBlock3.1-E100LC.json — and data could not reach the game at all while the beards
+         advisor was on (CustomAllocation.cs:239 makes the profile and advisor paths exclusive). The
+         load-bearing assertion is that None is an empty array and not null: null is "no opinion" to
+         ApplyBeards, and abstaining leaves the pre-challenge beards equipped for the whole run. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\BeardRule.cs" Link="Linked\BeardRule.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\BudgetPass.cs" Link="Linked\BudgetPass.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\TargetPass.cs" Link="Linked\TargetPass.cs" />
+    <!-- The objective layer: audit/23's §2 lane table and §3 zone table as typed data, plus the
+         reader over them (37 §S5 B6 — "chapter-keyed rows, a file or table, and a consumer";
+         GuideRows is the reference subset with no chapter field and no reader outside tests).
+         Unity-free by construction, like ZoneGate and the four constraint passes: plain-old data in,
+         an answer out, no Main.Character, no file IO. NOTHING CONSUMES IT — it is an ADDITIVE second
+         membership source that will be compared against the profile JSON before either is trusted,
+         so the tests here are the only caller and the transcription invariants are the whole point:
+         a `precondition` that could be read as a `target` makes the cascade abandon a lane forever. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ObjectiveTable.cs" Link="Linked\ObjectiveTable.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\ObjectiveZones.cs" Link="Linked\ObjectiveZones.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\ObjectiveReader.cs" Link="Linked\ObjectiveReader.cs" />
+    <!-- The target-table PRODUCER: the objective table materialised into the shape
+         ConstraintLayerBridge.TargetTable declares (constraint-layer-spec §10's first input). Linked
+         because the whole question about it is measurable and nothing else can measure it: which of
+         its rows can route to WriteTarget, which is the ONLY disposition WantFromAnswer turns into a
+         stop. NOTHING ASSIGNS THE BRIDGE'S FIELD — producing the table and consuming it are two
+         steps, and the second moves allocation by exactly one row (amendment 34 §3's Respawn 401). -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ObjectiveTargets.cs" Link="Linked\ObjectiveTargets.cs" />
+    <!-- The composition of the four passes — the constraint layer itself — plus the pure counterfactual
+         of the prioCount share model it replaces (LegacyShareModel, kept ONLY so parity logging can say
+         what the old allocator would have done) and the parity comparison. The live bridge
+         (ConstraintLayerBridge) reads Main.Character and is deliberately NOT linkable. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ConstraintLayer.cs" Link="Linked\ConstraintLayer.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\LegacyShareModel.cs" Link="Linked\LegacyShareModel.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\ConstraintParity.cs" Link="Linked\ConstraintParity.cs" />
+    <!-- The objective layer's comparison run (amendment 34 §7.1): the profile's membership against
+         the objective table's, for the same tick, with the PROFILE still the one allocating. Pure by
+         construction for exactly this reason — it is handed value copies of four facts per lane and
+         returns a report, so the "changes no allocation" proof is a type signature rather than a
+         spot check, and the chapter it queries is a parameter rather than a StageDetector read. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ObjectiveParity.cs" Link="Linked\ObjectiveParity.cs" />
+    <!-- The new path's [AllocDbg] twin. Kept Unity-free for exactly this reason: the instrument that
+         caught the founding defect on the OLD path lives below the branch to the bridge, so the
+         constraint layer had no per-lane dump at all, and the renderer that fixes that must be
+         testable without the game build (a Release build of NGUAdvisor.csproj auto-deploys). -->
+    <Compile Include="..\..\NGUAdvisor\Managers\AllocTelemetry.cs" Link="Linked\AllocTelemetry.cs" />
   </ItemGroup>
 
 </Project>

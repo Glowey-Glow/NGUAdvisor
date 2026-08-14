@@ -18,7 +18,7 @@ namespace NGUAdvisor.Managers
             Daycare
         }
 
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
 
         public static readonly List<double> moneyPitThresholds = new List<double>
             { 1e5, 1e7, 1e9, 1e11, 1e13, 1e15, 1e18, 1e21, 1e24, 1e27, 1e30, 1e50, 1e55, 1e60, 1e65, 1e70 };

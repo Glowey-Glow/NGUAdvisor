@@ -71,12 +71,29 @@ namespace NGUAdvisor.Managers
         }
 
         // The character's nude adventure Power/Toughness (base with no gear) - a fixed "item".
+        //
+        // ⚠ THIS MUST NOT BE adventureAttackBonus(). That name reads like a base stat and is not one:
+        // [DECOMP] InventoryController.adventureAttackBonus -> attackBonus(), which SUMS THE CURRENTLY
+        // EQUIPPED weapon/head/chest/legs/boots/weapon2/accessories. Using it here added whatever the
+        // character happened to be wearing as a constant to every candidate set, and left the real base
+        // out altogether.
+        //
+        // Ranking is not safe under that constant. The score is a PRODUCT of (val/100)^exp, so adding C
+        // to Power changes the TRADE-OFF between stats rather than shifting every candidate equally:
+        // (P100,T200) and (P200,T100) tie at 20000, but with C=1000 they become 220000 and 120000. It is
+        // also self-referential — equipping the winner changes attackBonus(), which rescores the next
+        // solve.
+        //
+        // The bracket this has to match is [DECOMP] Character.totalAdvAttack:
+        //     (adventure.attack + gearBonus + cubePower) x <constant tail>
+        // gearBonus is the CANDIDATE's sum, which GetRawVals computes from the item list. So the two
+        // fixed items are the cube (cubePower) and this one (adventure.attack) - and nothing else.
         public static GearScorer.Item BuildBaseItem()
         {
-            var ic = Main.InventoryController;
+            var c = Main.Character;
             var item = new GearScorer.Item { IsWeapon = false };
-            Add(item, GearObjectives.Stat.Power, ic.adventureAttackBonus());
-            Add(item, GearObjectives.Stat.Toughness, ic.adventureDefenseBonus());
+            Add(item, GearObjectives.Stat.Power, c.adventure.attack);
+            Add(item, GearObjectives.Stat.Toughness, c.adventure.defense);
             return item;
         }
 

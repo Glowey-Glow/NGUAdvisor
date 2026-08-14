@@ -4,31 +4,21 @@ using System.Linq;
 
 namespace NGUAdvisor.Managers
 {
-    // Phase 2 of the native gear optimizer (route C3): the search. Finds the loadout maximizing an objective.
+    // Phase 2 of the native gear optimizer (route C3): the LIVE HALF of the search.
     //
     // NGU gear has NO set bonuses, so the objective is near-separable per slot; a coordinate-ascent over the
     // main slots plus greedy-fill + local-swap over accessories (the same heuristic the gear-optimizer uses
     // for accessories) reaches the optimum without the full Pareto machinery. The cube + nude base are fixed
     // and always included. Scoring uses GearScorer (validated against the website).
+    //
+    // ⚠ THE SEARCH ITSELF NOW LIVES IN GearSolver, and this file is the thin shim that reads the game and
+    // calls it. That split is the entire reason GearSolver exists: everything below reaches Main.Character
+    // or Main.InventoryController, and a file that does cannot link into tests/NGUAdvisor.Tests. Keep it
+    // that way. Anything you are tempted to add to the search belongs on the other side of this boundary,
+    // where it can have a test under it — this subsystem's whole defect history is silent wrong sets found
+    // by live probes rather than by the suite.
     public static class GearOptimizer
     {
-        public class Result
-        {
-            public int MainWeapon, OffWeapon, Head, Chest, Legs, Boots;
-            public readonly List<int> Accessories = new List<int>();
-            public double Score;
-            public IEnumerable<int> AllIds()
-            {
-                if (MainWeapon != 0) yield return MainWeapon;
-                if (OffWeapon != 0) yield return OffWeapon;
-                if (Head != 0) yield return Head;
-                if (Chest != 0) yield return Chest;
-                if (Legs != 0) yield return Legs;
-                if (Boots != 0) yield return Boots;
-                foreach (var a in Accessories) yield return a;
-            }
-        }
-
         // The REAL offhand contribution — the game's own InventoryController.weapon2Factor():
         // 0 while the second weapon slot is locked, else wish 28 + wish 45 progress capped at 1.
         // (Closes the last PLAN §4 gap: the hardcoded 100 over-valued the offhand.) Cached briefly —
@@ -51,9 +41,11 @@ namespace NGUAdvisor.Managers
         private static double Offhand => OffhandPercent;
 
         // Optimize for an objective and return the item IDs (for writing into a loadout / profile).
-        // forceTopRespawn pins the single best Respawn item so the loadout always keeps some respawn.
-        public static int[] OptimizeIds(GearObjectives.Objective obj, bool forceTopRespawn = false)
-            => Optimize(obj, forceTopRespawn).AllIds().Where(x => x > 0).Distinct().ToArray();
+        // forceTopRespawn pins the single best Respawn item so the loadout always keeps some respawn;
+        // `locks` pins named items (Gear Lock) and the remaining slots optimize around them.
+        public static int[] OptimizeIds(GearObjectives.Objective obj, bool forceTopRespawn = false,
+                                        GearLockSet locks = null)
+            => Optimize(obj, forceTopRespawn, locks).AllIds().Where(x => x > 0).Distinct().ToArray();
 
         // Optimize for an objective by name (as stored in profiles/settings); null if unknown.
         public static GearObjectives.Objective FindObjective(string name)
@@ -63,7 +55,8 @@ namespace NGUAdvisor.Managers
         // Resolve the gear a mode should equip: if objectiveName is set (and valid), optimize live for it
         // (route C3 3.2) so the mode's gear stays optimal; otherwise fall back to the static loadout IDs.
         // MUST be called on the main thread (reads live inventory). Never throws; falls back on any error.
-        public static int[] ResolveModeGear(string objectiveName, bool forceRespawn, int[] fallback)
+        public static int[] ResolveModeGear(string objectiveName, bool forceRespawn, int[] fallback,
+                                            GearLockSet locks = null)
         {
             if (!string.IsNullOrEmpty(objectiveName))
             {
@@ -74,10 +67,14 @@ namespace NGUAdvisor.Managers
                 {
                     try
                     {
-                        var ids = OptimizeIds(obj, forceRespawn);
+                        var best = Optimize(obj, forceRespawn, locks);
+                        var ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
                         if (ids.Length > 0)
                         {
-                            Main.Log($"Mode gear optimized for '{obj.Name}'{(forceRespawn ? " (+top respawn)" : "")}: {ids.Length} items.");
+                            ReportLock(best);
+                            string held = best.Lock != null && best.Lock.Applied > 0
+                                ? $" (+{best.Lock.Applied} locked)" : "";
+                            Main.Log($"Mode gear optimized for '{obj.Name}'{(forceRespawn ? " (+top respawn)" : "")}{held}: {ids.Length} items.");
                             return ids;
                         }
                     }
@@ -85,6 +82,28 @@ namespace NGUAdvisor.Managers
                 }
             }
             return fallback;
+        }
+
+        // Say what the Gear Lock could not honour. Silence when every locked item landed, and silence
+        // on a repeat of the same complaint: this sits on paths that re-solve every couple of minutes,
+        // and a line per solve is the same as no line at all. The latch clears itself the moment the
+        // complaint changes, so unlocking the accessory slot that was over-locked reads as a new line.
+        // "This result is safe to equip against a survival floor." Both terms are load-bearing.
+        // Feasible alone is not enough: the respawn pin can rebuild the result without re-seating the
+        // verdict, and can return -Infinity when a pin makes a feasible floor unreachable (both pinned
+        // by GearSolverTests as KNOWN_HAZARD). A non-finite score means the search never actually
+        // improved on its starting point, so whatever it is holding was not chosen — it was left there.
+        private static bool Feasible(GearSolver.Result r)
+            => r != null && r.Floors.Feasible && !double.IsNaN(r.Score) && !double.IsInfinity(r.Score);
+
+        private static string _lastLockReport;
+        public static void ReportLock(GearSolver.Result r)
+        {
+            var msg = r == null || r.Lock == null ? null : r.Lock.Message;
+            if (msg == null) { _lastLockReport = null; return; }
+            if (msg == _lastLockReport) return;
+            _lastLockReport = msg;
+            Main.Log(msg);
         }
 
         // Titan KILL gear. The user's TitanObjective (e.g. "Drop Chance") is a LOOT preference,
@@ -98,6 +117,8 @@ namespace NGUAdvisor.Managers
             var fallback = Main.Settings.TitanLoadout;
 
             bool realFight = false;
+            int requiredAcc = 0;
+            int realIndex = -1;
             try
             {
                 var targets = Main.Settings.TitanSwapTargets;
@@ -105,19 +126,115 @@ namespace NGUAdvisor.Managers
                 {
                     if (targets == null || i >= targets.Length || !targets[i]) continue;
                     if (!ZoneHelpers.TitanSpawningSoon(i)) continue;
-                    if (!ZoneHelpers.AutokillAvailable(i)) { realFight = true; break; }
+                    if (!ZoneHelpers.AutokillAvailable(i))
+                    {
+                        realFight = true;
+                        realIndex = i;
+                        // The mechanic item for THIS titan, if it has one. Only on a real fight: once
+                        // the spawn autokills there is no fight to lose and no reason to spend a slot.
+                        requiredAcc = TitanTables.RequiredAccessoryFor(i);
+                        break;
+                    }
                 }
             }
             catch { }
 
             if (realFight)
             {
+                // Survival is a THRESHOLD, not a quantity: Power above what the kill needs buys nothing
+                // and could have been Drop Chance. So rather than discarding the loot objective, keep it
+                // and CONSTRAIN it — maximise loot subject to clearing the survival floor.
+                //
+                // ⚠ Falls back to plain "Adventure" (the old behaviour) unless the loot set is PROVEN
+                // feasible against the floor. This is the path behind two reported death loops; loot is
+                // only ever spent from surplus the solver has demonstrated, never assumed.
+                // ⚠ THE PROVEN SET IS THE SET THAT GOES ON. Returning here rather than falling through
+                // to ResolveModeGear is not a shortcut — ResolveModeGear re-solves WITHOUT the floors,
+                // so proving feasibility and then equipping through it would equip the UNCONSTRAINED
+                // loot optimum: a set that cleared nothing, chosen on the strength of a trial it never
+                // used. That is the death loop with extra steps.
+                string lootObj = obj;
+                if (!string.IsNullOrEmpty(lootObj) && !string.Equals(lootObj, "Adventure", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        string detail;
+                        var floors = TitanFloorPlanner.SurvivalFloor(realIndex, ZoneHelpers.TitanVersion(realIndex), out detail);
+                        var lootTarget = FindObjective(lootObj);
+                        if (!floors.IsEmpty && lootTarget != null)
+                        {
+                            // ⚠ THE RESPAWN PIN AND A FLOOR DO NOT COMPOSE. GearSolverTests pins two
+                            // hazards that need forceTopRespawn AND floors together: the pin re-runs the
+                            // search at whatever phase the constrained solve ended in, so a pin that
+                            // makes a feasible floor unreachable scores every candidate at -Infinity and
+                            // takes the first one; and it rebuilds `r` without re-seating r.Floors, so a
+                            // real verdict becomes a default one. Those tests were written against
+                            // f1d65e9, where NO caller passed both — this call is the first, and it was
+                            // already deployed before the hazard was found.
+                            //
+                            // Handled here rather than in the search because changing the pin changes
+                            // every set it has ever chosen, and that needs its own in-game validation.
+                            // Respawn is a PREFERENCE and survival is a REQUIREMENT, so the preference
+                            // yields: try with the pin, and if that cannot be shown feasible, try again
+                            // without it and say so.
+                            bool wantRespawn = Main.Settings.TitanObjectiveRespawn;
+                            var locks = GearLockSet.RequiredItem(requiredAcc);
+                            var trial = Optimize(lootTarget, wantRespawn, locks, floors);
+                            bool droppedRespawn = false;
+                            if (wantRespawn && !Feasible(trial))
+                            {
+                                var noPin = Optimize(lootTarget, false, locks, floors);
+                                if (Feasible(noPin)) { trial = noPin; droppedRespawn = true; }
+                            }
+                            var ids = trial == null ? null : trial.AllIds().Where(x => x > 0).Distinct().ToArray();
+                            if (Feasible(trial) && ids.Length > 0)
+                            {
+                                ReportLock(trial);
+                                // What the constraint actually costs, stated as loot kept rather than as
+                                // a raw score: "how much of the drop gear survives the kill requirement"
+                                // is the question being asked, and a bare score answers nothing.
+                                string kept = "";
+                                try
+                                {
+                                    var free = Optimize(lootTarget, Main.Settings.TitanObjectiveRespawn,
+                                                        GearLockSet.RequiredItem(requiredAcc));
+                                    if (free != null && free.Score > 0 && !double.IsInfinity(trial.Score))
+                                        kept = $" — keeps {trial.Score / free.Score * 100:0.#}% of the " +
+                                               $"'{lootObj}' you would get with no fight to survive";
+                                }
+                                catch { }
+                                Main.Log($"Titan fight is live — '{lootObj}' fits inside the kill floor " +
+                                         $"({detail}){kept}. The surplus above survival is spent on loot " +
+                                         "instead of on stats the fight cannot use." +
+                                         (droppedRespawn ? " Top-respawn was dropped: it could not be held " +
+                                          "alongside the kill floor, and surviving outranks respawning." : ""));
+                                return ids;
+                            }
+                            Main.Log($"Titan fight is live — '{lootObj}' cannot clear the kill floor ({detail}); " +
+                                     "using the kill set instead.");
+                        }
+                    }
+                    catch (Exception e) { Main.LogDebug($"Titan loot-under-floor: {e.Message}"); }
+                }
+
                 Main.Log("Titan fight is live (not AK) — kill set overrides the loot objective");
                 obj = "Adventure";
+                if (requiredAcc != 0)
+                {
+                    int lvl = ZoneHelpers.EquippedAccessoryLevel(requiredAcc);
+                    if (lvl < 0)
+                        Main.Log($"This fight REQUIRES item {requiredAcc} worn as an accessory — reserving a slot for it.");
+                    else if (requiredAcc == TitanTables.ApathyRingId && lvl < TitanTables.ApathyFullLevel)
+                        Main.Log($"Ring of Apathy is level {lvl}; below {TitanTables.ApathyFullLevel} UUG still " +
+                                 "grows stronger every insult. Level it to stop the growth entirely.");
+                }
             }
             else if (string.IsNullOrEmpty(obj) && (fallback == null || fallback.Length == 0))
                 obj = "Adventure";
-            return ResolveModeGear(obj, Main.Settings.TitanObjectiveRespawn, fallback);
+            // The mechanic item is a GEAR LOCK — the general form of the old `requireAccessoryId`
+            // parameter — marked Required so it keeps beating the respawn pin exactly as it did before.
+            return ResolveModeGear(obj, Main.Settings.TitanObjectiveRespawn, fallback,
+                                   GearLockSet.RequiredItem(requiredAcc));
         }
 
         // Gold gear resolution with a data-driven default: when the user configured NEITHER a gold
@@ -162,205 +279,126 @@ namespace NGUAdvisor.Managers
             catch (Exception e) { Main.LogDebug($"CurrentScore failed: {e.Message}"); return 0; }
         }
 
-        public static Result Optimize(GearObjectives.Objective obj, bool forceTopRespawn = false)
+        // Optimize for an objective. `locks` and `floors` are both OPTIONAL and null is the whole of
+        // the old behaviour.
+        //
+        // ⚠ THIS IS THE LIVE SHIM, NOT THE SEARCH. Every read below is a game read; the search is
+        // GearSolver.Solve and takes all of it as plain-old data. Split for one reason: Main.Character
+        // and Main.InventoryController are static welds, so as long as the search sat in this file it
+        // could not link into the test assembly and had no tests at all. If you need to change what
+        // the solver DOES, change GearSolver; if you need to change what it is TOLD, change here.
+        //
+        // MUST be called on the main thread — BuildPools, GameGearAdapter and OffhandPercent all read
+        // live game state.
+        public static GearSolver.Result Optimize(GearObjectives.Objective obj, bool forceTopRespawn = false,
+                                                 GearLockSet locks = null, GearFloorSet floors = null)
         {
             var idToItem = new Dictionary<int, GearScorer.Item>();
             var pools = BuildPools(idToItem);
             var ic = Main.InventoryController;
-            var cube = GameGearAdapter.BuildCubeItem();
-            var baseItem = GameGearAdapter.BuildBaseItem();
-            bool twoWeapons = ic.weapon2Unlocked();
-            int accSlots = Math.Max(0, ic.accessorySpaces());
 
-            List<KeyValuePair<int, GearScorer.Item>> Pool(part p) =>
-                pools.TryGetValue(p, out var l) ? l : new List<KeyValuePair<int, GearScorer.Item>>();
-
-            var weapons = Pool(part.Weapon);
-            var heads = Pool(part.Head);
-            var chests = Pool(part.Chest);
-            var legs = Pool(part.Legs);
-            var boots = Pool(part.Boots);
-            var accPool = Pool(part.Accessory);
-
-            var r = new Result();
-
-            // "Top single Respawn": optionally pin the highest-Respawn candidate across all slots so at
-            // least one equipped item always contributes Respawn; the remaining slots optimize around it.
-            int pinId = 0;
-            part pinPart = part.Head;
-            bool Pinned(part p) => pinId != 0 && pinPart == p;
-
-            double ScoreOf()
+            var inputs = new GearSolver.Inputs
             {
-                var list = new List<GearScorer.Item>(16);
-                void AddId(int id) { if (id != 0 && idToItem.TryGetValue(id, out var it)) list.Add(it); }
-                AddId(r.MainWeapon); AddId(r.OffWeapon);
-                AddId(r.Head); AddId(r.Chest); AddId(r.Legs); AddId(r.Boots);
-                foreach (var a in r.Accessories) AddId(a);
-                list.Add(cube); list.Add(baseItem);
-                return GearScorer.ScoreRaw(list, obj.Stats, obj.Exponents, Offhand);
-            }
+                Pools = pools,
+                IdToItem = idToItem,
+                Cube = GameGearAdapter.BuildCubeItem(),
+                BaseItem = GameGearAdapter.BuildBaseItem(),
+                TwoWeapons = ic.weapon2Unlocked(),
+                AccessorySlots = Math.Max(0, ic.accessorySpaces()),
+                // Read ONCE per solve. The property caches for 30s, so a solve already saw a single
+                // value; making that explicit is also the only self-consistent way to score a
+                // comparison — two candidates scored at different offhand factors are not comparable.
+                OffhandPercent = Offhand,
+                // The ownership half of the Gear Lock. Bound to THIS solve's idToItem deliberately:
+                // "owned" has to mean "the solver can actually seat it", and two inventory walks that
+                // nearly agree is how this subsystem has produced silent wrong answers.
+                Lookup = id => LookUp(id, idToItem)
+            };
 
-            // Re-pick the single best item for one slot, given everything else fixed.
-            bool PickSlot(IEnumerable<KeyValuePair<int, GearScorer.Item>> pool, Func<int> get, Action<int> set)
-            {
-                int start = get(); int best = start; double bs = ScoreOf();
-                foreach (var c in pool)
-                {
-                    set(c.Key); double s = ScoreOf();
-                    if (s > bs) { bs = s; best = c.Key; }
-                }
-                set(best);
-                return best != start;
-            }
-
-            void MainAscent()
-            {
-                for (int iter = 0; iter < 8; iter++)
-                {
-                    bool changed = false;
-                    if (!Pinned(part.Weapon))
-                        changed |= PickSlot(weapons.Where(w => w.Key != r.OffWeapon), () => r.MainWeapon, v => r.MainWeapon = v);
-                    if (twoWeapons)
-                        changed |= PickSlot(weapons.Where(w => w.Key != r.MainWeapon), () => r.OffWeapon, v => r.OffWeapon = v);
-                    if (!Pinned(part.Head)) changed |= PickSlot(heads, () => r.Head, v => r.Head = v);
-                    if (!Pinned(part.Chest)) changed |= PickSlot(chests, () => r.Chest, v => r.Chest = v);
-                    if (!Pinned(part.Legs)) changed |= PickSlot(legs, () => r.Legs, v => r.Legs = v);
-                    if (!Pinned(part.Boots)) changed |= PickSlot(boots, () => r.Boots, v => r.Boots = v);
-                    if (!changed) break;
-                }
-            }
-
-            void AccessoryOptimize()
-            {
-                if (accSlots <= 0 || accPool.Count == 0) return;
-                // A pinned respawn accessory sits at index 0 and is never swapped out.
-                int fixedCount = Pinned(part.Accessory) ? 1 : 0;
-                // Greedy fill. Each accessory id is used at most once BY DESIGN: NGU only lets one copy of a
-                // given accessory be equipped at a time, even if you own duplicates. So this uniqueness guard
-                // (and the id-dedup in BuildPools) enforces a real game rule — it is NOT an optimizer limitation.
-                while (r.Accessories.Count < accSlots)
-                {
-                    int best = 0; double bs = ScoreOf();
-                    foreach (var c in accPool)
-                    {
-                        if (r.Accessories.Contains(c.Key)) continue;   // one copy per accessory id (game rule)
-                        r.Accessories.Add(c.Key); double s = ScoreOf(); r.Accessories.RemoveAt(r.Accessories.Count - 1);
-                        if (s > bs) { bs = s; best = c.Key; }
-                    }
-                    if (best == 0) break; // nothing improves
-                    r.Accessories.Add(best);
-                }
-                // local swap
-                for (int iter = 0; iter < 50; iter++)
-                {
-                    bool improved = false;
-                    for (int i = fixedCount; i < r.Accessories.Count; i++)
-                    {
-                        int cur = r.Accessories[i]; int best = cur; double bs = ScoreOf();
-                        foreach (var c in accPool)
-                        {
-                            if (c.Key == cur || r.Accessories.Contains(c.Key)) continue;
-                            r.Accessories[i] = c.Key; double s = ScoreOf();
-                            if (s > bs) { bs = s; best = c.Key; }
-                        }
-                        r.Accessories[i] = best;
-                        if (best != cur) improved = true;
-                    }
-                    if (!improved) break;
-                }
-            }
-
-            double RunOptimize()
-            {
-                // alternate until stable (slots interact only through the product objective)
-                double prev = double.NegativeInfinity;
-                for (int round = 0; round < 5; round++)
-                {
-                    MainAscent();
-                    AccessoryOptimize();
-                    double cur = ScoreOf();
-                    if (cur <= prev * (1 + 1e-12)) break;
-                    prev = cur;
-                }
-                return ScoreOf();
-            }
-
-            bool HasRespawn()
-            {
-                bool Has(int id) => id != 0 && idToItem.TryGetValue(id, out var it)
-                    && it.Stats.TryGetValue(GearObjectives.Stat.Respawn, out var rv) && rv > 0;
-                if (Has(r.MainWeapon) || Has(r.OffWeapon) || Has(r.Head) || Has(r.Chest) || Has(r.Legs) || Has(r.Boots)) return true;
-                foreach (var a in r.Accessories) if (Has(a)) return true;
-                return false;
-            }
-
-            // Pass 1: pure merit — no pin.
-            r.Score = RunOptimize();
-
-            // "Top single Respawn": only when the merit loadout carries NO respawn at all do we pin one
-            // respawn item in — and we pick the candidate whose PINNED LOADOUT scores best overall
-            // (tie-break: more respawn), not the one with the highest raw respawn. This prevents a
-            // pure-respawn item (Stapler) being force-pinned alongside an item that already covers
-            // respawn on merit (Ring of Greed), which double-equipped respawn.
-            if (forceTopRespawn && !HasRespawn())
-            {
-                Result best = null;
-                double bestScore = double.NegativeInfinity, bestResp = -1;
-                foreach (var kv in pools)
-                {
-                    foreach (var it in kv.Value)
-                    {
-                        if (!it.Value.Stats.TryGetValue(GearObjectives.Stat.Respawn, out var resp) || resp <= 0) continue;
-                        part p = kv.Key;
-                        if (p == part.Accessory && accSlots <= 0) continue;
-
-                        r = new Result();
-                        pinId = it.Key; pinPart = p;
-                        switch (p)
-                        {
-                            case part.Weapon: r.MainWeapon = pinId; break;
-                            case part.Head: r.Head = pinId; break;
-                            case part.Chest: r.Chest = pinId; break;
-                            case part.Legs: r.Legs = pinId; break;
-                            case part.Boots: r.Boots = pinId; break;
-                            case part.Accessory: r.Accessories.Add(pinId); break;
-                        }
-                        double s = RunOptimize();
-                        // User rule (Stapler 12% beat Ring of Greed 16% via loadout-score tiebreak):
-                        // the pinned slot's JOB is respawn — highest respawn wins outright; loadout
-                        // score only breaks respawn ties.
-                        bool take = best == null || resp > bestResp
-                            || (resp >= bestResp && s > bestScore * (1 + 1e-12));
-                        if (take) { best = r; bestScore = s; bestResp = resp; }
-                    }
-                }
-                if (best != null) { r = best; r.Score = bestScore; }
-                pinId = 0;
-            }
-
-            return r;
+            return GearSolver.Solve(inputs, obj, forceTopRespawn, locks, floors);
         }
 
-        // Build candidate pools by part from inventory + currently-equipped, deduped by item id.
-        private static Dictionary<part, List<KeyValuePair<int, GearScorer.Item>>> BuildPools(Dictionary<int, GearScorer.Item> idToItem)
+        // The live half of the Gear Lock catalog: is this id a real wearable item, and do you have one?
+        //
+        // ⚠ VERIFIED AGAINST THE DECOMP RATHER THAN THE NAME. `itemInfo.type` is a `part[600]`
+        // ([DECOMP] ItemNameDesc.cs:16) whose entries are assigned in code by constructItemInfo()
+        // ([DECOMP] ItemNameDesc.cs:92); every index 0..514 is assigned explicitly and there are no
+        // gaps, which is why Consts.MAX_GEAR_ID = 514 is a sound upper bound. That matters: the array
+        // is 600 long and `default(part)` is part.Head, so an UNBOUNDED read of an undefined id would
+        // come back "a valid head", and a typo'd lock would silently hold the head slot with nothing
+        // in it. The bound is load-bearing, not decoration.
+        //
+        // Ownership comes from `idToItem`, which BuildPools filled from inventory + daycare-free bag +
+        // currently-equipped — i.e. exactly the candidate set the solver can choose from. Deliberately
+        // NOT from a separate inventory walk: "owned" has to mean "the solver can actually seat it",
+        // and two walks that nearly agree is how this subsystem has produced silent wrong answers.
+        private static GearLockItem LookUp(int id, Dictionary<int, GearScorer.Item> idToItem)
+        {
+            part pt;
+            try
+            {
+                if (id <= 0 || id > Consts.MAX_GEAR_ID) return GearLockItem.Missing();
+                pt = Main.Character.itemInfo.type[id];
+            }
+            catch { return GearLockItem.Missing(); }
+
+            GearLockSlot slot;
+            if (!TryWearableSlot(pt, out slot)) return GearLockItem.Missing();
+
+            string name;
+            try { name = Main.ItemNameNice(id); } catch { name = ""; }
+            return idToItem.ContainsKey(id)
+                ? GearLockItem.Have(slot, name)
+                : GearLockItem.NotOwned(slot, name);
+        }
+
+        // THE UNITY BOUNDARY, in one function. `part` is an Assembly-CSharp enum, so it cannot appear
+        // in GearSolver (which has to compile in the test assembly); GearLockSlot is the Unity-free
+        // enum with exactly the six WEARABLE members. Translating here means the solver never sees a
+        // game type, and both callers below get the same answer to "can this be worn at all".
+        //
+        // Boosts, Misc, MacGuffins and None are real ids that cannot be WORN, and false is the honest
+        // answer for them: a lock on a boost id has no slot to take, and a boost in the bag is not a
+        // candidate for any slot.
+        private static bool TryWearableSlot(part pt, out GearLockSlot slot)
+        {
+            switch (pt)
+            {
+                case part.Weapon: slot = GearLockSlot.Weapon; return true;
+                case part.Head: slot = GearLockSlot.Head; return true;
+                case part.Chest: slot = GearLockSlot.Chest; return true;
+                case part.Legs: slot = GearLockSlot.Legs; return true;
+                case part.Boots: slot = GearLockSlot.Boots; return true;
+                case part.Accessory: slot = GearLockSlot.Accessory; return true;
+                default: slot = GearLockSlot.Weapon; return false;   // never read; `false` is the answer
+            }
+        }
+
+        // Build candidate pools by slot from inventory + currently-equipped, deduped by item id.
+        //
+        // ⚠ INSERTION ORDER IS LOAD-BEARING. The respawn pin iterates these pools and its tie-break
+        // ("highest respawn wins outright; loadout score only breaks respawn ties") reads whichever
+        // equal-respawn candidate it meets first. A Dictionary with no removals enumerates in insertion
+        // order, and the insertion order here is equipped-then-bag. Do not sort, and do not pre-create
+        // the six buckets.
+        private static Dictionary<GearLockSlot, List<KeyValuePair<int, GearScorer.Item>>> BuildPools(Dictionary<int, GearScorer.Item> idToItem)
         {
             var inv = Main.Character.inventory;
             var ic = Main.InventoryController;
-            var pools = new Dictionary<part, List<KeyValuePair<int, GearScorer.Item>>>();
+            var pools = new Dictionary<GearLockSlot, List<KeyValuePair<int, GearScorer.Item>>>();
 
             void Consider(Equipment e)
             {
                 if (e == null || e.id == 0 || idToItem.ContainsKey(e.id)) return;
                 var pt = e.type;
-                if (pt != part.Head && pt != part.Chest && pt != part.Legs &&
-                    pt != part.Boots && pt != part.Weapon && pt != part.Accessory) return;
+                GearLockSlot slot;
+                if (!TryWearableSlot(pt, out slot)) return;
                 var item = GameGearAdapter.BuildItem(e, pt == part.Weapon);
                 idToItem[e.id] = item;
-                if (!pools.TryGetValue(pt, out var list))
+                if (!pools.TryGetValue(slot, out var list))
                 {
                     list = new List<KeyValuePair<int, GearScorer.Item>>();
-                    pools[pt] = list;
+                    pools[slot] = list;
                 }
                 list.Add(new KeyValuePair<int, GearScorer.Item>(e.id, item));
             }

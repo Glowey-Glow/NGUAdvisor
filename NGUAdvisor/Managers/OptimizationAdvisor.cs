@@ -21,6 +21,9 @@ namespace NGUAdvisor.Managers
             public string AutoKey;   // "gear" | "wandoos" | "diggers" | "beards" | null
         }
 
+        // Latch for the "seated the DC digger" line — once per farm, not once per 30s tick.
+        private static bool _dcSeatAnnounced;
+
         private static readonly string[] DiggerNames =
             { "Drops", "Wandoos", "Stats", "Adv", "E-NGU", "M-NGU", "E-Beard", "M-Beard", "PP", "Daycare", "Blood", "EXP" };
         public static readonly string[] BeardNames =
@@ -90,8 +93,17 @@ namespace NGUAdvisor.Managers
                         try { rgn = c.totalAdvHPRegen(); } catch { }
                         double reqA = to.ReqAttack, reqD = to.ReqDefense, reqR = to.ReqRegen;
                         string label = $"Titan {to.Index + 1} v{to.Version} {to.Stage}";
+                        // An unsolved clue means the game will not spawn this titan at ANY stat level, so
+                        // say that instead of only printing a stat gap the player cannot cash in.
+                        string riddlePart = to.RiddleLocked ? " — clue unsolved, titan will not spawn" : "";
                         if (atk >= reqA && def >= reqD && (reqR <= 0 || rgn >= reqR))
-                            list.Add(new Rec { System = "Power", Text = $"{label} ready", Optimal = true });
+                            list.Add(new Rec
+                            {
+                                System = "Power",
+                                Text = $"{label} ready{riddlePart}",
+                                Optimal = !to.RiddleLocked,
+                                Severity = to.RiddleLocked ? 1 : 0
+                            });
                         else
                         {
                             // Guard req==0 (defensive vs future titan-table edits) so % can't go NaN/Inf.
@@ -104,7 +116,7 @@ namespace NGUAdvisor.Managers
                             list.Add(new Rec
                             {
                                 System = "Power",
-                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for {label} ({pct:0}%)",
+                                Text = $"{Fmt(atk)} of {Fmt(reqA)} atk / {Fmt(def)} of {Fmt(reqD)} def{regenPart} for {label} ({pct:0}%){riddlePart}",
                                 Severity = pct >= 80 ? 1 : 2
                             });
                         }
@@ -191,36 +203,55 @@ namespace NGUAdvisor.Managers
             try
             {
                 var active = ToIntList(c.diggers.activeDiggers);
-                int slots = Math.Max(1, c.allDiggers.maxDiggerSlots());
-                var recommended = RecommendedDiggers(mode).Where(IsDiggerUnlocked).Take(slots).ToList();
                 if (mode == "challenge")
                     list.Add(new Rec { System = "Diggers", AutoKey = "diggers", Text = "Set by the challenge block", Optimal = true });
                 else
                 {
+                    // MEMBERSHIP comes from the set the applier will actually equip, not from a separate
+                    // hardcoded list. RecommendedDiggers(mode) is a five-element constant that ignores
+                    // both difficulty and the profile's digger pool, while ApplyDiggers acts on
+                    // CurrentDiggerSet() with that pool as a hard filter — so the card could advertise
+                    // "Add Drops" indefinitely when digger 0 appears in no shipped Evil profile and the
+                    // applier was structurally unable to add it.
+                    var plannedSet = CurrentDiggerSet() ?? new int[0];
                     double netGps = c.goldPerSecond();
                     var addable = new List<string>();
                     var broke = new List<string>();
-                    foreach (var d in recommended.Where(r => !active.Contains(r)))
+                    foreach (var d in plannedSet.Where(r => !active.Contains(r)))
                     {
                         long lvl = AffordableDiggerLevel(c, d, netGps);
                         if (lvl >= 1) addable.Add($"{Name(DiggerNames, d)} (L{lvl} affordable)");
                         else broke.Add(Name(DiggerNames, d));
                     }
-                    int recappable = 0;
-                    foreach (var d in active)
+
+                    // LEVELS are compared against the applier's own plan — the same allocator over the
+                    // same set — rather than re-derived here. The old rule handed EVERY digger the whole
+                    // free pool (netGps + its own drain) and counted how many cleared a threshold; with
+                    // DiggerCap at 100 net GPS is ~0, so that budget collapsed to the digger's current
+                    // drain, the count was always 0, and the row read "optimal" permanently.
+                    int belowPlan = 0;
+                    long worstGap = 0;
+                    string worstName = null;
+                    foreach (var kv in DiggerManager.PlannedLevels(plannedSet))
                     {
-                        long cur = c.diggers.diggers[d].curLevel;
-                        long aff = AffordableDiggerLevel(c, d, netGps + c.allDiggers.drain(d));
-                        if (aff > cur && aff - cur >= Math.Max(5, cur / 10)) recappable++;
+                        if (kv.Key < 0 || kv.Key >= c.diggers.diggers.Count) continue;
+                        long cur = c.diggers.diggers[kv.Key].curLevel;
+                        long gap = kv.Value - cur;
+                        if (gap < Math.Max(5, cur / 10)) continue;
+                        belowPlan++;
+                        if (gap > worstGap) { worstGap = gap; worstName = Name(DiggerNames, kv.Key); }
                     }
-                    if (addable.Count == 0 && broke.Count == 0 && recappable == 0)
+
+                    if (addable.Count == 0 && broke.Count == 0 && belowPlan == 0)
                         list.Add(new Rec { System = "Diggers", AutoKey = "diggers", Text = "Ideal set is running", Optimal = true });
                     else
                     {
                         string advice = (addable.Count > 0 ? "Add " + string.Join("/", addable) : "")
                             + (broke.Count > 0 ? (addable.Count > 0 ? " " : "") + "(" + string.Join("/", broke) + ": GPS too low)" : "");
-                        if (recappable > 0) advice += (advice == "" ? "Recap" : " | recap") + $": {recappable} digger(s) can run higher levels";
-                        list.Add(new Rec { System = "Diggers", AutoKey = "diggers", Text = advice, Severity = addable.Count > 0 || recappable > 0 ? 1 : 0 });
+                        if (belowPlan > 0)
+                            advice += (advice == "" ? "Recap" : " | recap")
+                                    + $": {belowPlan} digger(s) below plan (largest {worstName} +{worstGap})";
+                        list.Add(new Rec { System = "Diggers", AutoKey = "diggers", Text = advice, Severity = addable.Count > 0 || belowPlan > 0 ? 1 : 0 });
                     }
                 }
             }
@@ -491,6 +522,13 @@ namespace NGUAdvisor.Managers
             }
             catch (Exception ex) { Main.LogDebug($"NGU rec failed: {ex.Message}"); }
 
+            // Hacks row. R3 is the one lane whose allocation nobody could see: the hacks menu only redraws
+            // while you are looking at it (refreshMenu early-returns unless menuID == 52), so a player who is
+            // anywhere else has no way to tell which hack is being fed, whether it is saturated, or how much
+            // of the pool is being thrown away. This says all three.
+            try { HackRec(c, list); }
+            catch (Exception ex) { Main.LogDebug($"Hack rec failed: {ex.Message}"); }
+
             // Boss-ceiling row: past the last unlock at this difficulty, boss pushing = EXP only,
             // and the NUMBER ritual (power through time) is what moves it.
             try
@@ -561,6 +599,14 @@ namespace NGUAdvisor.Managers
             public string Stage;    // "first kill" -> "idle" -> "auto-kill" (user's kill ladder)
             public double ReqAttack, ReqDefense;   // the STAGE's requirement, not blindly AK
             public double ReqRegen;                // AK stage only (game gates on HP regen from T4 up); 0 otherwise
+            // The titan's CLUE is unsolved, so the game will not spawn it however good the stats are
+            // (Adventure.titan6..9Unlocked). The stat requirements above stay valid — they are still what
+            // the kill will need — but a readout that shows only a stat gap is telling the player to
+            // grind when the actual blocker is a puzzle. Callers that gate on "can I kill this yet"
+            // should consult this too. AdvisorApply already filtered on RiddleLocked; NextObjective,
+            // which drives the AK-gap dashboard row, the companion titan gauges, and the AT-freeze
+            // decision, did not.
+            public bool RiddleLocked;
         }
 
         // Has this titan+version been killed at least once? The titan6V1Kills..V4Kills save fields
@@ -574,6 +620,21 @@ namespace NGUAdvisor.Managers
             try
             {
                 var adv = Main.Character.adventure;
+
+                // THE BESTIARY FIRST, FOR EVERY VERSIONED TITAN. This used to proxy T7+ off the spawn
+                // version — `TitanVersion(i) - 1 >= v` — which is a SELECTOR, not a record: the game only
+                // writes it when the player presses the difficulty button, and the advisor pins it to
+                // whatever version it is chasing or parked on. Measured 2026-08-11: GREASY NERD V2 had
+                // died eight times and this returned false every time, so the kill ladder never left the
+                // "first kill" rung. That pinned the goal card to the first-kill bar (which the operator
+                // was clearing at 100%) instead of the idle bar, made `beast` structurally unreachable
+                // (it requires Stage != "first kill"), and priced every posture decision off the wrong
+                // requirement.
+                int kills = ZoneHelpers.VersionKills(i, v);
+                if (kills >= 0) return kills > 0;
+
+                // No bestiary record or the read failed. T6 has a second real per-version record in
+                // achievements 148..151, which is why it kept a branch of its own.
                 if (i == 5)
                 {
                     try { return Main.Character.achievements.achievementComplete[147 + v]; }
@@ -584,7 +645,7 @@ namespace NGUAdvisor.Managers
                     }
                 }
                 if (i >= 6)
-                    return ZoneHelpers.TitanVersion(i) - 1 >= v;
+                    return ZoneHelpers.TitanVersion(i) - 1 >= v;   // last resort; known-wrong, see above
                 switch (i)
                 {
                     case 0: return adv.titan1Kills >= 1;
@@ -689,6 +750,7 @@ namespace NGUAdvisor.Managers
                         o.Index = i;
                         o.Version = v;
                         o.Stage = stage;
+                        try { o.RiddleLocked = ZoneHelpers.RiddleLocked(i); } catch { }
                         o.ReqAttack = ra;
                         o.ReqDefense = rd;
                         o.ReqRegen = rr;
@@ -706,22 +768,33 @@ namespace NGUAdvisor.Managers
             return o.Known ? o.Index : -1;
         }
 
-        // Highest boss that still unlocks something at this difficulty: zones up to the ceiling
-        // titan's zone (later zones are next-era content). Past it, bosses are pure EXP.
+        // Highest boss that still unlocks something at this difficulty. Past it, bosses are pure EXP.
+        // Arithmetic lives in BossScale.BossUnlockCeiling (pure, headless-tested); this does the
+        // game-coupled difficulty read only. See that method for why the old titan-zone bound was wrong.
         public static int BossUnlockCeiling()
         {
             try
             {
-                int ceilingTitan = DifficultyMaxTitanIndex();
-                int maxZone = ceilingTitan < ZoneHelpers.TitanZones.Length
-                    ? ZoneHelpers.TitanZones[ceilingTitan]
-                    : ZoneHelpers.ZoneUnlocks.Length - 1;
-                int best = 0;
-                for (int z = 0; z <= maxZone && z < ZoneHelpers.ZoneUnlocks.Length; z++)
-                    best = Math.Max(best, ZoneHelpers.ZoneUnlocks[z]);
-                return best;
+                return BossScale.BossUnlockCeiling(ZoneHelpers.ZoneUnlocks, LiveDifficulty());
             }
             catch { return 0; }
+        }
+
+        // The game's `difficulty` and BossScale's Unity-free GameDifficulty happen to share ordinals, but
+        // mapping them explicitly keeps BossScale free of any assumption about the game's enum layout —
+        // the whole point of that module.
+        private static GameDifficulty LiveDifficulty()
+        {
+            try
+            {
+                switch (Main.Character.settings.rebirthDifficulty)
+                {
+                    case difficulty.sadistic: return GameDifficulty.Sadistic;
+                    case difficulty.evil: return GameDifficulty.Evil;
+                    default: return GameDifficulty.Normal;
+                }
+            }
+            catch { return GameDifficulty.Normal; }
         }
 
         // Guide rules of thumb: rebirth length scales with Yggdrasil — 30-60m before fruits exist,
@@ -855,8 +928,22 @@ namespace NGUAdvisor.Managers
                 // Context for the laws (shared by the Hybrid pool and the fallback fill-every-slot set).
                 bool hunting = false;
                 try { hunting = GearHunter.Active && GearHunter.ZoneReachable(); } catch { }
-                bool itopod = false;
-                try { itopod = !hunting && (Main.Settings.AdventureTargetITOPOD || Main.Settings.SnipeZone >= 1000); } catch { }
+                // ⚠ THE VENUE IS WHERE THE CHARACTER IS, NOT WHAT WAS ASKED FOR — audit/40 §3 item 7.
+                // This used to be `itopod = !hunting && (AdventureTargetITOPOD || SnipeZone >= 1000)`:
+                // two layer-1 INTENT fields plus a hand copy of R10's gear-hunt row. audit/40 §0:
+                // layer 1 only WRITES Settings.SnipeZone; layer 2 (Main.SnipeZone) decides the zone
+                // actually adventured, and R3-R8 (pit run, empty TM, gold snipe, titans, quests,
+                // CBlock gold) and R11-R13 (unlock rewrite, EVIL CLIMB, gold-starved augs) all route
+                // somewhere those two fields never named. The venue law is a claim about WHERE KILLS
+                // HAPPEN — [DECOMP] AdventureController.cs:2919-2932 puts the ENTIRE perk-point block
+                // inside `if (zone == 1000)` — so PP is earned, or not, by the zone the character is
+                // standing in this second. Character.adventure.zone IS that fact, read from the game
+                // rather than reconstructed (the same read as BoostFarmAdvisor.cs:222 and
+                // Main.cs:1212), so there is no third copy of the chain here to drift out of step.
+                // The `!hunting` copy goes with it: FarmVenue.Decide already ranks gearHunt above the
+                // ITOPOD term, and a hunt that owns routing has the character in the hunted zone.
+                int currentZone = FarmVenue.UnknownZone;
+                try { currentZone = c.adventure.zone; } catch { }
                 // Window sized to the machinery, not the event (user-reported: diggers swapped ~8min
                 // before a titan/gold snipe and lingered after): the digger applier ticks every 30s
                 // and the titan gear lock engages <20s before spawn, so 60s guarantees exactly one
@@ -908,15 +995,61 @@ namespace NGUAdvisor.Managers
                 // Each reorder is guarded on its OWN digger being present: in the fallback all 12 are, so
                 // this is unchanged there; in Hybrid it lifts whichever the pool actually contains and
                 // never demotes the venue earner just because its swap-partner isn't in the pool.
-                if (titanWindow || hunting)
+                // THE ADVISOR'S OWN FARM IS NOW A CASE. `hunting` is the MANUAL Gear Hunt toggle, so a
+                // farm the advisor chose itself fell into the gap between the two branches and
+                // reordered nothing — while the ITOPOD term (then Settings.SnipeZone >= 1000) had
+                // already benched digger 0 to the tail, where Take(slots) cuts it. Observed live: set
+                // 3,1,2,8,4,5,6,7,11,10,9, digger 0 missing, during a ~54h drop farm. See FarmVenue.
+                //
+                // ⚠ dropFarm IS STILL A FLAG AND CAN BE STALE, and that is a DIFFERENT defect from the
+                // one above, in a different file: FarmVenue.DropFarmActive is documented as "written
+                // every pass" (FarmVenue.cs), but AdvisorApply.ApplyZones returns above the write on
+                // five guards — !CombatEnabled, GoldCBlockMode/MoneyPitRunMode, an unreachable gear
+                // hunt, !AdvisorZones and the 10-minute throttle — and only the throttle is the
+                // deliberate one the clear-site comment (AdvisorApply.cs:1144-1147) accounts for. The
+                // routing row that reads it is guarded by AdvisorZones (Main.ResolveIntentZone); this
+                // one is not. Recorded, not fixed here: the owner is the writer, not this reader.
+                var venue = FarmVenue.Decide(titanWindow, hunting, FarmVenue.DropFarmActive, currentZone);
+                int promote = FarmVenue.Promote(venue), bench = FarmVenue.Bench(venue);
+
+                // ⚠ A DROP FARM MAY SEAT THE DC DIGGER EVEN WHEN A MANUAL POOL OMITS IT
+                // [OPERATOR 2026-08-05]. This is a deliberate exception to the Hybrid rule above
+                // ("the advisor adds no fill-every-slot filler on top of the profile's list"), and
+                // it is the ONLY one: one digger, only while a drop farm routes.
+                //
+                // Why it is needed: with AutoProfile OFF the profile's list becomes both the pool and
+                // a hard poolFilter. 24hr-EarlyEvil's three digger breakpoints are
+                // [2,3,6,7,8,10,11] / [1,2,3,4,5,6,7,8,11,10,9] / [2,3,4,5,8,9,11] — NONE contains
+                // digger 0. So the reorder below found nothing to promote, poolFilter stripped it
+                // anyway, and the drop-chance demand was silently unsatisfiable. Observed live as an
+                // apparent DC/PP "flip": the order changed the moment AutoProfile was switched off.
+                //
+                // It is NOT silent. A pool the user curated is being added to, so it says so once.
+                if (venue == FarmVenue.Pays.DropChance && poolFilter != null
+                    && !poolFilter.Contains(FarmVenue.DropChanceDigger)
+                    && IsDiggerUnlocked(FarmVenue.DropChanceDigger))
                 {
-                    if (order.Contains(0)) { order.Remove(0); order.Insert(Math.Min(1, order.Count), 0); }
-                    if (order.Contains(0) && order.Contains(8)) { order.Remove(8); order.Add(8); }
+                    poolFilter.Add(FarmVenue.DropChanceDigger);
+                    if (!order.Contains(FarmVenue.DropChanceDigger)) order.Add(FarmVenue.DropChanceDigger);
+                    if (_dcSeatAnnounced != true)
+                    {
+                        _dcSeatAnnounced = true;
+                        Main.Log("Advisor: drop farm seated the DC digger (not in your profile's digger list)");
+                    }
                 }
-                else if (itopod)
+                else if (venue != FarmVenue.Pays.DropChance)
                 {
-                    if (order.Contains(8)) { order.Remove(8); order.Insert(Math.Min(2, order.Count), 8); }
-                    if (order.Contains(0) && order.Contains(8)) { order.Remove(0); order.Add(0); }
+                    _dcSeatAnnounced = false;   // re-announce the next time a farm needs it
+                }
+
+                if (promote >= 0)
+                {
+                    // Guarded on its OWN digger being present, as before: in Hybrid the pool may hold
+                    // one of the pair and not the other, and the venue earner must not be demoted
+                    // just because its swap-partner is absent.
+                    int slot = venue == FarmVenue.Pays.DropChance ? 1 : 2;
+                    if (order.Contains(promote)) { order.Remove(promote); order.Insert(Math.Min(slot, order.Count), promote); }
+                    if (order.Contains(promote) && order.Contains(bench)) { order.Remove(bench); order.Add(bench); }
                 }
 
                 // LAW: the Adventure digger always leads — applied last so nothing outranks it.
@@ -959,9 +1092,19 @@ namespace NGUAdvisor.Managers
             {
                 var c = Main.Character;
                 if (c == null) return null;
+                // The challenge rule outranks every preference below, INCLUDING the AutoProfile carve-out
+                // on the next line — which is exactly how this was getting through. That carve-out reads
+                // "honour the profile's beard list in a challenge only when AutoProfile is OFF", so with
+                // AutoProfile on (the normal configuration) the 100LC leg's empty list was never consulted
+                // and the fill-every-slot branch below equipped all seven. Returning None rather than null
+                // matters: null means "no opinion" and leaves whatever is already equipped ON.
+                if (BeardRule.Forbidden(ChallengeDetector.Current())) return BeardRule.None;
+
                 string mode = Mode(ProgressionAnalyzer.Detect());
                 // Same as diggers: AutoProfile has no challenge-tagged beard breakpoints, so drive beards in
                 // challenges too (they cost nothing) rather than leaving the set to the profile's one-shot.
+                // "They cost nothing" is a claim about VALUE, not about permission — the rule above is the
+                // one case where wearing them is not allowed at all.
                 if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
                 int slots = Math.Max(1, c.allBeards.capBeards());
                 // Beards cost nothing — fill EVERY slot (user rule): mode heads lead, rest follow.
@@ -1090,6 +1233,164 @@ namespace NGUAdvisor.Managers
                 return minCost != double.MaxValue && gold < (minCost + reserve) * factor;
             }
             catch { return false; }
+        }
+
+        // What the R3 lane is actually doing, in one or two rows.
+        //
+        // The interesting number is SATURATION. A hack levels at most once per tick because updateAllHacks
+        // resets progress to 0 instead of decrementing it, so R3 past the point where progressPerTick hits 1
+        // produces literally nothing. That point is totalCapRes3()/progressPerTickCap(i) — every other term
+        // cancels, so it needs no baseDivider (which is Unity scene data and exists nowhere in this repo).
+        //
+        // Throttled logging lives in the caller's cache (Analyze is 2s-cached); this only builds strings.
+        private static void HackRec(Character c, List<Rec> list)
+        {
+            if (c == null || c.hacks == null || c.hacks.hacks == null) return;
+            if (!c.buttons.hacks.interactable) return;          // "REQUIRES GREASE" — not unlocked yet
+
+            var hc = c.hacksController;
+            if (hc == null) return;
+
+            long cap = c.totalCapRes3();
+            int funded = 0, saturated = 0, capped = 0, stalled = 0;
+            double worstEfficiency = 1.0;
+            string worstName = null, leadName = null;
+            long leadAlloc = 0, leadSat = 0;
+            double leadPpt = 0;
+
+            int n = Math.Min(c.hacks.hacks.Count, 15);
+            for (int id = 0; id < n; id++)
+            {
+                var h = c.hacks.hacks[id];
+                if (h == null) continue;
+
+                if (h.level >= hc.hardCapLevel(id)) { if (h.res3 > 0) capped++; continue; }
+                if (h.res3 <= 0) continue;
+
+                funded++;
+                double ppt = hc.progressPerTick(id);
+                long sat = HackMath.Saturation(cap, hc.progressPerTickCap(id));
+
+                if (HackMath.WillStall(ppt)) stalled++;
+                if (ppt >= 1.0) saturated++;
+
+                double eff = HackMath.Efficiency(ppt);
+                if (eff < worstEfficiency) { worstEfficiency = eff; worstName = SystemCatalog.NameOf(SystemCatalog.Hacks, id); }
+                if (h.res3 > leadAlloc)
+                {
+                    leadAlloc = h.res3; leadSat = sat; leadPpt = ppt;
+                    leadName = SystemCatalog.NameOf(SystemCatalog.Hacks, id);
+                }
+            }
+
+            if (funded == 0)
+            {
+                list.Add(new Rec { System = "Hacks", Text = "No R3 allocated — add a HACK token to the R3 timeline", Severity = 1 });
+                return;
+            }
+
+            // Below Evil every total*Bonus() returns 1f, but updateAllHacks has no difficulty gate and levels
+            // survive rebirth — so this is banking, not waste. Say that rather than "stop".
+            bool paysOff = true;
+            try { paysOff = c.settings.rebirthDifficulty >= difficulty.evil; } catch { }
+
+            var parts = new List<string>();
+            if (leadName != null)
+            {
+                string lead = $"{leadName} at {NumberFormatter.Abbrev(leadAlloc)}";
+                if (leadSat > 0)
+                {
+                    double pct = leadSat > 0 ? (double)leadAlloc / leadSat * 100.0 : 0;
+                    lead += leadPpt >= 1.0
+                        ? $" — SATURATED, {NumberFormatter.Abbrev(leadAlloc - leadSat)} of it wasted"
+                        : $" ({pct:0.#}% of the {NumberFormatter.Abbrev(leadSat)} it takes to cap out)";
+                }
+                parts.Add(lead);
+            }
+            if (funded > 1) parts.Add($"{funded} funded");
+            if (capped > 0) parts.Add($"{capped} hard-capped and still being fed");
+            if (stalled > 0) parts.Add($"{stalled} too thin to ever level");
+
+            // Severity 2 only when R3 is provably being destroyed; a merely-uneven split is not an emergency.
+            int sev = saturated > 0 || capped > 0 || stalled > 0 ? 2 : 0;
+            string text = string.Join(" · ", parts.ToArray());
+            if (!paysOff) text += " — no bonus below Evil, but levels bank";
+            else if (sev == 0 && worstName != null && worstEfficiency < 0.9)
+                text += $" · {worstName} running at {worstEfficiency * 100:0}% of its allocation";
+
+            list.Add(new Rec { System = "Hacks", Text = text, Severity = sev, Optimal = sev == 0 && saturated == 0 && capped == 0 });
+            LogHacks(c, hc, cap, n);
+        }
+
+        private static DateTime _lastHackDbg = DateTime.MinValue;
+
+        // Per-hack detail, throttled to a minute. This is the oracle for the allocator: `eta` is ours, and
+        // the game's own tooltip ("Time Until Next Level", HacksController.showTooltip) is the ground truth
+        // to check it against — baseDivider is Unity scene data, so there is no other way to validate the
+        // math. `sat` is the allocation at which the hack blue-bars; anything above it is discarded.
+        private static void LogHacks(Character c, HacksController hc, long cap, int n)
+        {
+            if ((DateTime.UtcNow - _lastHackDbg).TotalSeconds < 60) return;
+            _lastHackDbg = DateTime.UtcNow;
+            try
+            {
+                var parts = new List<string>();
+                for (int id = 0; id < n; id++)
+                {
+                    var h = c.hacks.hacks[id];
+                    if (h == null || h.res3 <= 0) continue;
+                    double ppt = hc.progressPerTick(id);
+                    long sat = HackMath.Saturation(cap, hc.progressPerTickCap(id));
+                    long ticks = HackMath.TicksPerLevel(ppt);
+                    parts.Add($"{id}:{SystemCatalog.NameOf(SystemCatalog.Hacks, id)} L{h.level}"
+                            + $" r3={NumberFormatter.Abbrev(h.res3)}/sat={NumberFormatter.Abbrev(sat)}"
+                            + $" ppt={ppt:0.###e0} ticks={ticks} eff={HackMath.Efficiency(ppt) * 100:0}%"
+                            + $" eta={(ticks > 0 ? (1.0 - h.progress) / ppt / 50.0 : 0):0.##}s");
+                }
+                if (parts.Count == 0) return;
+                // cur as well as cap: idle alone can't tell "the bar is still filling" from "the bar is full
+                // and all of it is allocated", and those want opposite gear (Res3 Bars vs Res3 Cap/Power).
+                Main.LogDebug($"[HackDbg] cur={NumberFormatter.Abbrev(c.res3.curRes3)}/cap={NumberFormatter.Abbrev(cap)}"
+                            + $" idle={NumberFormatter.Abbrev(c.res3.idleRes3)}"
+                            + $" power={c.totalRes3Power():0.##e0} speed={hc.totalHackSpeedBonus():0.###} -> "
+                            + string.Join(" | ", parts.ToArray()));
+                LogPrices(c, hc, cap, n);
+            }
+            catch { }
+        }
+
+        private static DateTime _lastHackPrices = DateTime.MinValue;
+
+        // What every hack COSTS, funded or not.
+        //
+        // progressPerTickCap doesn't depend on the current allocation, so this reads the price of a level in
+        // each of the fifteen hacks whether or not any R3 is in it — which the line above cannot show, since
+        // it only reports hacks that are actually being fed.
+        //
+        // The price is baseDivider * levelDivider(level), and levelDivider is 1 at level 0. So on a save
+        // where the hacks are still untouched this is a direct read of baseDivider itself: the one per-hack
+        // constant that exists nowhere in the decompile or the community sheets, because it is Unity
+        // inspector data. It is the number that decides which hack is worth feeding first, and the only
+        // chance to see it uncontaminated by level is before the levels start moving.
+        private static void LogPrices(Character c, HacksController hc, long cap, int n)
+        {
+            if ((DateTime.UtcNow - _lastHackPrices).TotalMinutes < 10) return;
+            _lastHackPrices = DateTime.UtcNow;
+            try
+            {
+                var parts = new List<string>();
+                for (int id = 0; id < n; id++)
+                {
+                    var h = c.hacks.hacks[id];
+                    if (h == null) continue;
+                    long sat = HackMath.Saturation(cap, hc.progressPerTickCap(id));
+                    parts.Add($"{id}:{SystemCatalog.NameOf(SystemCatalog.Hacks, id)} L{h.level}"
+                            + $" sat={NumberFormatter.Abbrev(sat)} ms={hc.levelsToNextMilestone(id)}/{hc.milestoneThreshold(id)}");
+                }
+                if (parts.Count == 0) return;
+                Main.LogDebug("[HackPrice] " + string.Join(" | ", parts.ToArray()));
+            }
+            catch { }
         }
 
         private static List<int> ToIntList(System.Collections.IEnumerable src)

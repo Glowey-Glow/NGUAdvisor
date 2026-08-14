@@ -21,6 +21,10 @@ namespace NGUAdvisor.Managers
             catch { }
 
             try { i.HuntActive = GearHunter.Active; } catch { }
+            // The advisor's own drop farm — the same demand that moves the DC digger (FarmVenue).
+            // A plain read: the flag is written by the zone pass on its 10-minute throttle, so it is
+            // already the slow-moving side of the pair while this runs every second.
+            try { i.DropFarmActive = FarmVenue.DropFarmActive; } catch { }
 
             // ChallengeOverlay publishes ONE field for two different things — the challenge push/growth
             // rotation and the auto profile's per-segment gear — so it also publishes which one it is,
@@ -39,6 +43,9 @@ namespace NGUAdvisor.Managers
             {
                 i.ProfileObjective = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
                 i.ProfileRespawn = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn;
+                // Gear Lock. Read from the SAME publisher as the objective and the respawn flag, so
+                // the refresh pass can never re-solve an objective without the locks that came with it.
+                i.ProfileLocks = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveLocks;
             }
             catch { }
 

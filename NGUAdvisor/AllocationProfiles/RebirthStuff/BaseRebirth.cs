@@ -8,7 +8,7 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
 {
     public static class BaseRebirth
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static RCTarget[] _challenges;
 
         private class RCTarget
@@ -212,13 +212,31 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
                 delay = true;
             }
 
-            // To prevent delaying rebirth arbitrarily
+            // To prevent delaying rebirth arbitrarily — and RITUALS ARE THE ONLY FUNDING THAT CAN DO IT.
+            //
+            // THE FEEDBACK LOOP, which is what the line above always meant. Funded rituals mint blood:
+            // [DECOMP] BloodMagicController.cs:60/:64 adds progressPerTick() and :72 does
+            // `bloodPoints += bloodAdded()` on each level. Blood then makes CastBloodSpellsForRebirth
+            // cast the number spell and return true, which sets `delay` — so the delay funds the
+            // condition that renews it, and the rebirth is held off for as long as magic keeps
+            // arriving. Defunding closes it at the source: :49 skips a ritual outright when
+            // `ritual[id].magic == 0L`, so no progress, no blood, no second cast.
+            //
+            // THE OTHER TWO DELAY CAUSES ARE FUNDING-INDEPENDENT and self-limiting, so nothing is
+            // stripped for them: the Yggdrasil branch harvests and is done next tick, and
+            // AnyTitansSpawningSoon is a clock. No allocation anywhere feeds either one.
+            //
+            // ⚠ EVERYTHING ELSE NOW KEEPS ACCRUING, and the old sweep of removeAllEnergy +
+            // removeAllMagic + removeAllRes3 was inherited at the import commit (453e147) with no
+            // recorded reason. It could not preserve anything it took: rebirth zeroes the pools
+            // regardless ([DECOMP] Rebirth.cs:617-618 curEnergy/idleEnergy, :628 magic.reset(),
+            // :633 res3.reset()). All it did was stop accrual — and the reset sweep does NOT touch
+            // NGU or hack levels, so energy and R3 taken here were buying permanent progress. Basic
+            // Training was the sharpest case: its LEVELS at the instant of rebirth convert to a
+            // permanent cap reduction (:638-684, attackCaps[i] -= f(attackTraining[i])), making the
+            // final seconds the most valuable rather than the least.
             if (delay)
-            {
-                _character.removeAllEnergy();
-                _character.removeAllMagic();
-                _character.removeAllRes3();
-            }
+                _character.bloodMagicController.removeAllMagic();
             
             return delay;
         }
@@ -232,14 +250,36 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
                 BloodMagicManager.ironPill.Cast(true);
             }
 
-            // Use whatever blood we have left on blood number before rebirthing
-            if (_character.bloodMagic.bloodPoints > 0)
+            // Use whatever blood we have left on blood number before rebirthing — but only when it is
+            // worth the delay this return buys. Returning true costs a whole extra allocation loop with
+            // all three pools stripped (:218-220), and the old `> 0` test made that unconditional: with
+            // BloodPlanner spending blood on NUMBER all run, what is left here is float residue, and
+            // 46 of 52 casts in one 36 h session were under a single blood point. BloodPillMath states
+            // the rule and why the ratio is the right one to test.
+            double blood = _character.bloodMagic.bloodPoints;
+            double rebirthPower = _character.bloodMagic.rebirthPower;
+            if (BloodPillMath.ShouldCastNumberTopUp(blood, rebirthPower))
             {
-                Log($"Casting number blood spell with remaining {_character.bloodMagic.bloodPoints} blood before rebirth");
+                Log($"Casting number blood spell with remaining {blood} blood before rebirth");
                 _character.bloodSpells.castRebirthSpell();
                 // Number spell requires at least one frame to increase the number, we need to wait before rebirth
                 return true;
             }
+
+            // Say what was skipped and what it would have been worth, once per rebirth. Silence here
+            // would look identical to "blood magic is off" — which is exactly the wrong conclusion, and
+            // one this session already reached from an absent log line.
+            //
+            // ⚠ THE SKIPPED BLOOD IS FORFEITED, not carried: AllBloodMagicController.reset() zeroes
+            // bloodPoints AND rebirthPower together at the rebirth ([DECOMP] :40-50). So this is a
+            // deliberate trade, and the log states both sides of it rather than implying the residue
+            // survives.
+            if (blood > 0)
+                LogDebug($"Skipping the pre-rebirth number spell: {blood} blood against rebirthPower " +
+                         $"{rebirthPower} is a {(rebirthPower > 0 ? blood / rebirthPower : 0):E2} relative " +
+                         $"gain, below the {BloodPillMath.NumberTopUpMinGain:E0} floor. The blood is " +
+                         "forfeited at the rebirth reset — that gain is being traded for a 10s loop that " +
+                         "would otherwise run with energy, magic and R3 all stripped.");
 
             return false;
         }

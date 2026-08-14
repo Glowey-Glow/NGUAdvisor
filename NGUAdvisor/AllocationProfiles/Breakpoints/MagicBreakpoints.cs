@@ -14,14 +14,20 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         protected override bool PerformSwap(Breakpoint bp)
         {
-            // NULL FILTER: see EnergyBreakpoints.PerformSwap — same parser, same missing strip. One
-            // unrecognised token in a Magic list NREs the lane on every tick before RemoveMagic(), so
-            // magic is never reallocated and the failure is throttled to one log line per ten minutes.
+            // KILL SWITCH — see EnergyBreakpoints.PerformSwap: flag ON routes to the constraint
+            // layer; flag OFF runs the original prioCount loop below, byte-unchanged.
+            if (Managers.ConstraintLayerBridge.NewPathEnabled)
+                return Managers.ConstraintLayerBridge.PerformSwap(bp.priorities, ResourceType.Magic);
+
+            // See EnergyBreakpoints.PerformSwap for why the null filter is here.
             var temp = bp.priorities.Where(x => x != null && x.IsValid()).ToList();
             // Challenge overlay: narrate dead-system filtering; inject fallback if the list is all-dead.
             temp = Managers.ChallengeOverlay.TransformPriorities(bp.priorities, temp, ResourceType.Magic);
             if (temp.Count == 0)
                 return false;
+
+            var dbg = AllocDiagnostic.Begin(ResourceType.Magic);
+            long curMagic = _character.magic.curMagic;
 
             var shouldRetry = true;
             while (shouldRetry)
@@ -30,13 +36,17 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 shouldRetry = false;
 
                 var prioCount = temp.Count(x => !x.IsCap);
+                if (dbg != null) dbg.Pass(prioCount);
 
                 RemoveMagic();
 
                 foreach (var prio in temp)
                 {
                     prio.UpdateMaxAllocation(prioCount);
-                    if (prio.Allocate())
+                    long before = _character.magic.idleMagic;
+                    var ok = prio.Allocate();
+                    if (dbg != null) dbg.Lane(prio, before - _character.magic.idleMagic);
+                    if (ok)
                         successList.Add(prio);
                     else
                         shouldRetry = true;
@@ -47,6 +57,8 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 temp = successList;
                 shouldRetry &= temp.Count > 0;
             }
+
+            if (dbg != null) dbg.Emit(curMagic, _character.magic.idleMagic);
 
             _character.timeMachineController.updateMenu();
             _character.bloodMagicController.updateMenu();

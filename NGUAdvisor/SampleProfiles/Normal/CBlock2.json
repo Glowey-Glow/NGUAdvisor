@@ -54,6 +54,10 @@
 	    "Type": "Number",
 	    "Target": 1000,
 	    "Note" : "Unlock FoN and purchase the XP upgrade as soon as TC-5 is done"
+	  },
+	  {
+	    "Type": "Time",
+	    "Time": { "m": 32 }
 	  }
 	],
 	"Challenges": [ 

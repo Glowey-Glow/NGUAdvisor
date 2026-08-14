@@ -72,7 +72,7 @@ namespace NGUAdvisor.Managers
             359, 401, 426, 459, 467, 467, 475, 483, 491, 491, 501,                                    // Evil
             727, 752, 777, 810, 818, 826, 826, 834, 842, 850, 850, 871, 897, 902};                    // Sadistic (idx38 ROCK LOBSTER=826)
 
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
 
         public static readonly int[] TitanZones = { 6, 8, 11, 14, 16, 19, 23, 26, 30, 34, 38, 42, 44, 45 };
         public const int TitanCount = 14;
@@ -154,6 +154,51 @@ namespace NGUAdvisor.Managers
             return _character.adventure.GetFieldValue<Adventure, int>($"titan{titanIndex + 1}Version") + 1;
         }
 
+        // HOW MANY TIMES THIS EXACT TITAN VERSION HAS DIED, from the game's own bestiary.
+        //
+        // Returns -1 for "no record", which callers must NOT read as zero — indices 0-4 and 12-13 have no
+        // per-version entry at all, and a failed read is not evidence of never having killed it. The
+        // distinction is the whole point: the field this replaces returned a confident 0 for a titan the
+        // operator had killed eight times.
+        //
+        // ⚠ kills >= 1 CAN BE AN UNLOCK ARTIFACT. When a higher version auto-kills, the game calls
+        // forceUnlock on every version below it ([DECOMP] AdventureController.cs:910-912, :928-929), which
+        // seeds a lower version's count. Harmless for the question actually being asked — if v3 autokills,
+        // v1 is beaten by definition — but do not treat the number as an exact kill tally.
+        public static int VersionKills(int titanIndex, int version)
+        {
+            try
+            {
+                int id = TitanTables.BestiaryId(titanIndex, version);
+                if (id < 0) return -1;
+                var enemies = _character.bestiary.enemies;
+                if (enemies == null || id >= enemies.Count) return -1;
+                return enemies[id].kills;
+            }
+            catch { return -1; }
+        }
+
+        // The HIGHEST version of this titan that has ever died, which is what every "versions defeated"
+        // caller actually wants. Highest rather than a count: forceUnlock backfills the versions below a
+        // kill, so they agree in practice, and highest degrades sanely if they ever do not.
+        // Falls back to the old selector proxy only where no bestiary record exists.
+        public static int VersionsDefeatedByKills(int titanIndex)
+        {
+            if (!TitanTables.HasVersionKillRecord(titanIndex))
+                return TitanTables.VersionsDefeated(TitanVersion(titanIndex));
+
+            int highest = 0, read = 0;
+            for (int v = 1; v <= 4; v++)
+            {
+                int k = VersionKills(titanIndex, v);
+                if (k < 0) continue;          // unreadable slot — not a zero
+                read++;
+                if (k > 0) highest = v;
+            }
+            // Nothing readable at all: the bestiary is not answering, so do not claim it said none.
+            return read == 0 ? TitanTables.VersionsDefeated(TitanVersion(titanIndex)) : highest;
+        }
+
         public static void SetTitanVersion(int titanIndex, int version)
         {
             if (TitanVersion(titanIndex) == version) return;
@@ -162,6 +207,21 @@ namespace NGUAdvisor.Managers
                 throw new IndexOutOfRangeException();
 
             _character.adventure.SetFieldValue($"titan{titanIndex + 1}Version", version - 1);
+
+            // ⚠ HAND-INSTRUMENTED, AND IT HAD TO BE. The target member name is built from a loop
+            // variable — titan{n}Version — so nothing keyed on member name could ever have found this
+            // site. It is one of the five the census called uninterceptable, and the only one of those
+            // five that survives in the ledger, because there is exactly one call site to hook.
+            //
+            // Worth showing for its own sake: this field is the game's difficulty SELECTOR, three
+            // advisor writers target it with no arbitration between them, and it is not the record of
+            // what you have killed — that lives in the bestiary.
+            WriteLedger.Record("titan.version", "T" + (titanIndex + 1) + " v" + version,
+                "the advisor moved which version of this titan will spawn",
+                ChallengeOverlay.Segment,
+                "This is the difficulty selector, not a record of what has been beaten",
+                "Three advisor paths write it: the chase, the gold-bank park and the stall valve",
+                "It stays where it was last put — nothing resets it between runs");
         }
 
         public static bool AutokillAvailable(int titanIndex, int version)
@@ -339,6 +399,53 @@ namespace NGUAdvisor.Managers
 
             // Materialize once; this collection is read repeatedly (AnySpawningSoon/RunTitanLoadout/RunGoldLoadout) and would otherwise re-run the query each access
             _titanSnapshotSummary.TitansSpawningSoon = _titanDetails.Select(x => x.Value).Where(x => x.SpawnSoonTimestamp.HasValue && (x.ShouldUseGoldLoadout || x.ShouldUseTitanLoadout)).ToList();
+        }
+
+        // The LEVEL of an accessory that is equipped RIGHT NOW, or -1 if it is not worn. Mirrors
+        // [DECOMP] InventoryController.apathyCheck() exactly, which is the read the game itself makes:
+        // it walks `character.inventory.accs` — the equipped slots — and returns `accs[i].level`.
+        //
+        // ⚠ NOT `itemList.itemMaxxed[id]`. That is a flag meaning "you have levelled this item to max"
+        // and is what the AUTOKILL gate reads (AutokillAvailable case 3). Owning a maxxed ring and
+        // wearing it are different facts, and only the second one keeps UUG killable.
+        public static int EquippedAccessoryLevel(int itemId)
+        {
+            try
+            {
+                var accs = _character.inventory.accs;
+                if (accs == null) return -1;
+                for (int i = 0; i < accs.Count; i++)
+                    if (accs[i] != null && accs[i].id == itemId) return accs[i].level;
+            }
+            catch { }
+            return -1;
+        }
+
+        // "Would walking into this titan's zone be a fight we cannot win?"
+        //
+        // TRUE only when the titan has a required accessory, is NOT autokillable (an AK spawn never
+        // reaches the fight), and that accessory is not worn. The gear swap runs BEFORE routing
+        // (LockManager acquires the titan lock and calls ChangeGear, then Main routes), so by the time
+        // this is asked the optimizer has already pinned the item if it could. Reaching here therefore
+        // means it genuinely could not — not owned, or no accessory slot — and the fight is unwinnable
+        // rather than merely unequipped.
+        public static bool TitanFightBlocked(int titanIndex, out string reason)
+        {
+            reason = null;
+            try
+            {
+                int required = TitanTables.RequiredAccessoryFor(titanIndex);
+                if (required == 0) return false;
+                if (AutokillAvailable(titanIndex)) return false;
+                if (EquippedAccessoryLevel(required) >= 0) return false;
+
+                reason = $"item {required} is not equipped as an accessory";
+                if (required == TitanTables.ApathyRingId)
+                    reason = "the Ring of Apathy is not equipped — without it UUG is INVINCIBLE " +
+                             "([DECOMP] EnemyAI sets invincible=true when apathyCheck() returns -1)";
+                return true;
+            }
+            catch { return false; }
         }
 
         public static float? TimeTillTitanSpawn(int bossId)

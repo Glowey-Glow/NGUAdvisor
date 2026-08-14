@@ -1,5 +1,6 @@
 using NGUAdvisor.Managers;
 using System;
+using System.Collections.Generic;
 
 namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
 {
@@ -13,80 +14,82 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
     // In practice that dropped the laser sword at ~lv 8 every run regardless of value, because aug 6
     // has both the largest baseBoost and the largest augTierBonus exponent and therefore also the
     // steepest cost curve. Cost still matters, but now only through how many levels the horizon buys.
+    // THE DECISION NOW LIVES IN Managers/AugmentMath (audit 01 §3.4, extraction E1). This class is the
+    // live-state half: it reads the game, hands the core plain data, and applies what the core picked.
+    // The projection, the split, the gold gate and the ranking are all in AugmentMath, under
+    // characterisation test in tests/NGUAdvisor.Tests/AugmentMathTests.cs.
     public class BestAug : AugmentBP
     {
-        private bool _useUpgrades;
+        // Boss 37 is where the upgrade halves become fundable. Was a field assigned at the top of
+        // Allocate(); TargetMet() runs BEFORE Allocate() (ResourceBreakpoint.IsValid evaluates all
+        // three terms eagerly), so it has to be readable without having allocated first. bossID does
+        // not move inside a pass, so a property is exactly the old value with no ordering to get wrong.
+        private bool _useUpgrades => _character.bossID >= 37;
 
-        // How far ahead the projection looks. An hour is long enough that a slow, steep aug can show
-        // its value and short enough that the linear cost model below stays honest.
-        private const double MaxHorizon = 3600.0;
+        // D1 REVERSED (amendment 30), same as AugmentBP: the advisor honours the No Augs challenge.
+        // Both refusals that used to be on this line were one lock written twice ([DECOMP]
+        // ButtonShower.cs:199-203), and they are now the single AugmentMath.AugmentMenuUnlocked call
+        // — :199 in full, both terms. SurfaceNoAugs (inherited from AugmentBP, one shared latch)
+        // reports the refusal once for the augment system.
+        protected override bool Unlocked()
+        {
+            bool inChallenge = _character.challenges.noAugsChallenge.inChallenge;
+            SurfaceNoAugs(inChallenge);
 
-        protected override bool Unlocked() => _character.buttons.augmentation.interactable && !_character.challenges.noAugsChallenge.inChallenge;
+            return AugmentMath.AugmentMenuUnlocked(_character.bossID, inChallenge);
+        }
 
-        protected override bool TargetMet() => false;
+        // WIRED to the game's own terminator (decision record amendment 16 §7; audit 20 §2.7). The game
+        // answers "is this half done?" itself — hitAugmentTarget() / hitUpgradeTarget(), [DECOMP]
+        // AugmentController.cs:171-186 — and on hit its own tick cascades the allocation to the next
+        // unmet pair (moveToNextAug / moveToNextUpgrade, AllAugsController.cs:147-199). BestAug used to
+        // discard that signal and hardcode `false`, so the lane could never report DONE, could never
+        // release its priority seat, and kept a share of idle energy reserved for 7 pairs that were all
+        // either boss-locked or already at target.
+        //
+        // The whole-lane question is NOT AugmentBP's per-half one: BestAug ranks all seven pairs, so it
+        // is done only when no half of any pair is still live. Arithmetic in AugmentMath.BestAugTargetMet.
+        protected override bool TargetMet() =>
+            AugmentMath.BestAugTargetMet(PairTargetStates(), _useUpgrades);
+
+        // The 7 pairs as four game predicates each. Same two reads LiveHalves() makes, in the same
+        // order — HalfLive() is the shared expression, so "live enough to rank" and "not done" are one
+        // definition rather than two that can drift.
+        private List<AugmentMath.AugPairTargetState> PairTargetStates()
+        {
+            var pairs = new List<AugmentMath.AugPairTargetState>(7);
+            for (var i = 0; i < 7; i++)
+            {
+                var aug = _character.augmentsController.augments[i];
+                pairs.Add(new AugmentMath.AugPairTargetState
+                {
+                    AugLocked = aug.augLocked(),
+                    AugHitTarget = aug.hitAugmentTarget(),
+                    UpgradeLocked = aug.upgradeLocked(),
+                    UpgradeHitTarget = aug.hitUpgradeTarget()
+                });
+            }
+            return pairs;
+        }
 
         public override bool Allocate()
         {
             if (Main.Settings.MoneyPitRunMode && _character.machine.realBaseGold <= 0.0 && MoneyPitManager.NeedsLowerTier())
                 return false;
 
-            _useUpgrades = _character.bossID >= 37;
             return AllocatePairs() > 0;
         }
 
-        // Seconds of run to project over, capped at MaxHorizon and by the rebirth when the profile
-        // schedules one. The deadline is read from the LIVE profile (Main.Profile, as BloodPlanner and
+        // The run's planned end, read from the LIVE profile (Main.Profile, as BloodPlanner and
         // WandoosAdvisor do): the breakpoint parser never populated a RebirthTime on BESTAUG, so the
         // property this used to read was always 0 and its guard — the one the rewrite claimed replaced
         // the old `time > 300` cutoff — could never fire. Cf. BR.cs, whose copy is unwired the same way.
-        //
-        // toRebirth means the horizon ENDS at the rebirth, which is what makes a level still in flight
-        // there worth nothing (see LevelsInHorizon). Past the deadline the rebirth can still be blocked
-        // — NUMBER/BOSSNUM targets are floors, not deadlines, and locks or the No-Rebirth challenge can
-        // hold it — so the run continues and we keep funding on the full horizon rather than going dark.
+        // The horizon arithmetic itself is AugmentMath.Horizon.
         private double Horizon(out bool toRebirth)
         {
-            toRebirth = false;
-            if (!Main.Settings.AutoRebirth) return MaxHorizon;
-
             double target = -1;
             try { target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1; } catch { }
-            if (target <= 0) return MaxHorizon;
-
-            double left = target - _character.rebirthTime.totalseconds;
-            if (left <= 0 || left >= MaxHorizon) return MaxHorizon;
-            toRebirth = true;
-            return left;
-        }
-
-        // Levels this half gains in `horizon` seconds. The level in flight lands after `secLeft` (its
-        // progress is already banked); every level after it costs c x (L+1), because the game's cost is
-        // linear in the level (getAugProgressPerTick divides by level+1). With c = secPerLevel/(level+1)
-        // the time for n more levels is c * (n*(level+1) + n(n+1)/2); invert for n.
-        //
-        // completedOnly FLOORS the result. The game pays stat boost per COMPLETED level (augLevel is an
-        // integer; augProgress only carries within a run), so at the rebirth a level still in flight is
-        // wiped and worth nothing — funding it is the waste the old cutoff crudely bounded. Mid-run the
-        // fraction is real: the progress is banked and the next pass resumes it, so it is priced as-is.
-        private static double LevelsInHorizon(double secPerLevel, double secLeft, double level, double horizon, bool completedOnly)
-        {
-            if (secPerLevel <= 0 || horizon <= 0) return 0;
-            if (secLeft <= 0 || secLeft > secPerLevel) secLeft = secPerLevel;   // no/odd progress data
-
-            double n;
-            if (horizon <= secLeft)
-            {
-                n = horizon / secLeft;   // still inside the level in flight
-            }
-            else
-            {
-                double c = secPerLevel / (level + 1.0);
-                double b = 2.0 * (level + 1.0) + 1.0;
-                double t = horizon - secLeft;
-                n = 1.0 + (-b + Math.Sqrt(b * b + 8.0 * t / c)) / 2.0;
-            }
-            if (completedOnly) n = Math.Floor(n);
-            return n > 0 ? n : 0;
+            return AugmentMath.Horizon(Main.Settings.AutoRebirth, target, _character.rebirthTime.totalseconds, out toRebirth);
         }
 
         // Which halves of the pair can still take energy. An aug is a candidate if EITHER half is live:
@@ -95,38 +98,20 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
         // hitUpgradeTarget()`, so a met UPGRADE target starved the aug half too, even pre-boss-37).
         private void LiveHalves(AugmentController aug, out bool augLive, out bool upgLive)
         {
-            augLive = !aug.augLocked() && !aug.hitAugmentTarget();
-            upgLive = _useUpgrades && !aug.upgradeLocked() && !aug.hitUpgradeTarget();
+            augLive = AugmentMath.HalfLive(aug.augLocked(), aug.hitAugmentTarget());
+            upgLive = _useUpgrades && AugmentMath.HalfLive(aug.upgradeLocked(), aug.hitUpgradeTarget());
         }
 
-        // Energy split by elasticity: boost goes as augLevel^tier x upgradeLevel^2, so the exponents
-        // tier and 2 are the shares. A dead half yields its share to the live one.
-        private static void Split(double tier, bool augLive, bool upgLive, out float augRatio, out float upgRatio)
-        {
-            if (augLive && upgLive)
-            {
-                augRatio = (float)(tier / (2.0 + tier));
-                upgRatio = (float)(2.0 / (2.0 + tier));
-            }
-            else
-            {
-                augRatio = augLive ? 1f : 0f;
-                upgRatio = upgLive ? 1f : 0f;
-            }
-        }
-
-        private long Share(float ratio) => ratio <= 0 ? 0 : Math.Max(1, (long)(MaxAllocation * ratio));
-
+        // Read every live fact the ranking needs into plain data, then let AugmentMath rank it. The
+        // Split-before-Share-before-TimeLeftEnergyMax ordering is load-bearing and preserved: a half's
+        // seconds-per-level is priced AT THE SHARE that half would actually receive, so the split has to
+        // be known before the rate can be read.
         private float AllocatePairs()
         {
             double horizon = Horizon(out bool toRebirth);
-
             double gold = _character.realGold;
-            var bestAugment = -1;
-            var bestValue = 0.0;
-            bool bestAugLive = false, bestUpgLive = false;
-            float bestAugRatio = 0f, bestUpgRatio = 0f;
 
+            var pairs = new List<AugmentMath.AugPairState>(7);
             for (var i = 0; i < 7; i++)
             {
                 var aug = _character.augmentsController.augments[i];
@@ -135,76 +120,52 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                     continue;
 
                 double tier = aug.augTierBonus();
-                Split(tier, augLive, upgLive, out float augRatio, out float upgRatio);
+                AugmentMath.Split(tier, augLive, upgLive, out float augRatio, out float upgRatio);
 
-                // Full-level cost, and what is left of the level in flight. TimeLeftEnergy is just
-                // TimeLeftEnergyMax x (1 - progress), so derive it instead of paying the game's rate
-                // call a second time per half.
-                float augProgress = aug.AugProgress();
-                float upgProgress = aug.UpgradeProgress();
-                double augSec = augLive ? Math.Max(0.01, aug.AugTimeLeftEnergyMax(Share(augRatio))) : 0;
-                double upgSec = upgLive ? Math.Max(0.01, aug.UpgradeTimeLeftEnergyMax(Share(upgRatio))) : 0;
-                double augLeft = augSec * (1.0 - augProgress);
-                double upgLeft = upgSec * (1.0 - upgProgress);
-
-                // Gold gate on the half we would actually start. A level already in progress, or one
-                // about to land, is worth waiting on; a cold one we cannot pay for is not.
-                double time = Math.Max(augSec, upgSec);
-                double cost = Math.Max(1, 1.0 / time) * (upgLive ? (double)aug.getUpgradeCost() : (double)aug.getAugCost());
-                float progress = upgLive ? upgProgress : augProgress;
-                double timeRemaining = upgLive ? upgLeft : augLeft;
-                if (cost > gold && (progress == 0f || timeRemaining < 10))
-                    continue;
-
-                double value = ProjectedGain(aug, augLive, upgLive, augSec, augLeft, upgSec, upgLeft, tier, horizon, toRebirth);
-                if (value > bestValue)
+                // Full-level cost. TimeLeftEnergy is just TimeLeftEnergyMax x (1 - progress), so the
+                // core derives the level-in-flight remainder instead of paying the game's rate call a
+                // second time per half.
+                pairs.Add(new AugmentMath.AugPairState
                 {
-                    bestAugment = i;
-                    bestValue = value;
-                    bestAugLive = augLive;
-                    bestUpgLive = upgLive;
-                    bestAugRatio = augRatio;
-                    bestUpgRatio = upgRatio;
-                }
+                    Index = i,
+                    AugLive = augLive,
+                    UpgLive = upgLive,
+                    Tier = tier,
+                    BaseBoost = aug.baseBoost,
+                    AugLevel = _character.augments.augs[aug.id].augLevel,
+                    UpgradeLevel = _character.augments.augs[aug.id].upgradeLevel,
+                    AugProgress = aug.AugProgress(),
+                    UpgradeProgress = aug.UpgradeProgress(),
+                    AugSecPerLevel = augLive ? Math.Max(0.01, aug.AugTimeLeftEnergyMax(AugmentMath.Share(MaxAllocation, augRatio))) : 0,
+                    UpgSecPerLevel = upgLive ? Math.Max(0.01, aug.UpgradeTimeLeftEnergyMax(AugmentMath.Share(MaxAllocation, upgRatio))) : 0,
+                    AugCost = aug.getAugCost(),
+                    UpgradeCost = aug.getUpgradeCost(),
+                    TotalStatBoostNow = aug.getTotalStatBoost()
+                });
             }
 
-            if (bestAugment == -1)
+            var pick = AugmentMath.PickBest(pairs, gold, horizon, toRebirth);
+            if (!pick.Found)
                 return 0;
 
-            var best = _character.augmentsController.augments[bestAugment];
+            var best = _character.augmentsController.augments[pick.Index];
             var totalAllocated = 0f;
-            var index = bestAugment * 2;
-            if (bestAugLive)
+            var index = pick.Index * 2;
+            if (pick.AugLive)
             {
-                long alloc = CalculateAugCap(index, Share(bestAugRatio));
+                long alloc = CalculateAugCap(index, AugmentMath.Share(MaxAllocation, pick.AugRatio));
                 SetInput(alloc);
                 best.addEnergyAug();
                 totalAllocated += alloc;
             }
-            if (bestUpgLive)
+            if (pick.UpgLive)
             {
-                long alloc = CalculateAugCap(index + 1, Share(bestUpgRatio));
+                long alloc = CalculateAugCap(index + 1, AugmentMath.Share(MaxAllocation, pick.UpgRatio));
                 SetInput(alloc);
                 best.addEnergyUpgrade();
                 totalAllocated += alloc;
             }
             return totalAllocated;
-        }
-
-        // Stat boost this pair would hold at the end of the horizon, minus what it holds now. The boost
-        // formula is the game's own (AugmentController.getTotalStatBoost):
-        //     baseBoost x (upgradeLevel^2 + 1) x augLevel^augTierBonus
-        private double ProjectedGain(AugmentController aug, bool augLive, bool upgLive,
-            double augSec, double augLeft, double upgSec, double upgLeft, double tier, double horizon, bool toRebirth)
-        {
-            double augLv = _character.augments.augs[aug.id].augLevel;
-            double upgLv = _character.augments.augs[aug.id].upgradeLevel;
-
-            double newAug = augLive ? augLv + LevelsInHorizon(augSec, augLeft, augLv, horizon, toRebirth) : augLv;
-            double newUpg = upgLive ? upgLv + LevelsInHorizon(upgSec, upgLeft, upgLv, horizon, toRebirth) : upgLv;
-
-            double projected = (double)aug.baseBoost * (Math.Pow(newUpg, 2.0) + 1.0) * Math.Pow(newAug, tier);
-            return projected - aug.getTotalStatBoost();
         }
     }
 }

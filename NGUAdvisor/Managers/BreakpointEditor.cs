@@ -14,6 +14,7 @@ namespace NGUAdvisor.Managers
     // Canonical payload per system (what BuildTimelinesJson emits and this parses, so they round-trip):
     //   energy/magic/r3 : "NGU-3, WAN, CAPAUG-10:50"        (comma tokens, priority order)
     //   gear            : "326, 100"  OR  "Optimize: <obj>" / "Optimize+Respawn: <obj>"
+    //                     OR "Lock: 326, 100; Optimize: <obj>"  (Gear Lock — pin, then optimize)
     //   diggers/beards  : "2, 4, 5"                          (comma slot indices)
     //   wandoos/ngudiff : "2"                                (single index)
     //   consumables     : "LC, MUFFIN:5"                     (comma CODE[:amount])
@@ -86,31 +87,74 @@ namespace NGUAdvisor.Managers
             return SetChallenge(m, sk, index, challenge);
         }
 
+        // GEAR LOCK grammar. A gear payload is one or more ';'-separated clauses:
+        //
+        //     "326, 100"                                 the whole loadout, exactly as before
+        //     "Optimize: Time Machine"                   every slot optimized, exactly as before
+        //     "Optimize+Respawn: Time Machine"           …plus the top-respawn pin, exactly as before
+        //     "Lock: 326, 100; Optimize: Time Machine"   lock those two, optimize every remaining slot
+        //
+        // ';' is the clause separator rather than '+' because '+' is already inside "Optimize+Respawn"
+        // and a separator that can appear inside a clause is a parser waiting to be wrong. A bare ID
+        // list is also accepted as a lock clause, because that is literally how the request was
+        // phrased ("specify certain items via ID, and then do Optimize: X") and refusing the obvious
+        // spelling teaches the grammar rather than the feature.
         private static Result ApplyGear(ProfileModel m, int index, int sec, string payload, string challenge)
         {
             if (!m.SetTimeSeconds("gear", index, sec)) return NoBp("gear", index);
             var p = (payload ?? "").Trim();
-            if (p.StartsWith("Optimize", StringComparison.OrdinalIgnoreCase))
+
+            string objective = null;
+            bool respawn = false, sawObjective = false;
+            var ids = new List<int>();
+
+            foreach (var clause in p.Split(';'))
             {
-                int colon = p.IndexOf(':');
-                string head = colon >= 0 ? p.Substring(0, colon) : p;
-                bool respawn = head.IndexOf("Respawn", StringComparison.OrdinalIgnoreCase) >= 0;
-                string obj = colon >= 0 ? p.Substring(colon + 1).Trim() : "";
-                if (obj.Length == 0)
-                    return Result.Fail("Gear objective is empty (use \"Optimize: <objective>\").");
-                m.SetGearObjective(index, obj, respawn);
-            }
-            else
-            {
-                var ids = new List<int>();
-                foreach (var raw in SplitCsv(p))
+                var c = clause.Trim();
+                if (c.Length == 0) continue;
+
+                if (c.StartsWith("Optimize", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) || id < 0)
+                    if (sawObjective)
+                        return Result.Fail("Only one \"Optimize:\" is allowed per gear breakpoint.");
+                    sawObjective = true;
+                    int colon = c.IndexOf(':');
+                    string head = colon >= 0 ? c.Substring(0, colon) : c;
+                    respawn = head.IndexOf("Respawn", StringComparison.OrdinalIgnoreCase) >= 0;
+                    objective = colon >= 0 ? c.Substring(colon + 1).Trim() : "";
+                    if (objective.Length == 0)
+                        return Result.Fail("Gear objective is empty (use \"Optimize: <objective>\").");
+                    continue;
+                }
+
+                // "Lock: 326, 100" or a bare "326, 100".
+                var body = c;
+                if (c.StartsWith("Lock", StringComparison.OrdinalIgnoreCase))
+                {
+                    int colon = c.IndexOf(':');
+                    if (colon < 0) return Result.Fail("Write locked items as \"Lock: 326, 100\".");
+                    body = c.Substring(colon + 1).Trim();
+                    if (body.Length == 0)
+                        return Result.Fail("Gear Lock is empty (use \"Lock: <item IDs>\", or drop the clause).");
+                }
+                foreach (var raw in SplitCsv(body))
+                {
+                    int id;
+                    if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out id) || id < 0)
                         return Result.Fail("'" + raw + "' is not a valid item ID.");
+                    if (ids.Contains(id))
+                        return Result.Fail("Item ID " + id + " is listed twice — the game equips one copy of an item at a time.");
                     ids.Add(id);
                 }
-                m.SetItems("gear", index, ids);
             }
+
+            // Three shapes, and each writes the setter that MEANS it. The two old setters each clear
+            // the half they do not state, which is still the right behaviour for "just a list" and
+            // "just an objective" — Gear Lock is the third, and it is the only one that writes both.
+            if (sawObjective && ids.Count > 0) m.SetGearLock(index, ids, objective, respawn);
+            else if (sawObjective) m.SetGearObjective(index, objective, respawn);
+            else m.SetItems("gear", index, ids);
+
             return SetChallenge(m, "gear", index, challenge);
         }
 

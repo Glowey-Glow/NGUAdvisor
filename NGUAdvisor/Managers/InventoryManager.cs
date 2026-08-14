@@ -26,18 +26,12 @@ namespace NGUAdvisor.Managers
 
         public void Reset() => queue.Clear();
 
-        public float Avg()
-        {
-            try
-            {
-                return queue.Average();
-            }
-            catch (Exception e)
-            {
-                Log(e.Message);
-                return 0;
-            }
-        }
+        // An empty rolling window is the NORMAL state for the first minute after a load or a reset, not
+        // an error. Averaging it threw InvalidOperationException, which was caught and written to
+        // inject.log as a bare "Sequence contains no elements" — 27 times in 26 minutes in the
+        // 2026-08-01 log, with nothing naming the subsystem. Harmless in itself, but it is exactly the
+        // kind of recurring noise that hides a real fault, so answer the question instead of throwing.
+        public float Avg() => queue.Count == 0 ? 0f : queue.Average();
     }
 
     public class Cube
@@ -51,7 +45,7 @@ namespace NGUAdvisor.Managers
 
     public static class InventoryManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly InventoryController _ic = Main.InventoryController;
         // Pendants, Lootys, Wanderer's Cane, Lonely Flubber, A Giant Seed
         private static readonly int[] _convertibles = { 53, 67, 76, 92, 94, 120, 128, 142, 154, 169, 170, 229, 230, 295, 296, 388, 389, 430, 431, 504, 505 };
@@ -208,14 +202,23 @@ namespace NGUAdvisor.Managers
                 _ic.mergeAll(item.slot);
             }
 
+
             // Consume quest items that dont need to be merged
             var quest = Main.Character.beastQuest;
             if (quest.inQuest)
             {
-                int num = quest.curDrops;
-                _ic.dumpAllIntoQuest(quest.questID);
-                if (quest.curDrops > num)
-                    Log($"Turning in {quest.curDrops - num} quest items");
+				// dumpAllIntoQuest is unconditional on the game side: InventoryController.cs:4859
+                // shows "BLOOP! All applicable Quest Items have been deposited!" for 2s whether or
+                // not anything moved. Calling it with no quest item in inventory spams that tooltip
+                // on every pass. The curDrops delta below already detected the no-op — it only ever
+                // guarded the LOG LINE, not the call.
+                if (Array.Exists(ci, x => IsQuest(x) && x.id == quest.questID))
+                {
+                    int num = quest.curDrops;
+                    _ic.dumpAllIntoQuest(quest.questID);
+                    if (quest.curDrops > num)
+                        Log($"Turning in {quest.curDrops - num} quest items");
+                }
 
                 // Surplus purge (user-reported: a FULL INVENTORY of Diploma 287 after a capstone
                 // hold). The game rolls quest drops on every manual-mode kill with NO at-target
@@ -430,14 +433,22 @@ namespace NGUAdvisor.Managers
                 lockedBoosts.Where(x => x.level == 100).ToList().ForEach(maxLockedBoost => Inventory.inventory[maxLockedBoost.slot].removable = true);
 
                 int? minId = lockedBoosts.Where(x => x.level != 100).Select(x => (int?)x.id).Min();
+                string cubeTarget;
                 if (minId <= 13)
-                    _ic.selectAutoPowerTransform();
+                { _ic.selectAutoPowerTransform(); cubeTarget = "Power"; }
                 else if (minId <= 26)
-                    _ic.selectAutoToughTransform();
+                { _ic.selectAutoToughTransform(); cubeTarget = "Toughness"; }
                 else if (minId <= 39)
-                    _ic.selectAutoSpecialTransform();
+                { _ic.selectAutoSpecialTransform(); cubeTarget = "Special"; }
                 else
                     return;
+
+                WriteLedger.Record("inventory.cubetarget", cubeTarget,
+                    "the lowest locked boost the advisor still wants is a " + cubeTarget + " one",
+                    ChallengeOverlay.Segment,
+                    "Chosen from the lowest-id boost that is locked and not yet at level 100",
+                    "Re-derived on every inventory pass, so it follows whatever you are short of",
+                    "It is a game setting, not an advisor one — it stays set when the advisor stops");
             }
 
             var needed = new BoostsNeeded();
@@ -713,7 +724,21 @@ namespace NGUAdvisor.Managers
             if (id < 40)
                 return;
 
+            bool wasFiltered = Inventory.itemList.itemFiltered[id];
             Inventory.itemList.itemFiltered[id] = true;
+
+            // ⚠ THE ONE ADVISOR WRITE WITH NO RECLAIM PATH ANYWHERE. Nothing clears these flags — not
+            // the next tick, not a swap, not a rebirth, not a new session. The game destroys filtered
+            // drops on creation, so a filter set for one objective silently keeps destroying items long
+            // after the objective is gone. It is in the ledger precisely because it is the write most
+            // likely to still be doing something months from now that nobody remembers asking for.
+            if (!wasFiltered)
+                WriteLedger.Record("inventory.lootfilter", "+1 id (" + id + ")",
+                    "advisor loot filter — the game destroys these drops on creation",
+                    ChallengeOverlay.Segment,
+                    "Set per item id as the advisor decides an item is not worth picking up",
+                    "Nothing in the advisor or the game ever clears it again",
+                    "It outlives this run, this rebirth and this session");
         }
 
         private static void FilterEquip(Equipment e)

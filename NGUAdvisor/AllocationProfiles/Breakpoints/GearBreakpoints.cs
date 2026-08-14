@@ -5,10 +5,15 @@ using System.Linq;
 
 namespace NGUAdvisor.AllocationProfiles.Breakpoints
 {
-    // A gear breakpoint is either a manual item-ID list ("ID") or an optimizer objective ("Objective").
-    // When an objective is set, the native gear optimizer computes the best loadout live (route C3) instead
-    // of using a fixed ID list - so gear stays optimal as it improves. Optimization runs in PerformSwap,
-    // which BaseBreakpoints only invokes when the active breakpoint changes (naturally throttled).
+    // A gear breakpoint carries a manual item-ID list ("ID"), an optimizer objective ("Objective"), or
+    // BOTH. When an objective is set, the native gear optimizer computes the best loadout live (route
+    // C3) instead of using a fixed ID list - so gear stays optimal as it improves. Optimization runs in
+    // PerformSwap, which BaseBreakpoints only invokes when the active breakpoint changes (naturally
+    // throttled).
+    //
+    // GEAR LOCK is the both-at-once case: the ID list stops being the whole loadout and becomes the
+    // items PINNED into it, with every remaining slot optimized for the objective. Before this, a row
+    // carrying both silently ignored its IDs.
     public class GearSpec
     {
         public int[] Ids;
@@ -16,9 +21,14 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
         public bool ForceRespawn;
     }
 
-    // ActiveObjective/ActiveForceRespawn mirror the objective of the last-applied gear breakpoint
+    // ActiveObjective/ActiveForceRespawn/ActiveLocks mirror the last-applied gear breakpoint
     // (null when the active breakpoint is a manual ID list) so AdvisorApply can periodically
     // re-optimize the same objective as drops improve (Phase C gear auto-refresh).
+    //
+    // ActiveLocks is published for exactly the same reason ActiveObjective is, and leaving it out is
+    // the bug that would have shipped: the refresh pass re-solves every 120 s from the resolver's
+    // answer, so an objective published WITHOUT its locks would quietly re-equip an unlocked set two
+    // minutes after the breakpoint applied the locked one.
     public class GearBreakpoints : BaseBreakpoints<GearSpec>
     {
         // ActiveObjective is a STATIC, but a profile load builds a NEW GearBreakpoints
@@ -34,6 +44,7 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
         {
             ActiveObjective = null;
             ActiveForceRespawn = false;
+            ActiveLocks = null;
         }
 
         private static GearSpec ParseSpec(JSONNode bp)
@@ -53,6 +64,9 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
         public static string ActiveObjective { get; private set; }
         public static bool ActiveForceRespawn { get; private set; }
+        // The item IDs the active gear breakpoint pins. Null / empty when it pins nothing, which is
+        // every profile written before Gear Lock existed.
+        public static int[] ActiveLocks { get; private set; }
 
         // Rebirth (CustomAllocation calls Reset on every lane) and "the timeline has nothing to say
         // yet". Both used to leave the previous value standing: at t=0 of a new run GetCurrentBreakpoint
@@ -102,18 +116,27 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                     ClearActive();
                     return false;
                 }
-                ids = GearOptimizer.OptimizeIds(objective, forceRespawn);
+                // GEAR LOCK: with an objective set, this row's ID list is no longer the loadout — it is
+                // the items pinned INTO it. (Before this the list was read and then thrown away.)
+                var locks = GearLockSet.Of(bp.priorities.Ids);
+                var best = GearOptimizer.Optimize(objective, forceRespawn, locks);
+                ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
                 if (ids.Length == 0)
                     return false;
-                Main.Log($"Optimized gear for '{objective.Name}'{(forceRespawn ? " (+top respawn)" : "")}: {ids.Length} items.");
+                GearOptimizer.ReportLock(best);
+                string held = best.Lock != null && best.Lock.Applied > 0
+                    ? $" (+{best.Lock.Applied} locked)" : "";
+                Main.Log($"Optimized gear for '{objective.Name}'{(forceRespawn ? " (+top respawn)" : "")}{held}: {ids.Length} items.");
                 ActiveObjective = objectiveName;
                 ActiveForceRespawn = forceRespawn;
+                ActiveLocks = locks == null ? null : locks.Ids.ToArray();
             }
             else
             {
                 ids = bp.priorities.Ids ?? new int[0];
                 ActiveObjective = null;
                 ActiveForceRespawn = false;
+                ActiveLocks = null;
             }
 
             current = bp;

@@ -8,7 +8,7 @@ namespace NGUAdvisor.Managers
 {
     public static class YggdrasilManager
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AllYggdrasil _yc = _character.yggdrasilController;
         private static readonly FruitController _fc = _yc.fruits[0];
 

@@ -18,7 +18,8 @@
         "Time": 0,
         "Priorities": [ "RIT-7", "CAPTM", "CAPALLNGU" ],
 		"Before30": [ "WAN" ],
-		"After30": [ "CAPTM", "RIT-7" ]
+		"After30": [ "CAPTM", "RIT-7" ],
+		"Note": "RIT-7 is the EIGHTH ritual and it only exists once the NORMAL Troll challenge has 6+ completions (ritualsUnlocked() returns a count, 7 or 8). CBlock2-Normal runs TC-5/6/7 and finishes before Evil entry, so the ritual is unlocked by the time this block starts; boss 105 is under the boss 125 this profile is entered at. If you skipped those Trolls the lane reports locked and is dropped before the share is divided - it costs nothing, it just does nothing."
       }
     ],
     "Gear": [
@@ -52,6 +53,10 @@
 	  {
 	    "Type": "Number",
 	    "Target": 1000
+	  },
+	  {
+	    "Type": "Time",
+	    "Time": { "m": 32 }
 	  }
 	],
 	"Challenges": ["100LC-1", "100LC-2", "100LC-3", "100LC-4", "100LC-5"]

@@ -5,7 +5,7 @@ namespace NGUAdvisor.Managers
 {
     public class CombatAI
     {
-        private static readonly Character _character = Main.Character;
+        private static Character _character => Main.Character;
         private static readonly AdventureController _ac = _character.adventureController;
         private static readonly PlayerController _pc = _ac.playerController;
         private readonly EnemyAI _eai;
