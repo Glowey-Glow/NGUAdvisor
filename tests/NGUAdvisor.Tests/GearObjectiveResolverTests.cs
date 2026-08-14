@@ -250,6 +250,72 @@ namespace NGUAdvisor.Tests
             Assert.False(pin.ForceRespawn);   // the profile's flag must not leak onto the pin
         }
 
+        // ── GEAR LOCK ─────────────────────────────────────────────────────────────────────────────
+        // The refresh pass re-solves the resolver's answer every 120 s. If the objective travelled
+        // without its locks, the locked set would go on once when the breakpoint applied and come
+        // back OFF two minutes later, with nothing anywhere saying why. So the locks travel with the
+        // name — and only from the row they belong to.
+
+        [Fact]
+        public void The_profile_rows_locks_travel_with_its_objective()
+        {
+            var i = In(profile: "Time Machine");
+            i.ProfileLocks = new[] { 326, 100 };
+            var r = GearObjectiveResolver.Resolve(i);
+            Assert.Equal(GearObjectiveResolver.Src.Profile, r.Source);
+            Assert.Equal(new[] { 326, 100 }, r.Locks);
+            Assert.Equal(2, r.LockCount);
+            Assert.Contains("2 items are locked", r.Sentence);
+        }
+
+        // A row with no locks — every profile written before the feature — must be indistinguishable
+        // from before: null, not an empty array, and not a word added to the sentence.
+        [Fact]
+        public void No_locks_reads_as_null_and_says_nothing()
+        {
+            var r = GearObjectiveResolver.Resolve(In(profile: "Time Machine"));
+            Assert.Null(r.Locks);
+            Assert.Equal(0, r.LockCount);
+            Assert.DoesNotContain("locked", r.Sentence);
+
+            var empty = In(profile: "Time Machine");
+            empty.ProfileLocks = new int[0];
+            Assert.Null(GearObjectiveResolver.Resolve(empty).Locks);
+        }
+
+        // The segment / challenge rows already borrow the profile breakpoint's RESPAWN flag — a
+        // pre-existing pairing this file documents and preserves. Locks are deliberately NOT extended
+        // that way: a lock names concrete items chosen for one row's plan, and pinning them into a
+        // challenge-rotation set the user never associated them with is a different loadout, silently.
+        [Fact]
+        public void An_override_does_not_borrow_the_profile_rows_locks()
+        {
+            var seg = In(over: "NGUs", overIsSegment: true, profile: "Time Machine", profileRespawn: true);
+            seg.ProfileLocks = new[] { 326 };
+            var r = GearObjectiveResolver.Resolve(seg);
+            Assert.Equal(GearObjectiveResolver.Src.Segment, r.Source);
+            Assert.True(r.ForceRespawn);      // the pre-existing pairing, unchanged
+            Assert.Null(r.Locks);             // …and it stops there
+        }
+
+        [Fact]
+        public void The_standing_pin_carries_no_locks()
+        {
+            var i = In(pin: "Power");
+            i.ProfileLocks = new[] { 326 };   // a stale profile lock with no profile objective in force
+            var r = GearObjectiveResolver.Resolve(i);
+            Assert.Equal(GearObjectiveResolver.Src.Pin, r.Source);
+            Assert.Null(r.Locks);
+        }
+
+        [Fact]
+        public void One_locked_item_is_said_in_the_singular()
+        {
+            var i = In(profile: "Time Machine");
+            i.ProfileLocks = new[] { 326 };
+            Assert.Contains("One item is locked", GearObjectiveResolver.Resolve(i).Sentence);
+        }
+
         [Fact]
         public void EverySourceProducesANonEmptySentence()
         {

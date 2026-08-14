@@ -103,6 +103,17 @@ namespace NGUAdvisor.Managers
             UpdateCheapestDigger();
 
             _dc.refreshMenu();
+
+            WriteLedger.Record("diggers.active",
+                string.Join(", ", usable.Select(d => d.ToString()).ToArray()),
+                allEquipped ? "advisor or profile digger set for this venue"
+                            : "some of the requested set could not be afforded at the current gold rate",
+                ChallengeOverlay.Segment,
+                usable.Length < diggers.Length
+                    ? $"Asked for {diggers.Length}, ran {usable.Length} — the rest are locked, unlevelled or past the slot count"
+                    : $"All {usable.Length} of the requested set are running",
+                ignoreCap ? "Gold cap ignored: a lock owns this set" : $"Held back to leave {Settings.DiggerCap}% of gold income",
+                "Cleared and rebuilt as a whole set; the next venue change replaces it");
             return allEquipped;
         }
 

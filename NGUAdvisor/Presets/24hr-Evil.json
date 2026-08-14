@@ -77,7 +77,9 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "HACK-13", "HACK-14", "HACK-12", "HACK-10", "HACK-8", "HACK-0", "HACK-5", "HACK-6", "HACK-7", "HACK-2", "HACK-3", "HACK-4", "HACK-9", "HACK-11", "HACK-1" ]
+        "Priorities": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "Prioritiesbak": [ "HACK-13", "HACK-14", "HACK-12", "HACK-10", "HACK-8", "HACK-0", "HACK-5", "HACK-6", "HACK-7", "HACK-2", "HACK-3", "HACK-4", "HACK-9", "HACK-11", "HACK-1" ],
+        "Note": "This window (Boss 125-166) is where CBlock3 completes, and the guide's ch.5 switch is: first milestone on Hacks 3-7 (guide numbering; ids 2-6, TM-mNGU), then Adventure as the default push. The old list was the community hack-day order used as an everyday waterfill - its head (HACK-13, Hack Hack) is the priciest non-Wish hack and drank the whole pool; it is kept as Prioritiesbak for hack days, matching 24hr-MidEvil."
       }
     ],
     "Gear": [

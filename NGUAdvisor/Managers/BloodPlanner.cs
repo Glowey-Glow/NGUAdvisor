@@ -235,7 +235,9 @@ namespace NGUAdvisor.Managers
         //  - While the Iron Pill is charging (ready or ready soon), everything is OFF to pool.
         //  - Counterfeit Gold only helps if the Time Machine has base gold to multiply, and matters
         //    most while gold-starved for augments.
-        //  - Spaghetti (drop chance) while the farm zone's recommended DC isn't met.
+        //  - Spaghetti (drop chance) while the farm zone's recommended DC isn't met AND the user's
+        //    SpaghettiThreshold cap hasn't been bought yet. Titans are deliberately not part of this
+        //    test — their loot does not roll against drop chance at all; see DcBelowZoneRec.
         //  - NUMBER boost is the default sink — dead only in NORB (no rebirth = the banked multi is
         //    never cashed) and when no rebirth is scheduled.
         public static void FillRouting(ref Plan p)
@@ -532,17 +534,42 @@ namespace NGUAdvisor.Managers
 
         // Spaghetti drop chance: worth it only while zone-farming a zone whose recommended drop chance
         // isn't met yet. Cost DOUBLES per +1%, so there's no reason to push past the zone target.
+        //
+        // NOT gated on GoldCBlockMode. It used to be, and that was a category error — drop chance has
+        // nothing to do with the gold C-block mode, and the gate made a correct decision UNREACHABLE:
+        // move to a zone whose recommendation exceeds your drop chance and Spaghetti becomes genuinely
+        // worth funding, but the mode flag would still refuse. The zone test is the real question and
+        // now the only one.
+        //
+        // ⚠ TITAN ZONES ARE ABSENT FROM RecommendedDcPercent ON PURPOSE, not by oversight. Titan loot
+        // does not roll against drop chance: [DECOMP] LootDrop.cs makeTitanLoot and the first
+        // Random.Range(1,6) gear piece are UNCONDITIONAL, and the only roll (the second piece) is
+        // `value < 0.5 * lootFactor` with value in [0,1) — guaranteed from lootFactor >= 2. What gates
+        // titan gear is the 5-way piece lottery, which no amount of drop chance affects. Ordinary zones
+        // need a table because they roll against the CUBE-ROOTED factor with 4-15% caps; titans bypass
+        // both. Do not "fix" the table by adding titan zones to it.
         private static bool DcBelowZoneRec(Character c, out string reason)
         {
             reason = null;
             try
             {
-                if (Main.Settings == null || !Main.Settings.GoldCBlockMode) return false;
+                if (Main.Settings == null) return false;
                 int zone = ZoneStatHelper.GetBestZone()?.Zone ?? -1;
                 if (zone < 0 || !ZoneStatHelper.RecommendedDcPercent.TryGetValue(zone, out var rec)) return false;
                 double cur = c.lootFactor() * 100.0;
                 if (!BloodPillMath.DcBelowRecommendation(cur, rec)) return false;
-                reason = $"Spaghetti DC — {cur:0}% < zone rec {rec:0}%";
+
+                // The user's SpaghettiThreshold as a CAP. Main.cs owns the same setting but only while
+                // the advisor is NOT managing blood, so with CastBloodSpells on it was read by nobody
+                // and the configured number silently did nothing. Honouring it here gives it one
+                // meaning under both writers: how many percent to buy before stopping. 0 = don't.
+                int cap = Main.Settings.SpaghettiThreshold;
+                if (cap <= 0) return false;
+                double lb = c.bloodMagic.lootSpellBlood, lm = c.bloodSpells.minLootBlood();
+                int have = lm > 0 && lb >= lm ? BloodPillMath.LootPercentNow(lb, lm) : 0;
+                if (have >= cap) return false;
+
+                reason = $"Spaghetti DC — {cur:0}% < zone rec {rec:0}% · +{have}% of {cap}% bought";
                 return true;
             }
             catch { return false; }

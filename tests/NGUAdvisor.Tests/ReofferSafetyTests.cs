@@ -413,6 +413,7 @@ namespace NGUAdvisor.Tests
         [InlineData("AdvancedTrainingBP", true)]
         [InlineData("WandoosBP", true)]             // moot: the sink is never handed to Offer
         [InlineData("HackBP", true)]                // not routed through this layer at all
+        [InlineData("MileHackBP", true)]            // HackBP's Allocate() verbatim — safe by inheritance
         public void Every_lane_type_carries_a_verdict(string lane, bool reofferable)
         {
             Assert.Equal(reofferable, ConstraintLayer.ReofferableLane(lane));

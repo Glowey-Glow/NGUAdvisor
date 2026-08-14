@@ -146,7 +146,7 @@ namespace NGUAdvisor.Managers
 
             return d.SurplusSink
                 ? "the surplus sink absorbed none of its offer: Wandoos is at its per-tick capAmount " +
-                  "(CapacityPass.Table) — the residue is left for the wish spare pass, on purpose"
+                  "(CapacityPass.Table) — the residue is offered to the wish share pass, on purpose"
                 : "offered resource and its own Allocate() took none of it: the stair-snap self-limited " +
                   "below one whole unit, or a gate inside Allocate refused (a self-limiting lane's " +
                   "capacity is only discovered at fill time)";

@@ -386,6 +386,24 @@ namespace NGUAdvisor.Managers
                     bm.lootAutoSpell = l;
                     bm.goldAutoSpell = g;
                 }
+
+                // ⚠ THIS PATH RUNS EVERY 60s AND Main.QuickStuff WRITES THE SAME THREE TOGGLES EVERY
+                // 0.5s, from its own thresholds, with nothing arbitrating between them. The fast one
+                // therefore wins roughly 120 : 1, which makes this one very nearly decorative whenever
+                // they disagree. Recorded unconditionally rather than inside `changed` for exactly that
+                // reason: the ledger's job here is to show that a second writer exists, and a writer
+                // that is being overwritten a hundred times a minute never sees `changed` go true.
+                var onNames = new List<string>();
+                if (r) onNames.Add("Rebirth");
+                if (l) onNames.Add("Loot");
+                if (g) onNames.Add("Gold");
+                WriteLedger.Record("blood.spells.advisor",
+                    onNames.Count > 0 ? string.Join(" + ", onNames.ToArray()) : "all off",
+                    "advisor blood routing for this run phase",
+                    ChallengeOverlay.Segment,
+                    "Recomputed from scratch once every 60 seconds",
+                    "Main.QuickStuff writes the same three toggles every 0.5 seconds",
+                    "If the two ever disagree, the 0.5s path is the one you are actually running");
                 // Log on a toggle change OR whenever the REASON changes. Logging only on change made
                 // the routing invisible whenever the advisor booted into an already-correct toggle
                 // state — the common case after a reload — so "working" and "never ran" looked the
@@ -574,6 +592,12 @@ namespace NGUAdvisor.Managers
         // riddle titans (6/7/8) only once their quest flags unlock. Drops targets the moment AK lands.
         private static DateTime _lastTitanTargets = DateTime.MinValue;
 
+        // The chase decision's memory, so it can be hysteretic rather than re-derived cold every pass.
+        // Keyed to "index:version" — a new objective has to clear the full bar on its own merits, so the
+        // deadband can never carry a commitment across to a titan it was never made about.
+        private static string _chaseKey;
+        private static bool _chasing;
+
         private static void ApplyTitans()
         {
             if (!Main.Settings.ManageTitans) return;
@@ -610,14 +634,28 @@ namespace NGUAdvisor.Managers
                 bool attemptReady = true;
                 if (objv.Known && objv.Stage == "first kill")
                 {
+                    // HYSTERETIC, and the state is keyed to the objective it belongs to. A bare threshold
+                    // here alternated across the line every 60s pass; each flip to "not ready" parked the
+                    // spawn on the AK version, which drops adventure routing mid-window and gives the game
+                    // a free lower-version kill in place of the attempt just committed to. See
+                    // TitanTables.ChaseReady for why the band is asymmetric.
+                    string key = objv.Index + ":" + objv.Version;
+                    if (_chaseKey != key) { _chaseKey = key; _chasing = false; }   // new objective, prove it again
                     try
                     {
                         OptimizationAdvisor.ProjectedBestGear(out var am, out var dm);
-                        attemptReady = c.totalAdvAttack() * am >= objv.ReqAttack
-                                    && c.totalAdvDefense() * dm >= objv.ReqDefense;
+                        double aR = objv.ReqAttack  > 0 ? c.totalAdvAttack()  * am / objv.ReqAttack  : double.MaxValue;
+                        double dR = objv.ReqDefense > 0 ? c.totalAdvDefense() * dm / objv.ReqDefense : double.MaxValue;
+                        attemptReady = TitanTables.ChaseReady(_chasing, Math.Min(aR, dR));
                     }
                     catch { attemptReady = false; }
+                    if (_chasing != attemptReady)
+                        Main.Log($"Advisor: titan chase -> {(attemptReady ? "committed" : "abandoned")} " +
+                                 $"T{objv.Index + 1} v{objv.Version} (best-gear projection crossed the " +
+                                 $"{(attemptReady ? TitanTables.ChaseCommitRatio : TitanTables.ChaseAbandonRatio):0.00}x band)");
+                    _chasing = attemptReady;
                 }
+                else { _chaseKey = null; _chasing = false; }
 
                 int maxZone = ZoneHelpers.GetMaxReachableZone(true);
                 var targets = new bool[14];
@@ -698,18 +736,47 @@ namespace NGUAdvisor.Managers
                             int akVer = 0;
                             for (int vv = 1; vv <= objv.Version; vv++)
                                 try { if (ZoneHelpers.AutokillAvailable(primary, vv)) akVer = vv; } catch { }
-                            if (akVer > 0 && spawn != akVer)
+
+                            // AutokillAvailable is a RECORD, not a capability test: [DECOMP]
+                            // autokillTitan{N}V{v}Achieved is only true for versions already auto-killed.
+                            // Walking down on it alone skips a version that can be BEATEN but never has
+                            // been — and that closes a loop with no exit, because achieving v2's AK
+                            // requires fighting v2, which parking on v1 prevents. Field symptom: "ready
+                            // for T7 v2 but killing T7 v1" with 2.4x headroom on the v2 floor.
+                            //
+                            // So ask whether the version is killable instead of whether it was killed:
+                            // convert its staged requirement to a gear floor and let the solver answer.
+                            //
+                            // NOT under goldPending. There the kill has to be FREE — the gold swap fights
+                            // in drop gear, and turning that into a real fight is the death loop this
+                            // branch's exception was added to stop. Killable is not free; only an AK is.
+                            int parkVer = akVer;
+                            if (!goldPending)
                             {
-                                ZoneHelpers.SetTitanVersion(primary, akVer);
+                                string killWhy;
+                                int killable = TitanFloorPlanner.HighestKillable(primary, objv.Version, out killWhy);
+                                // 0 means "could not determine" and must leave the AK answer standing —
+                                // reading it as "nothing is killable" would park at the bottom of the ladder.
+                                if (killable > parkVer) { parkVer = killable; Main.LogDebug($"Titan step-down: {killWhy}"); }
+                            }
+
+                            if (parkVer > 0 && spawn != parkVer)
+                            {
+                                ZoneHelpers.SetTitanVersion(primary, parkVer);
                                 if (goldPending)
                                 {
-                                    Main.Log($"Advisor: titan spawn version -> v{akVer} (gold bank pending — free AK kill first)");
-                                    ChallengeOverlay.Record("TITAN", $"titan version → v{akVer}", "gold bank pending — banking before the push");
+                                    Main.Log($"Advisor: titan spawn version -> v{parkVer} (gold bank pending — free AK kill first)");
+                                    ChallengeOverlay.Record("TITAN", $"titan version → v{parkVer}", "gold bank pending — banking before the push");
+                                }
+                                else if (parkVer > akVer)
+                                {
+                                    Main.Log($"Advisor: titan spawn version -> v{parkVer} (v{objv.Version} first-kill stats out of reach, but v{parkVer} is killable in best gear — fighting it beats farming v{akVer})");
+                                    ChallengeOverlay.Record("TITAN", $"titan version → v{parkVer}", $"v{objv.Version} is out of reach; v{parkVer} is winnable, so it is worth fighting");
                                 }
                                 else
                                 {
-                                    Main.Log($"Advisor: titan spawn version -> v{akVer} (v{objv.Version} first-kill stats out of reach — farming the AK version meanwhile)");
-                                    ChallengeOverlay.Record("TITAN", $"titan version → v{akVer}", $"v{objv.Version} first kill needs {objv.ReqAttack:0.#e0} atk — not there yet even in best gear");
+                                    Main.Log($"Advisor: titan spawn version -> v{parkVer} (v{objv.Version} first-kill stats out of reach — farming the AK version meanwhile)");
+                                    ChallengeOverlay.Record("TITAN", $"titan version → v{parkVer}", $"v{objv.Version} first kill needs {objv.ReqAttack:0.#e0} atk — not there yet even in best gear");
                                 }
                             }
                         }
@@ -1286,6 +1353,11 @@ namespace NGUAdvisor.Managers
         // loadout available (>= 5%). Optimize is heavy, so this is throttled well beyond the 30s tick.
         private static DateTime _lastGearCheck = DateTime.MinValue;
         private static string _lastGearObjective;
+        // The Gear Lock the last committed pass ran with, as a canonical id string. Tracked next to
+        // the objective and for the same reason: a lock change must bypass the 5% anti-churn bar, and
+        // a lock usually LOWERS the solved score, so without this a newly added lock never clears the
+        // bar and never goes on. "" = no locks, which is every profile written before the feature.
+        private static string _lastGearLocks = "";
         // False on every payload load. A reload can leave a lock's TEMP loadout equipped with the
         // restore set lost (Unload doesn't release locks; statics wipe — user-reported: gear stayed
         // swapped after a reload and never returned to the segment loadout, because the score
@@ -1303,6 +1375,32 @@ namespace NGUAdvisor.Managers
         {
             _lastGearObjective = null;
             _lastGearCheck = DateTime.MinValue;
+        }
+
+        // Are every locked item actually ON right now? The two "don't downgrade" guards below compare
+        // SCORES, and a score cannot see a lock — pinning an item the optimizer would not have chosen
+        // is, by construction, a lower score. So both guards additionally require that the locks are
+        // already worn; otherwise they would answer "already optimal" about a set that is missing the
+        // very items the user pinned, and the locks would never be equipped at all.
+        //
+        // True when there is no lock, which is the whole of the old behaviour.
+        private static bool LocksAreWorn(GearLockPlan plan)
+        {
+            if (plan == null || plan.Applied == 0) return true;
+            try
+            {
+                var worn = new HashSet<int>(LoadoutManager.CurrentGearIds());
+                foreach (var id in plan.Weapons) if (!worn.Contains(id)) return false;
+                foreach (var id in plan.Accessories) if (!worn.Contains(id)) return false;
+                if (plan.Head != 0 && !worn.Contains(plan.Head)) return false;
+                if (plan.Chest != 0 && !worn.Contains(plan.Chest)) return false;
+                if (plan.Legs != 0 && !worn.Contains(plan.Legs)) return false;
+                if (plan.Boots != 0 && !worn.Contains(plan.Boots)) return false;
+                return true;
+            }
+            // An unreadable inventory must not STRAND the locks: fall back to "not worn", which lets
+            // the equip proceed. The opposite default would silently keep them off forever.
+            catch { return false; }
         }
 
         // A drop / merge / trash changed what the player owns, so the set the optimizer would pick may
@@ -1353,6 +1451,14 @@ namespace NGUAdvisor.Managers
                     if (huntIds.Length == 0) return "The loot-hunter loadout resolved empty.";
                     LoadoutManager.ChangeGear(huntIds);
                     Main.InventoryController.assignCurrentEquipToLoadout(0);
+                    // A slot the OPERATOR owns, saved over by four separate advisor gear paths, with nothing
+                    // anywhere saying so until the census found it. Its previous contents are retained nowhere,
+                    // which is why the ledger row exists and an undo for it cannot.
+                    WriteLedger.Record("gear.slot0", "overwritten with the advisor's current gear",
+                        "saved automatically after an advisor gear change", ChallengeOverlay.Segment,
+                        "Four advisor gear paths do this; all of them land here",
+                        "The contents that were in the slot before are not kept anywhere",
+                        "Re-save the slot yourself if you were using it");
                     _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
                     Main.Log($"Advisor: gear re-optimized on request — loot hunter ({what})");
                     return $"Equipped the loot-hunter set ({what}).";
@@ -1361,22 +1467,38 @@ namespace NGUAdvisor.Managers
                 var obj = GearOptimizer.FindObjective(objName);
                 if (obj == null) return $"Couldn't find the '{objName}' objective.";
                 double cur = GearOptimizer.CurrentScore(obj);
-                // Name and respawn flag come from the SAME resolution, so the set scored here is always
-                // the set that would be equipped. For every pre-existing source this is the profile
-                // breakpoint's flag exactly as before; only the standing pin supplies its own.
-                var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn);
+                // Name, respawn flag AND Gear Lock come from the SAME resolution, so the set scored
+                // here is always the set that would be equipped. For every pre-existing source this is
+                // the profile breakpoint's flag exactly as before; only the standing pin supplies its
+                // own, and only the profile row supplies locks.
+                var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn, GearLockSet.Of(resolved.Locks));
                 if (best == null) return "The optimizer returned no set for this objective.";
+                GearOptimizer.ReportLock(best);
                 var ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
                 if (ids.Length == 0) return "The optimizer returned an empty set.";
 
                 _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
                 // Don't downgrade: if the worn set already scores at/above the optimizer's best, leave it.
-                if (cur > 0 && best.Score <= cur)
+                //
+                // ⚠ THE SCORE COMPARISON IS BLIND TO A LOCK, and a lock usually COSTS score — that is
+                // what pinning an item the optimizer would not have chosen means. Without the second
+                // clause, pressing the button while wearing a better unlocked set answers "already
+                // optimal" and never equips the locked one, which is a flat lie about a set the user
+                // explicitly asked for. So the guard only applies once the locks are actually on.
+                if (cur > 0 && best.Score <= cur && LocksAreWorn(best.Lock))
                     return $"Already optimal for '{obj.Name}' — your equipped set is the best available.";
 
                 double gain = cur > 0 ? (best.Score / cur - 1) * 100 : 0;
                 LoadoutManager.ChangeGear(ids);
                 Main.InventoryController.assignCurrentEquipToLoadout(0);
+                // A slot the OPERATOR owns, saved over by four separate advisor gear paths, with nothing
+                // anywhere saying so until the census found it. Its previous contents are retained nowhere,
+                // which is why the ledger row exists and an undo for it cannot.
+                WriteLedger.Record("gear.slot0", "overwritten with the advisor's current gear",
+                    "saved automatically after an advisor gear change", ChallengeOverlay.Segment,
+                    "Four advisor gear paths do this; all of them land here",
+                    "The contents that were in the slot before are not kept anywhere",
+                    "Re-save the slot yourself if you were using it");
                 Main.Log($"Advisor: gear re-optimized on request for '{obj.Name}' (+{gain:0.#}%)");
                 return gain > 0.05
                     ? $"Equipped the best set for '{obj.Name}' — +{gain:0.#}% over what was on."
@@ -1432,6 +1554,14 @@ namespace NGUAdvisor.Managers
                 _lastGearObjective = objName;
                 LoadoutManager.ChangeGear(huntIds);
                 Main.InventoryController.assignCurrentEquipToLoadout(0);
+                // A slot the OPERATOR owns, saved over by four separate advisor gear paths, with nothing
+                // anywhere saying so until the census found it. Its previous contents are retained nowhere,
+                // which is why the ledger row exists and an undo for it cannot.
+                WriteLedger.Record("gear.slot0", "overwritten with the advisor's current gear",
+                    "saved automatically after an advisor gear change", ChallengeOverlay.Segment,
+                    "Four advisor gear paths do this; all of them land here",
+                    "The contents that were in the slot before are not kept anywhere",
+                    "Re-save the slot yourself if you were using it");
                 Main.Log($"Advisor: gear hunt loadout equipped — {what}{(firstHunt ? " (startup/reload assert)" : "")}");
                 return;
             }
@@ -1445,18 +1575,33 @@ namespace NGUAdvisor.Managers
             // verified already-optimal) — a no-op pass must NOT consume the bypass (user-reported:
             // segment flipped during a titan lock; the first post-release pass fizzled and the
             // stale AT gear then sat inside the 5% bar forever).
-            bool objectiveChanged = objName != _lastGearObjective;
+            //
+            // A CHANGED GEAR LOCK COUNTS AS A CHANGED OBJECTIVE, and this is the wiring that would
+            // otherwise have shipped broken. The 5% bar compares the solved score against the WORN
+            // score, and a lock normally lowers the solved score — so editing your profile to pin two
+            // items, with the objective name unchanged, produces `best.Score < cur * 1.05` forever and
+            // the locks never go on. Nothing anywhere would have said so. Same rule the objective
+            // switch already has, for the same reason: "gear that is within 5% but not what was asked
+            // for" is still the wrong gear.
+            string lockKey = resolved.Locks == null ? "" : string.Join(",", resolved.Locks.Select(x => x.ToString()));
+            bool objectiveChanged = objName != _lastGearObjective || lockKey != _lastGearLocks;
             double cur = GearOptimizer.CurrentScore(obj);
-            // Same resolution supplied the name AND the respawn flag, so this score always describes the
-            // set that would actually be equipped. Unchanged from before for every pre-existing source.
-            var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn);
+            // Same resolution supplied the name, the respawn flag AND the Gear Lock, so this score
+            // always describes the set that would actually be equipped. Unchanged from before for
+            // every pre-existing source (no profile written before Gear Lock carries one).
+            var best = GearOptimizer.Optimize(obj, resolved.ForceRespawn, GearLockSet.Of(resolved.Locks));
             if (best == null) return;
+            GearOptimizer.ReportLock(best);
             if (_gearAsserted)
             {
                 if (!objectiveChanged && (cur <= 0 || best.Score < cur * 1.05)) return;
-                if (objectiveChanged && cur > 0 && best.Score <= cur)
+                // Same trap as ForceGearReoptimize's "already optimal": a lock costs score, so without
+                // the LocksAreWorn clause this branch would declare the UNLOCKED worn set "optimal for
+                // the new objective", commit the change, and leave the locks off permanently.
+                if (objectiveChanged && cur > 0 && best.Score <= cur && LocksAreWorn(best.Lock))
                 {
                     _lastGearObjective = objName;   // verified: equipped gear IS optimal for the new objective
+                    _lastGearLocks = lockKey;
                     return;
                 }
             }
@@ -1466,8 +1611,17 @@ namespace NGUAdvisor.Managers
             bool firstAssert = !_gearAsserted;
             _gearAsserted = true;
             _lastGearObjective = objName;
+            _lastGearLocks = lockKey;
             LoadoutManager.ChangeGear(ids);
             Main.InventoryController.assignCurrentEquipToLoadout(0);
+            // A slot the OPERATOR owns, saved over by four separate advisor gear paths, with nothing
+            // anywhere saying so until the census found it. Its previous contents are retained nowhere,
+            // which is why the ledger row exists and an undo for it cannot.
+            WriteLedger.Record("gear.slot0", "overwritten with the advisor's current gear",
+                "saved automatically after an advisor gear change", ChallengeOverlay.Segment,
+                "Four advisor gear paths do this; all of them land here",
+                "The contents that were in the slot before are not kept anywhere",
+                "Re-save the slot yourself if you were using it");
             Main.Log(firstAssert
                 ? $"Advisor: gear asserted for '{obj.Name}' (startup/reload — known-good loadout re-equipped)"
                 : objectiveChanged
@@ -1505,6 +1659,16 @@ namespace NGUAdvisor.Managers
 
             string from = v.CurrentName;
             c.wandoos98.changeOS((OSType)v.BestOs);
+
+            // The advisor's claim on the OS. The profile's Wandoos breakpoints write it too, from a
+            // different rule, so the pair reads Contested. Named here as the expensive one: changeOS
+            // wipes the dump levels, and the row says so rather than leaving the cost to be discovered.
+            WriteLedger.Record("wandoos.os.advisor", string.IsNullOrEmpty(v.BestName) ? "OS " + v.BestOs : v.BestName,
+                $"projected {v.Advantage:0.0}x better than {from} over the rest of the run",
+                ChallengeOverlay.Segment,
+                $"Switched from {from} after a 10-minute cooldown and a 1.25x advantage floor",
+                "Your profile's Wandoos breakpoints write this field too",
+                "⚠ The switch wiped the Wandoos energy and magic dump levels — that is what it cost");
             _lastOsSwitch = DateTime.UtcNow;
             Main.Log($"Advisor: switched Wandoos OS {from} -> {v.BestName} (~{WandoosAdvisor.FmtX(v.Advantage)} better at your cap)");
         }

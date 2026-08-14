@@ -305,7 +305,7 @@ namespace NGUAdvisor.Tests
 
             // And it makes the block IDLE where it idled nothing: Wandoos cannot absorb the whole
             // 868 B it is handed (WandoosEnergyCapacity, measured), so the excess is left for the
-            // wish spare pass exactly as ConstraintLayerBridge documents.
+            // wish share pass exactly as ConstraintLayerBridge documents.
             Assert.Equal(868_541_553_665L, after.SinkOffer);
             Assert.Equal(0, before.Idle);
             Assert.True(after.SinkOffer - WandoosEnergyCapacity > 70_000_000_000L,
@@ -386,7 +386,7 @@ namespace NGUAdvisor.Tests
 
             // ⚠ WHAT ACTUALLY LANDS, and it is bounded by the GAME, not by this rule. Wandoos absorbs
             // at most its per-tick capacity; ConstraintLayerBridge leaves the excess idle ON PURPOSE
-            // for the wish spare pass. At the capacity measured on this account that is 798.09 B
+            // for the wish share pass. At the capacity measured on this account that is 798.09 B
             // converted out of a pool that was converting NOTHING — idle 99.707% -> 53.53%.
             long landed = Math.Min(WandoosEnergyCapacity, after.SinkOffer);
             long stranded = after.SinkOffer - landed;

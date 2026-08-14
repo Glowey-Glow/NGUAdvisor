@@ -63,19 +63,31 @@ namespace NGUAdvisor.Managers
                 _wc.selectNewWish(wishToSelect);
         }
 
-        public static void Allocate(bool overCap = false)
+        // Runs once per allocation tick, AFTER the energy/magic/R3 swaps (CustomAllocation step
+        // "Wishes (share of remaining idle)"), so the % sliders bite on what the other systems
+        // actually left — not on a freshly reclaimed pool (audit/38 §E4.1; the old overCap spare
+        // pass and the pre-swap percent pass are both gone). Wish holdings are invisible to every
+        // lane reclaim (ConstraintLayerBridge.Reclaim, R3Breakpoints.RemoveR3 — none touch
+        // wishesController), so the release below is the only per-tick release: wishes hand back
+        // everything and re-take percent × (old holdings + fresh residue). The un-taken remainder
+        // sits idle for one tick and the next swap reabsorbs it into the lanes, so a slider below
+        // 100 bleeds wish funding back to the allocators until the two reach equilibrium.
+        public static void Allocate()
         {
             _wc.removeAllResources();
 
-            long remainingEnergy = overCap ? _character.idleEnergy : (long)Math.Ceiling(_character.idleEnergy * Settings.WishEnergy / 100.0);
+            // The > idle clamps are not decorative: above 2^53 the double product loses exactness
+            // and Ceiling can land one unit past the pool (pools legitimately exceed 1e18 under
+            // potions — audit/15 §A1).
+            long remainingEnergy = (long)Math.Ceiling(_character.idleEnergy * Settings.WishEnergy / 100.0);
             if (remainingEnergy > _character.idleEnergy)
                 remainingEnergy = _character.idleEnergy;
 
-            long remainingMagic = overCap ? _character.magic.idleMagic : (long)Math.Ceiling(_character.magic.idleMagic * Settings.WishMagic / 100.0);
+            long remainingMagic = (long)Math.Ceiling(_character.magic.idleMagic * Settings.WishMagic / 100.0);
             if (remainingMagic > _character.magic.idleMagic)
                 remainingMagic = _character.magic.idleMagic;
 
-            long remainingRes3 = overCap ? _character.res3.idleRes3 : (long)Math.Ceiling(_character.res3.idleRes3 * Settings.WishR3 / 100.0);
+            long remainingRes3 = (long)Math.Ceiling(_character.res3.idleRes3 * Settings.WishR3 / 100.0);
             if (remainingRes3 > _character.res3.idleRes3)
                 remainingRes3 = _character.res3.idleRes3;
 

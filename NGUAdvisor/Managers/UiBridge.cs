@@ -66,6 +66,11 @@ namespace NGUAdvisor.Managers
         private readonly LinkedList<JSONObject> _feed = new LinkedList<JSONObject>();
         private int _lastActivitySeq = int.MinValue;
         private string[] _profilesCache;                 // profile names, refreshed ~every 5s (avoid per-tick disk)
+        // Last published allocation signature per pool. An unchanged tick then costs one string compare
+        // rather than a lane array — see the `pools` node for why that gate is measured, not preferred.
+        // _poolsEverSent forces a full first payload, so a page that connects mid-run is never empty.
+        private readonly Dictionary<string, string> _poolSig = new Dictionary<string, string>();
+        private bool _poolsEverSent;
         // One-shot "show this view" request from an in-game hotkey (F9 -> Profile Editor). Snapshots repeat
         // every second, so the page acts on a CHANGE of `seq`; the node also expires (NavTtlSnaps) so a
         // companion that opens minutes later doesn't jump to a view the user asked for long ago.
@@ -1379,6 +1384,21 @@ namespace NGUAdvisor.Managers
                     // set it to 0), so the key is present exactly when a regen gate is the thing being
                     // chased — its ABSENCE means "no regen requirement here", not "0% of the way there".
                     if (c != null && obj.ReqRegen > 0) t["regen"] = ClampPct(c.totalAdvHPRegen() / obj.ReqRegen * 100.0);
+
+                    // ⚠ THE OBJECTIVE VERSION AND THE SPAWN VERSION ARE DIFFERENT NUMBERS, and this node
+                    // used to publish only the first while the titan chip row published only the second —
+                    // so the same snapshot line said "T7 v2" in one place and "v1" in another, with nothing
+                    // anywhere admitting they were different questions.
+                    //
+                    //   objV   what the advisor is CHASING (the first not-yet-autokilled version)
+                    //   spawnV what will actually spawn — adventure.titan{n}Version, the difficulty
+                    //          SELECTOR, which the advisor parks on a lower version whenever a gold bank
+                    //          is pending or the chase is abandoned
+                    //
+                    // They legitimately differ, often for hours. Publishing both lets the goal card say
+                    // "chasing v2 — spawn parked on v1" instead of quietly contradicting its own chip row.
+                    t["objV"] = obj.Version;
+                    try { t["spawnV"] = ZoneHelpers.TitanVersion(obj.Index); } catch { }
                 }
                 inst["titan"] = t;
             });
@@ -2280,6 +2300,146 @@ namespace NGUAdvisor.Managers
             });
 
             // --- profiles: list (throttled disk read) + active + auto-profile (M3) ---
+            // WHERE THE POOL ACTUALLY WENT. Per-lane seat, cap, offered, took and the unallocated
+            // remainder — the numbers that until now existed only as prose in debug.log.
+            //
+            // ⚠ SIGNATURE-GATED, AND THAT IS A MEASURED DECISION, NOT A PREFERENCE. This snapshot is
+            // already ~30KB on the wire every second and costs ~314KB of allocation per tick to build,
+            // on the Unity main thread, on a runtime this project has repeatedly flagged as
+            // GC-sensitive. Lane data is the largest thing anyone has proposed adding to it. But the
+            // allocator ALREADY computes a signature of its own result for the log throttle, so
+            // "did anything actually move" is free to ask — the heavy payload rides only when it did.
+            //
+            // `seq` rides every tick regardless, and cheaply. Without it a quiet allocator and a dead
+            // pipe look identical on the page, which was the one real objection to gating at all.
+            Safe("pools", () =>
+            {
+                var pools = new JSONObject();
+                pools["seq"] = _seq;
+                bool anyChanged = false;
+
+                Action<string, ConstraintLayer.Plan> emit = (key, plan) =>
+                {
+                    if (plan == null || plan.Lanes == null) return;
+                    string sig;
+                    try { sig = AllocTelemetry.Signature(plan, null); } catch { sig = null; }
+                    string prev;
+                    _poolSig.TryGetValue(key, out prev);
+                    if (prev != null && prev == sig) return;   // nothing moved — do not pay for it
+                    _poolSig[key] = sig;
+                    anyChanged = true;
+
+                    var p = new JSONObject();
+                    p["pool"] = Num(plan.Pool);
+                    p["unallocated"] = Num(plan.Unallocated);
+                    if (!string.IsNullOrEmpty(plan.UnallocatedReason)) p["idleWhy"] = plan.UnallocatedReason;
+                    p["sinkSeated"] = plan.SinkSeated;
+                    if (!string.IsNullOrEmpty(plan.SinkRefusalReason)) p["sinkRefused"] = plan.SinkRefusalReason;
+                    if (!string.IsNullOrEmpty(plan.BudgetMessage)) p["budget"] = plan.BudgetMessage;
+
+                    var lanes = new JSONArray();
+                    for (int i = 0; i < plan.Lanes.Length; i++)
+                    {
+                        var d = plan.Lanes[i];
+                        var o = new JSONObject();
+                        o["name"] = d.Label ?? d.Name ?? "?";
+                        o["seated"] = d.Seated;
+                        o["sink"] = i == plan.SinkIndex;
+                        o["took"] = Num(d.Allocation);
+                        o["offered"] = Num(d.Offered);
+                        if (!d.Seated && !string.IsNullOrEmpty(d.Reason)) o["why"] = d.Reason;
+                        lanes.Add(o);
+                    }
+                    p["lanes"] = lanes;
+                    pools[key] = p;
+                };
+
+                emit("energy", ConstraintLayerBridge.LastEnergyPlan);
+                emit("magic", ConstraintLayerBridge.LastMagicPlan);
+                if (anyChanged || _poolsEverSent == false)
+                {
+                    _poolsEverSent = true;
+                    root["pools"] = pools;
+                }
+                else
+                {
+                    // Liveness only. The page keeps the lanes it already has and advances its "as of".
+                    var tick = new JSONObject();
+                    tick["seq"] = _seq;
+                    root["pools"] = tick;
+                }
+            });
+
+            // WHAT THE ADVISOR HAS SET ON YOUR BEHALF. Small by construction — WriteLedger keeps one row
+            // per FIELD, not per assignment, so a writer re-asserting the same value every tick costs one
+            // comparison and contributes one row. No cache and no _seq residue needed at this size.
+            Safe("ledger", () =>
+            {
+                var lg = new JSONObject();
+                lg["declared"] = WriteLedger.DeclaredCount;
+                lg["live"] = WriteLedger.LiveCount;
+                lg["pending"] = WriteLedger.DeclaredCount - WriteLedger.LiveCount;
+
+                var rows = new JSONArray();
+                foreach (var e in WriteLedger.Snapshot())
+                {
+                    var spec = WriteLedger.Spec(e.WriterId);
+                    if (spec == null) continue;
+                    var o = new JSONObject();
+                    o["id"] = e.WriterId;
+                    o["system"] = spec.System;
+                    o["game"] = spec.Game;      // what the operator sees in the game — the row's headline
+                    o["field"] = spec.Field;    // where it lives in the save — detail pane only
+                    o["rule"] = spec.Rule;
+                    o["authority"] = spec.Authority;
+                    o["value"] = e.Value ?? "";
+                    o["why"] = e.Why ?? "";
+                    o["segment"] = e.Segment ?? "";
+                    o["state"] = WriteLedger.StateName(e.State);
+                    o["t"] = e.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+                    var chain = new JSONArray();
+                    if (e.Chain != null) foreach (var step in e.Chain) chain.Add(step);
+                    o["chain"] = chain;
+                    rows.Add(o);
+                }
+                lg["rows"] = rows;
+                root["ledger"] = lg;
+            });
+
+            // WHICH SECTIONS OF THE LOADED PROFILE ARE ACTUALLY DRIVING THE GAME. The profiles node
+            // below carries the file list and the active name; this carries whether any of it is
+            // RUNNING. Cheap by construction — ProfileSections.Evaluate is pure boolean logic over
+            // settings already in memory, no disk, no reflection, no Character read — so it needs no
+            // cache and no _seq residue, unlike its neighbours.
+            Safe("sections", () =>
+            {
+                var st = Main.Settings; if (st == null) return;
+                var inputs = new SectionInputs
+                {
+                    GlobalEnabled = st.GlobalEnabled,
+                    AutoProfile = st.AutoProfile,
+                    ManageEnergy = st.ManageEnergy, ManageMagic = st.ManageMagic, ManageR3 = st.ManageR3,
+                    ManageGear = st.ManageGear, AdvisorGearRefresh = st.AdvisorGearRefresh,
+                    ManageWandoos = st.ManageWandoos, AdvisorWandoosOS = st.AdvisorWandoosOS,
+                    ManageDiggers = st.ManageDiggers, AdvisorDiggers = st.AdvisorDiggers,
+                    ManageBeards = st.ManageBeards, AdvisorBeards = st.AdvisorBeards,
+                    ManageNGUDiff = st.ManageNGUDiff, ManageConsumables = st.ManageConsumables,
+                    AutoRebirth = st.AutoRebirth,
+                    NguTrackOverrideActive = LevelPlanner.NguTrackOwned
+                };
+                var arr = new JSONArray();
+                foreach (var v in ProfileSections.Evaluate(inputs))
+                {
+                    var o = new JSONObject();
+                    o["key"] = v.Key;
+                    o["label"] = v.Label;
+                    o["driver"] = ProfileSections.DriverName(v.Driver);
+                    o["why"] = v.Reason;
+                    arr.Add(o);
+                }
+                root["sections"] = arr;
+            });
+
             Safe("profiles", () =>
             {
                 if (_profilesCache == null || (_seq % 5) == 1)   // refresh ~every 5th snapshot

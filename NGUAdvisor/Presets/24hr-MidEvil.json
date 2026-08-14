@@ -67,8 +67,9 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "HACK-1" ],
-        "Prioritiesbak": [ "HACK-13", "HACK-14", "HACK-12", "HACK-10", "HACK-8", "HACK-0", "HACK-5", "HACK-6", "HACK-7", "HACK-2", "HACK-3", "HACK-4", "HACK-9", "HACK-11", "HACK-1" ]
+        "Priorities": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "Prioritiesbak": [ "HACK-13", "HACK-14", "HACK-12", "HACK-10", "HACK-8", "HACK-0", "HACK-5", "HACK-6", "HACK-7", "HACK-2", "HACK-3", "HACK-4", "HACK-9", "HACK-11", "HACK-1" ],
+        "Note": "The MILEHACK sweep (guide ch.5: first milestone on ids 2-6) normally finishes before this window and the lanes report done instantly, leaving Adventure the sole standing lane - same allocation as the bare HACK-1 this replaces, but self-healing for an account that reached MidEvil without the sweep."
       }
     ],
     "Gear": [

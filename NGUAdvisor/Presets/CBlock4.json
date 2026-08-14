@@ -20,8 +20,9 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "HACK-0" ],
-        "PrioritiesDefault": [ "HACK-0" ]
+        "Priorities": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "PrioritiesDefault": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "Note": "CBlock4 is post-CBlock3, so the guide's ch.5 hack switch applies: first milestone on Hacks 3-7 (guide numbering; ids 2-6, TM-mNGU), then Adventure as the default push. The MILEHACK lanes drop out at each first milestone; HACK-0 here was the pre-CBlock3 rule leaking forward."
       }
     ],
     "Gear": [

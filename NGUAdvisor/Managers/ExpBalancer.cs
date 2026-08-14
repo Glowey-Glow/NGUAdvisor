@@ -81,7 +81,9 @@ namespace NGUAdvisor.Managers
                 // ExpRatio.Split tests t7Killed first, that short-circuited every Evil branch below it and
                 // the guide's pre-T7 "buy ONLY Energy" rule was unreachable for the whole of Evil ch.5.
                 // TitanTables.VersionsDefeated owns the conversion (see its comment).
-                t7Killed = TitanTables.VersionsDefeated(t7v) >= 1;   // "post-T7" once T7 v1 has been KILLED
+                // KILLED means killed. `t7v` is the difficulty selector and reports 0 defeated for as long
+                // as the advisor parks it, which held this account on the pre-T7 split long after T7 v1 fell.
+                t7Killed = ZoneHelpers.VersionsDefeatedByKills(6) >= 1;
 
                 // Evil ch.5 gate: energy-only begins only once the Ygg (magic NGU 0) and EXP (magic NGU 1)
                 // magic NGUs can be consistently capped — proxied by both reaching a positive target on the
@@ -228,6 +230,20 @@ namespace NGUAdvisor.Managers
                 set.customMagicPowerAmount = ClampI(Deficit(3) / 450.0);
                 set.customMagicCapAmount = (long)Math.Max(0, Deficit(4) / 3.0 * 250.0);
                 set.customMagicBarAmount = ClampI(Deficit(5) / 240.0);
+
+                // Six sibling fields written as one decision, so they are one ledger row rather than
+                // six. Short-lived by design — the next recompute overwrites them — which is exactly
+                // why they are worth showing: an operator who types their own amounts here will find
+                // them gone within a tick and, until now, with nothing saying what took them.
+                WriteLedger.Record("exp.amounts",
+                    set.customPowerAmount + " / " + set.customCapAmount + " / " + set.customBarAmount
+                        + "  ·  " + set.customMagicPowerAmount + " / " + set.customMagicCapAmount
+                        + " / " + set.customMagicBarAmount,
+                    "walking the energy/magic ratio toward balance",
+                    ChallengeOverlay.Segment,
+                    "Power / cap / bars, energy then magic — six fields, one decision",
+                    "Each is sized from that stat's own deficit against the target ratio",
+                    "Recomputed and overwritten on the next EXP pass");
             }
             catch { }
         }

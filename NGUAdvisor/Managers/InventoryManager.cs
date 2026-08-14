@@ -433,14 +433,22 @@ namespace NGUAdvisor.Managers
                 lockedBoosts.Where(x => x.level == 100).ToList().ForEach(maxLockedBoost => Inventory.inventory[maxLockedBoost.slot].removable = true);
 
                 int? minId = lockedBoosts.Where(x => x.level != 100).Select(x => (int?)x.id).Min();
+                string cubeTarget;
                 if (minId <= 13)
-                    _ic.selectAutoPowerTransform();
+                { _ic.selectAutoPowerTransform(); cubeTarget = "Power"; }
                 else if (minId <= 26)
-                    _ic.selectAutoToughTransform();
+                { _ic.selectAutoToughTransform(); cubeTarget = "Toughness"; }
                 else if (minId <= 39)
-                    _ic.selectAutoSpecialTransform();
+                { _ic.selectAutoSpecialTransform(); cubeTarget = "Special"; }
                 else
                     return;
+
+                WriteLedger.Record("inventory.cubetarget", cubeTarget,
+                    "the lowest locked boost the advisor still wants is a " + cubeTarget + " one",
+                    ChallengeOverlay.Segment,
+                    "Chosen from the lowest-id boost that is locked and not yet at level 100",
+                    "Re-derived on every inventory pass, so it follows whatever you are short of",
+                    "It is a game setting, not an advisor one — it stays set when the advisor stops");
             }
 
             var needed = new BoostsNeeded();
@@ -716,7 +724,21 @@ namespace NGUAdvisor.Managers
             if (id < 40)
                 return;
 
+            bool wasFiltered = Inventory.itemList.itemFiltered[id];
             Inventory.itemList.itemFiltered[id] = true;
+
+            // ⚠ THE ONE ADVISOR WRITE WITH NO RECLAIM PATH ANYWHERE. Nothing clears these flags — not
+            // the next tick, not a swap, not a rebirth, not a new session. The game destroys filtered
+            // drops on creation, so a filter set for one objective silently keeps destroying items long
+            // after the objective is gone. It is in the ledger precisely because it is the write most
+            // likely to still be doing something months from now that nobody remembers asking for.
+            if (!wasFiltered)
+                WriteLedger.Record("inventory.lootfilter", "+1 id (" + id + ")",
+                    "advisor loot filter — the game destroys these drops on creation",
+                    ChallengeOverlay.Segment,
+                    "Set per item id as the advisor decides an item is not worth picking up",
+                    "Nothing in the advisor or the game ever clears it again",
+                    "It outlives this run, this rebirth and this session");
         }
 
         private static void FilterEquip(Equipment e)

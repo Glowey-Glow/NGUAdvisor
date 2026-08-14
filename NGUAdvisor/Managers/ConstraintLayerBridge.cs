@@ -229,6 +229,7 @@ namespace NGUAdvisor.Managers
                     offers[i] += offer;
                     takes[i] += take;
                     plan.Lanes[i].Allocation = takes[i];
+                    plan.Lanes[i].Offered = offers[i];   // survives the tick, unlike the local array
                     session.Commit(take);
                     fill.Record(i, offer, take);
                 }
@@ -242,9 +243,10 @@ namespace NGUAdvisor.Managers
             // The remainder → the surplus sink, funded LAST and through its own Allocate() so its
             // stair-snap capacity and WandoosBP.RecordShare stay live. Anything BEYOND the sink's
             // per-tick absorptive capacity (capAmountEnergy/-Magic — CapacityPass.Table) is left
-            // idle ON PURPOSE: the wish spare pass (CustomAllocation "Wishes (spare resources)" →
-            // WishManager.Allocate(true)) runs after this swap and is the pool's other legitimate
-            // destination; drinking it into Wandoos would starve wishes through their AND-gate.
+            // idle ON PURPOSE: the wish share pass (CustomAllocation "Wishes (share of remaining
+            // idle)" → WishManager.Allocate, gated by the Wish % sliders) runs after this swap and
+            // is the pool's other legitimate destination; drinking it into Wandoos would starve
+            // wishes through their AND-gate.
             long remainder = Idle(c, type);
             if (plan.SinkSeated)
             {
@@ -258,13 +260,14 @@ namespace NGUAdvisor.Managers
                 if (sinkTake < 0) sinkTake = 0;
                 takes[plan.SinkIndex] = sinkTake;
                 plan.Lanes[plan.SinkIndex].Allocation = sinkTake;
+                plan.Lanes[plan.SinkIndex].Offered = remainder;   // the sink is offered the whole remainder
                 plan.SinkAllocation = sinkTake;
                 long residue = remainder - sinkTake;
                 if (residue > 0)
                 {
                     plan.Unallocated = residue;
                     plan.UnallocatedReason = "beyond the sink's per-tick absorptive capacity — " +
-                        "left idle for the wish spare pass (WishManager.Allocate(true)); reclaimed next swap";
+                        "offered to the wish share pass (the Wish % sliders decide its take); reclaimed next swap";
                 }
             }
             else
@@ -641,7 +644,7 @@ namespace NGUAdvisor.Managers
             }
 
             // Only the sink-refused/absent states are logged; the routine beyond-sink-capacity
-            // residue is normal operation (it feeds the wish spare pass) and stays plan-only.
+            // residue is normal operation (it is offered to the wish share pass) and stays plan-only.
             string sinkIssue = plan.SinkSeated ? null : plan.UnallocatedReason;
             string lastIssue;
             _lastSinkIssue.TryGetValue(type, out lastIssue);

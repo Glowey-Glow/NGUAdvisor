@@ -28,6 +28,11 @@ namespace NGUAdvisor.Managers
         }
         public static SwapOutcome LastSwap { get; private set; }
 
+        // Set by ChangeGear the moment it zeroes allocation; CLEARED by CustomAllocation the moment the
+        // next allocation pass finishes, which is what turns it into a measured duration. Null means
+        // "no swap is currently waiting to be re-seated", which is the steady state.
+        public static DateTime? AllocationClearedAt { get; set; }
+
         private static int[] _savedLoadout;
         private static int[] _tempLoadout;
         private static int[] _savedDaycare;
@@ -39,6 +44,11 @@ namespace NGUAdvisor.Managers
         public static void RestoreGear()
         {
             Log($"Restoring original loadout");
+            // The advisor withdrawing its own write. Distinct from a stale row: the field is back to
+            // something the operator owns, which is the outcome an undo would have produced anyway.
+            // ChangeGear runs immediately after this and records the restore as its own new row, so the
+            // ledger shows the withdrawal and the replacement rather than one row mutating in place.
+            WriteLedger.MarkReverted("gear.equipped");
             // Cause.Restore: this UNDOES a swap and must never be gated — see GearChangeGate.Cause.
             ChangeGear(_savedLoadout, GearChangeGate.Cause.Restore);
         }
@@ -268,6 +278,38 @@ namespace NGUAdvisor.Managers
                     Kept = kept,
                     At = DateTime.UtcNow
                 };
+
+                // WHAT THE SWAP COST, ARMED HERE AND REPORTED WHEN THE COST IS KNOWN.
+                //
+                // Every swap begins by calling Character.removeAllEnergyAndMagic() (line ~124 above),
+                // which zeroes committed energy/magic/R3 across EIGHT controllers — Wandoos, Augments,
+                // Time Machine, Basic Training, NGUs, Wishes, Blood Magic and Hacks. Eight is a constant
+                // of the game's method, not something to count here.
+                //
+                // Nothing re-allocates on the way out: no call site asks for it. The re-seat is ambient,
+                // picked up by whichever timer fires first — QuickStuff at 0.5 s, which is GATED on not
+                // being in a boss fight, or AutomationRoutine at 10 s, which is not. So the cost is
+                // bounded but variable, and the variable that matters (were you mid-fight?) is exactly
+                // the one a fixed "~0.5 s" string would get wrong.
+                //
+                // Hence a stamp, not a message. CustomAllocation reports the MEASURED gap the next time
+                // an allocation pass completes, so the number the operator reads is the number that
+                // happened. Twelve triggers reach this method and all of them pass through here.
+                AllocationClearedAt = DateTime.UtcNow;
+
+                // One choke point, every equip in the product. Breakpoints, all six lock subsystems,
+                // the optimizer, the F8 hotkey — they all land here, which is why gear is the cheapest
+                // thing in the registry to instrument and the hardest to miss.
+                WriteLedger.Record("gear.equipped",
+                    LastSwap.Mode + " · " + want.Length + " item" + (want.Length == 1 ? "" : "s"),
+                    missed.Length == 0
+                        ? "objective change — " + kept.Length + " slot(s) kept what they had"
+                        : missed.Length + " requested item(s) could not be equipped",
+                    ChallengeOverlay.Segment,
+                    "Requested " + want.Length + ", worn " + wornNow.Length + ", kept " + kept.Length +
+                        (missed.Length > 0 ? ", missed " + missed.Length : ""),
+                    "Every swap first zeroes committed energy, magic and R3 across eight controllers",
+                    "Re-seated by whichever allocation timer fires first — 0.5s idle, 10s in a fight");
 
                 if (missed.Length == 0)
                     Log(kept.Length == 0

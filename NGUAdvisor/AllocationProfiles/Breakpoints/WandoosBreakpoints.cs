@@ -30,6 +30,19 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
 
             _character.wandoos98Controller.refreshMenu();
 
+            // The profile's claim on the OS. AdvisorApply.ApplyWandoosOs writes the same thing from its
+            // own ranking, so the pair reads Contested — and this is the expensive one to get wrong:
+            // changing the OS WIPES the Wandoos dump levels, which CustomAllocation records as a
+            // user-reported incident ("hours of progress gone").
+            var osNames = new[] { "Wandoos 98", "Wandoos Meh", "Wandoos XL" };
+            Managers.WriteLedger.Record("wandoos.os.profile",
+                id >= 0 && id < osNames.Length ? osNames[id] : ("OS " + id),
+                "your profile's Wandoos breakpoint reached this step",
+                Managers.ChallengeOverlay.Segment,
+                "Written by reflection: nextOS, then setOSType",
+                "The advisor's own OS ranking writes this field too",
+                "⚠ Any OS change wipes the Wandoos energy and magic dump levels");
+
             return true;
         }
     }

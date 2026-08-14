@@ -21,8 +21,9 @@
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ "HACK-0" ],
-        "PrioritiesDefault": [ "HACK-0" ]
+        "Priorities": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "PrioritiesDefault": [ "MILEHACK-2", "MILEHACK-3", "MILEHACK-4", "MILEHACK-5", "MILEHACK-6", "HACK-1" ],
+        "Note": "Post-CBlock3 rule (guide ch.5-6): Adventure is the default hack; the MILEHACK sweep lanes report done instantly once ids 2-6 have their first milestone, so by this block they usually cost nothing."
       }
     ],
     "Gear": [

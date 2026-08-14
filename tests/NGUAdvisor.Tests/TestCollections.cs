@@ -39,6 +39,10 @@ namespace NGUAdvisor.Tests
     public static class TestCollections
     {
         public const string ZoneRoutingState = "ZoneRouting static latch";
+        // WriteLedger holds the run's entries in a process-wide static list. Second live instance of
+        // the hazard described above — the note about GearWatch/InventoryManager being "latent, not
+        // live" is now one item shorter.
+        public const string WriteLedgerState = "WriteLedger static entries";
     }
 
     [CollectionDefinition(TestCollections.ZoneRoutingState)]
@@ -46,5 +50,12 @@ namespace NGUAdvisor.Tests
     {
         // Marker only — no ICollectionFixture. The classes share no fixture; they share a static,
         // and all this attribute buys is "do not run us at the same time".
+    }
+
+    [CollectionDefinition(TestCollections.WriteLedgerState)]
+    public class WriteLedgerStateCollection
+    {
+        // Marker only, same reasoning: every test here calls WriteLedger.Reset() in its constructor,
+        // which is only sound if no sibling class is recording into it concurrently.
     }
 }

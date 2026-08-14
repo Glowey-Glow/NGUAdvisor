@@ -43,6 +43,55 @@
          ZoneStatHelper itself still reaches Main.Character and cannot be compiled here, but the DECISION
          it feeds is Unity-free, and the decision is where the fail-open bug lived. -->
     <Compile Include="..\..\NGUAdvisor\Managers\ZoneGate.cs" Link="Linked\ZoneGate.cs" />
+    <!-- Which sections of the loaded profile are actually driving the game. Linked for the same reason
+         ZoneGate was: the rules it encodes live scattered across CustomAllocation's per-step guards,
+         ChallengeOverlay's priority substitution and three independent Advisor* toggles, none of which
+         can compile here — but the VERDICT is pure boolean logic, and a readout that gets it wrong tells
+         an operator their profile is driving something the advisor quietly took over. It also pins the
+         gear gap (auto profile on + gear refresh off = nobody), which is a real defect, not a display. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\ProfileSections.cs" Link="Linked\ProfileSections.cs" />
+    <!-- The advisor-writes ledger. Linked because its promise is a NARROW one — persistent state only,
+         not all 129 write sites the census found — and a narrow promise is worth exactly as much as the
+         guarantees under it: that the declared scope is data the UI derives its coverage claim from,
+         that contested pairs name each other symmetrically, and that a writer re-asserting the same
+         value every tick produces ONE row rather than burying the one row that matters. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\WriteLedger.cs" Link="Linked\WriteLedger.cs" />
+    <!-- The "until done" vocabulary. Linked because its failure mode is SILENCE: a clause that can
+         never be met is a step that never advances, which from the outside looks exactly like a healthy
+         run that is simply slow. Parsing is string in, struct out, and evaluation takes a plain fact
+         bag, so every answer is checkable without the game build. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\UntilClause.cs" Link="Linked\UntilClause.cs" />
+    <!-- "Maximise X subject to Y >= floor". Linked for the same reason as the until grammar: the
+         decision is pure and the failure is quiet. A floor that cannot be met must surface as
+         INFEASIBLE with the shortfall named, not as a silently degraded set — that reporting is the
+         entire advantage over a weighted blend, and it is only worth anything if it is asserted. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearFloors.cs" Link="Linked\GearFloors.cs" />
+    <!-- GEAR LOCK: "wear THESE, optimise everything else around them". Linked for the same reason as
+         the floors it sits beside, plus a sharper one. The failure mode is a SILENT WRONG SET: an id
+         you don't own, a fifth accessory against four slots, a typo'd id that the game's item table
+         happens to answer for — each of those either takes a slot it shouldn't or vanishes, and from
+         the outside both look exactly like an optimiser that made a different call. The refusal
+         REASONS are the product here, not a nicety, so they are asserted. GearOptimizer itself reads
+         Main.Character and cannot compile here; the decision — which id takes which slot, and what
+         gets said about the ones that can't — is Unity-free by construction. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearLock.cs" Link="Linked\GearLock.cs" />
+    <!-- THE GEAR SEARCH ITSELF. This is the one that had no tests at all, and the reason is structural:
+         it used to be the body of GearOptimizer.Optimize, which reads Main.Character and
+         Main.InventoryController and therefore cannot compile here. So ~1979 pure-function tests ran
+         green beside a 300-line coordinate ascent that nothing could see, and three defects shipped
+         past them in one session — the clearest being that an unreachable GearFloorSet made phase 1
+         score EVERY candidate at negative infinity, so Optimize handed back Score = -Infinity to
+         callers that divide scores ("+x% from new drops"). A live probe found it. This suite could not.
+         Extracting the search behind an explicit Inputs bag (pools keyed by GearLockSlot rather than
+         the Assembly-CSharp `part` enum, cube/base/offhand/slot-counts/lookup passed in) is what makes
+         "an infeasible floor set still returns a finite score" a test that can exist. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearSolver.cs" Link="Linked\GearSolver.cs" />
+    <!-- "I must survive this fight" -> a gear-stat number. The arithmetic is separated from the live
+         read precisely so it can be linked here: a wrong multiplier is a SILENT wrong answer — no
+         throw, nothing odd-looking, just a floor in the wrong units marking an unsurvivable set
+         feasible. The round-trip property (a set meeting the floor exactly meets the requirement
+         exactly) is the one that has to hold. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\AdventureFloor.cs" Link="Linked\AdventureFloor.cs" />
     <!-- The resolver's contention surface (audit/40 §3 items 1, 2, 4, 5, 6). Main.SnipeZone is the
          live routing path and cannot compile here, but the DECISION — what displaced what, whether
          it is worth a line, and what it says when it lets go — is Unity-free, and it is the whole
@@ -112,6 +161,7 @@
          means every number it produces IS testable here, and the float stair-snap (the piece that can silently
          halve a hack's level rate) is pinned against a faithful replay of the game's accumulate loop. -->
     <Compile Include="..\..\NGUAdvisor\Managers\HackMath.cs" Link="Linked\HackMath.cs" />
+    <Compile Include="..\..\NGUAdvisor\Managers\HackPhase.cs" Link="Linked\HackPhase.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BloodRouter.cs" Link="Linked\BloodRouter.cs" />
     <!-- "Is a rebirth coming?", as distinct from "when?". Linked because the two questions were the
          same line of code for as long as every shipped profile answered them the same way, and the

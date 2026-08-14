@@ -254,6 +254,20 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
                         Type = type
                     };
                 }
+                else if (temp.StartsWith("MILEHACK") || temp.StartsWith("CAPMILEHACK"))
+                {
+                    // A hack lane that stops at the FIRST MILESTONE (guide ch.5's "get the first
+                    // milestone, move on" — see MileHackBP). Must be tested BEFORE the HACK branch
+                    // only for readability — "MILEHACK" does not StartsWith("HACK") — but keeping
+                    // the two adjacent is what makes the family visible in one read.
+                    yield return new MileHackBP
+                    {
+                        CapPercent = cap,
+                        Index = index,
+                        IsCap = temp.Contains("CAP"),
+                        Type = type
+                    };
+                }
                 else if (temp.StartsWith("HACK") || temp.StartsWith("CAPHACK"))
                 {
                     yield return new HackBP

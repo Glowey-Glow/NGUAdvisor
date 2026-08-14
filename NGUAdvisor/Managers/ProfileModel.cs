@@ -50,7 +50,16 @@ namespace NGUAdvisor.Managers
         {
             public int TimeSeconds;
             public List<int> Items = new List<int>();
-            // Gear only: when set, the advisor optimizes gear for this objective instead of using Items.
+            // Gear only: when set, the advisor optimizes gear for this objective.
+            //
+            // GEAR LOCK. Objective and Items used to be mutually exclusive — the two setters below each
+            // cleared the other, and the runtime ignored Items whenever Objective was set. They are not
+            // exclusive any more, and the combined meaning is a strict SUPERSET of both old ones:
+            //     Items only      -> wear exactly these        (unchanged)
+            //     Objective only  -> optimize every slot       (unchanged)
+            //     BOTH            -> lock these items in, optimize every REMAINING slot   (new)
+            // Which is why this needed no new JSON key: "ID" has always meant "these items are in the
+            // set", and an objective now says what to do with the slots it does not name.
             public string Objective = "";
             // Gear only: when optimizing, always pin the single best Respawn item into the loadout.
             public bool ForceRespawn = false;
@@ -236,6 +245,18 @@ namespace NGUAdvisor.Managers
         /// <summary>Put a gear breakpoint into optimize-objective mode (clears the manual ID list).</summary>
         public bool SetGearObjective(int index, string objective, bool forceRespawn) =>
             At(Gear, index, b => { b.Objective = objective ?? ""; b.ForceRespawn = forceRespawn; b.Items = new List<int>(); });
+
+        /// <summary>GEAR LOCK: pin <paramref name="lockedIds"/> AND optimize every remaining slot for
+        /// <paramref name="objective"/>. The one setter that writes both halves of a gear breakpoint;
+        /// the two above stay as they are because each states one half AND clears the other, which is
+        /// still exactly what "just an ID list" and "just an objective" mean.</summary>
+        public bool SetGearLock(int index, List<int> lockedIds, string objective, bool forceRespawn) =>
+            At(Gear, index, b =>
+            {
+                b.Items = lockedIds ?? new List<int>();
+                b.Objective = objective ?? "";
+                b.ForceRespawn = forceRespawn;
+            });
 
         /// <summary>Set a single-value breakpoint's value (wandoos/ngudiff).</summary>
         public bool SetValue(string systemKey, int index, int value)

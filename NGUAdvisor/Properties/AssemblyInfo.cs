@@ -48,5 +48,5 @@ using System.Runtime.InteropServices;
 // reached only by smi injection and Assembly.Load(byte[]) + reflection, never by assembly identity.
 // So AssemblyVersion agrees on major.minor; AssemblyFileVersion, the informational one a player reads,
 // agrees exactly.
-[assembly: AssemblyVersion("2.3.*")]
-[assembly: AssemblyFileVersion("2.3.0.0")]
+[assembly: AssemblyVersion("2.4.*")]
+[assembly: AssemblyFileVersion("2.4.0.0")]

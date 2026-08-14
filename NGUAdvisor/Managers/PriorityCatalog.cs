@@ -55,8 +55,9 @@ namespace NGUAdvisor.Managers
 
         private static readonly List<BaseType> R3 = new List<BaseType>
         {
-            new BaseType("HACK",    true, 14, "Hack (by number)"),
-            new BaseType("ALLHACK", false, 0, "All Hacks"),
+            new BaseType("HACK",     true, 14, "Hack (by number)"),
+            new BaseType("MILEHACK", true, 14, "Hack until its first milestone (by number)"),
+            new BaseType("ALLHACK",  false, 0, "All Hacks"),
         };
 
         public static IReadOnlyList<BaseType> For(ResourceKind kind)

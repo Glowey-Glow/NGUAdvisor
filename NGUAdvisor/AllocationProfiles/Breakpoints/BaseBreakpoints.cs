@@ -14,11 +14,45 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             // code, e.g. "NOTM"). null/empty = untagged (the normal timeline, used when no challenge match).
             public string challenge;
 
+            // "FOCUS ON X UNTIL DONE": while this is set and unmet, the timeline does not advance past
+            // this breakpoint even though a later one's time has arrived. Null = the old behaviour, a
+            // step that ends purely on the clock.
+            public Managers.UntilCondition until;
+            public string untilText;      // as authored, so the UI and the log can quote it back
+            public string untilError;     // set when the clause would not parse — surfaced, never silent
+
             public Breakpoint(JSONNode bp, T priorities)
             {
                 time = ParseTime(bp["Time"]);
                 var ch = bp["Challenge"];
                 challenge = (ch != null && !string.IsNullOrEmpty(ch.Value)) ? ch.Value.ToUpper() : null;
+
+                // A clause that will not parse must NOT silently become "no condition" — that would
+                // turn a typo into a step that ends early and looks deliberate. It is kept as an error
+                // and reported; the breakpoint then behaves as it did before, which is the safe side.
+                var un = bp["Until"];
+                if (un != null && !string.IsNullOrEmpty(un.Value))
+                {
+                    untilText = un.Value;
+                    Managers.UntilCondition parsed; string err;
+                    if (Managers.UntilCondition.TryParse(untilText, out parsed, out err))
+                    {
+                        until = parsed;
+                        // Said out loud on the way IN as well as on the way out. A condition that is
+                        // read but never reached is indistinguishable from one that was never read at
+                        // all, and both look like "the feature does nothing".
+                        try { Main.Log($"Profile: step at {time:0}s ends on — {parsed.Describe()}"); } catch { }
+                    }
+                    else
+                    {
+                        untilError = err;
+                        // Said out loud at load. A step that quietly reverted to clock-only because of
+                        // a typo is the worst outcome available here: it looks like it worked.
+                        try { Main.Log($"Profile: ignoring \"Until\": \"{untilText}\" — {err}. That step will end on its time instead."); }
+                        catch { }
+                    }
+                }
+
                 this.priorities = priorities;
             }
 
@@ -83,16 +117,59 @@ namespace NGUAdvisor.AllocationProfiles.BreakpointTypes
             double t = Main.Character.rebirthTime.totalseconds;
             var cur = Managers.ChallengeDetector.Current();
 
+            // THE HOLD. A breakpoint carrying an unmet `until` keeps the timeline where it is, even
+            // though a later breakpoint's time has arrived. That is the whole of "focus on X until
+            // done": the step ends on its outcome, not on the clock.
+            //
+            // ⚠ A CHALLENGE STARTING OR ENDING BREAKS THE HOLD, deliberately. Challenge-tagged
+            // breakpoints are a separate timeline and the challenge is the bigger event — a hold set
+            // on the normal timeline must not strand a run inside a challenge it was never written
+            // for. Everything else waits.
             if (cur != null)
-                foreach (var b in breakpoints)
-                    if (b.challenge == cur && t > b.time)
-                        return b;
+            {
+                var tagged = PickWithHolds(cur, t);
+                if (tagged != null) return tagged;
+            }
+            return PickWithHolds(null, t);
+        }
 
-            foreach (var b in breakpoints)
-                if (b.challenge == null && t > b.time)
-                    return b;
+        // Selection, walking the REACHED breakpoints oldest-first and stopping at the first one whose
+        // `until` is not yet met. That breakpoint blocks everything after it — which is exactly what
+        // "focus on X until done" means: a later step's time arriving does not entitle it to run.
+        //
+        // ⚠ STATELESS ON PURPOSE, AND THE FIRST VERSION WAS NOT. It held on the `current` field, which
+        // looked right and never once fired in game: the wrapper is rebuilt often enough that `current`
+        // was null on every sampled pass, so the branch simply never ran. Nothing about that failure was
+        // visible — no error, no log, the feature just did nothing. Deriving the answer from the
+        // breakpoint list and the clock each time removes the dependency entirely.
+        private Breakpoint PickWithHolds(string chal, double t)
+        {
+            Managers.UntilFacts facts = default(Managers.UntilFacts);
+            bool factsRead = false;
+            Breakpoint chosen = null;
 
-            return null;
+            // breakpoints are sorted DESCENDING by time, so walking backwards is oldest-first.
+            for (int i = breakpoints.Length - 1; i >= 0; i--)
+            {
+                var b = breakpoints[i];
+                if (b.challenge != chal) continue;
+                if (t <= b.time) continue;          // not reached yet
+
+                chosen = b;                          // reached, and nothing before it is holding
+
+                if (b.until == null) continue;
+                if (!factsRead) { facts = Managers.UntilFactsProvider.Read(); factsRead = true; }
+
+                Managers.UntilClause met;
+                if (!b.until.IsMet(facts, out met))
+                {
+                    Managers.UntilFactsProvider.NoteHold(b.untilText, b.until);
+                    return b;                        // blocks every later step
+                }
+                Managers.UntilFactsProvider.NoteMet(b.untilText, met);
+            }
+
+            return chosen;
         }
 
         public void Swap()

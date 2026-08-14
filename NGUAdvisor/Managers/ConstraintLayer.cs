@@ -82,6 +82,15 @@ namespace NGUAdvisor.Managers
             public bool SurplusSink;
             public bool Reofferable;      // resolved from LaneSpec.Reofferable ?? ReofferableLane(Name)
             public long Allocation;       // filled by Compose only when CapacitiesKnown
+
+            // WHAT THE LANE WAS OFFERED, as opposed to what it took. The gap between the two is the
+            // single most diagnostic figure on this path — a self-limiting lane offered the whole pool
+            // and absorbing one unit of it looks identical to a healthy one in every other channel —
+            // and it already existed as a local array in PerformSwap, handed to the log renderer and
+            // then dropped. Nothing outside that method could read it, so the companion could show
+            // "took 0.04% of pool" without being able to say whether that was refusal or starvation.
+            // Cumulative across fill rounds, like Allocation.
+            public long Offered;
         }
 
         public sealed class Plan
@@ -822,6 +831,14 @@ namespace NGUAdvisor.Managers
                     "ConstraintLayerBridge header), so this row can only ever be read by a future " +
                     "caller. `hacks[id].res3 += amount; idleRes3 -= amount`, with hitTarget(id) " +
                     "making a satisfied hack a no-op rather than a withdrawal." },
+
+            new ReofferRow { Lane = "MileHackBP", Reofferable = true,
+                AdvisorShape = "HackBP's Allocate() verbatim; only TargetMet() differs (first-milestone stop)",
+                GameCall = "HacksController.addR3(id, amount) ([DECOMP] :160-179)",
+                Proof = "SAFE BY INHERITANCE: the class overrides no allocation code — Allocate() and " +
+                    "CalculateHackCap() are HackBP's own, so the HackBP row's proof is this row's " +
+                    "proof. The milestone stop only changes IsValid(), i.e. whether the lane is " +
+                    "offered at all, never what an offer does. Same not-routed caveat as HackBP." },
         };
 
         // DEFAULT CLOSED. An unrecognised lane name — a new lane type, a synthetic test name, a

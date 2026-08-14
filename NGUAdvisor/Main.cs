@@ -46,7 +46,7 @@ namespace NGUAdvisor
         private static float _overlayStyleScale = -1f;
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
-        public const string Version = "2.3.0";
+        public const string Version = "2.4.0";
         // "dev" or "public", baked in at compile time from <AdvisorChannel> in NGUAdvisor.csproj — the
         // ONE line that differs between the two repos (see that property's comment for why it is not a
         // #if and not a hand-edited const here beside Version).
@@ -1049,6 +1049,12 @@ namespace NGUAdvisor
                 // CastBloodSpells (advisor) is on it fully owns the spell toggles via AdvisorApply.ApplyBlood
                 // and ignores these page caps — otherwise this every-tick clamp would fight the advisor's
                 // 60s routing and pin the spells to the manual caps (user-reported).
+                //
+                // SpaghettiThreshold is no longer stranded by that. It used to be read ONLY here, so
+                // with CastBloodSpells on the number a user configured was read by nobody and silently
+                // did nothing; BloodPlanner.DcBelowZoneRec now honours it as the same cap. The other two
+                // thresholds still live only on this path — the advisor derives NUMBER and Counterfeit
+                // Gold from its own routing rather than from a percentage.
                 if (Settings.AutoSpellSwap && !Settings.CastBloodSpells)
                 {
                     var spaghetti = (int)Math.Round((Character.bloodMagicController.lootBonus() - 1) * 100);
@@ -1060,6 +1066,23 @@ namespace NGUAdvisor
                     Character.bloodSpells.updateGoldToggleState();
                     Character.bloodSpells.updateLootToggleState();
                     Character.bloodSpells.updateRebirthToggleState();
+
+                    // The 0.5s writer of the three blood toggles. AdvisorApply writes the same three
+                    // from its own thresholds every 60s, so this one wins roughly 120 : 1 — which makes
+                    // it the one that is actually in effect, and the other very nearly decorative.
+                    // Both are in the ledger so the pair reads Contested rather than one of them
+                    // silently appearing to be the only writer.
+                    var bOn = new System.Collections.Generic.List<string>();
+                    if (Character.bloodMagic.rebirthAutoSpell) bOn.Add("Rebirth");
+                    if (Character.bloodMagic.lootAutoSpell) bOn.Add("Loot");
+                    if (Character.bloodMagic.goldAutoSpell) bOn.Add("Gold");
+                    Managers.WriteLedger.Record("blood.spells.quick",
+                        bOn.Count > 0 ? string.Join(" + ", bOn.ToArray()) : "all off",
+                        "threshold check — number, counterfeit gold and spaghetti",
+                        Managers.ChallengeOverlay.Segment,
+                        "Recomputed every 0.5 seconds from your three blood thresholds",
+                        "AdvisorApply writes the same three toggles every 60 seconds",
+                        "At 120 : 1 this is the writer whose answer you are living with");
                 }
 
                 WishManager.UpdateWishMenu();

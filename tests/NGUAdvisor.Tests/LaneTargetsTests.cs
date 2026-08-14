@@ -16,14 +16,16 @@ namespace NGUAdvisor.Tests
     {
         // ---------------- the inventory table ----------------
 
-        // ELEVEN rows over TEN classes. The row identity is (Lane, Pool), not Lane, because
+        // TWELVE rows over ELEVEN classes. The row identity is (Lane, Pool), not Lane, because
         // TimeMachineBP is two consumers (amendment 05 §4) — see Table_TimeMachineIsTwoRows below.
+        // The eleventh class is MileHackBP (the MILEHACK-n token): HackBP plus the guide ch.5
+        // first-milestone stop, one consumer on one row.
         [Fact]
-        public void Table_CoversTenLaneClassesAsElevenConsumerRows()
+        public void Table_CoversElevenLaneClassesAsTwelveConsumerRows()
         {
-            Assert.Equal(11, LaneTargets.Table.Length);
-            Assert.Equal(10, LaneTargets.Table.Select(t => t.Lane).Distinct().Count());
-            Assert.Equal(11, LaneTargets.Table.Select(t => t.Lane + "/" + t.Pool).Distinct().Count());
+            Assert.Equal(12, LaneTargets.Table.Length);
+            Assert.Equal(11, LaneTargets.Table.Select(t => t.Lane).Distinct().Count());
+            Assert.Equal(12, LaneTargets.Table.Select(t => t.Lane + "/" + t.Pool).Distinct().Count());
         }
 
         [Fact]
@@ -120,18 +122,19 @@ namespace NGUAdvisor.Tests
                 Assert.Equal("Energy|Magic", LaneTargets.Table.Single(t => t.Lane == lane).Pool);
         }
 
-        // Three lanes spell "never fund this" out as its own branch; the rest reach the same answer
+        // Four lanes spell "never fund this" out as its own branch; the rest reach the same answer
         // only because levels are non-negative. A tidy-up that unifies the bodies must preserve both
         // shapes. BestAug joins the incidental group: it reads the same two game predicates AugmentBP
-        // does, and neither has a `target < 0` branch.
+        // does, and neither has a `target < 0` branch. MileHackBP is explicit the same way HackBP is:
+        // hitTarget() is its first term, and hitTarget's own -1 branch is the marker.
         [Fact]
-        public void Table_NeverFundMarkerIsExplicitInThreeLanesAndIncidentalInTheRest()
+        public void Table_NeverFundMarkerIsExplicitInFourLanesAndIncidentalInTheRest()
         {
             var explicitly = LaneTargets.Table.Where(t => t.NeverFundMarker && t.ExplicitNeverFund)
                                               .Select(t => t.Lane).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
             var incidental = LaneTargets.Table.Where(t => t.NeverFundMarker && !t.ExplicitNeverFund)
                                               .Select(t => t.Lane).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { "AdvancedTrainingBP", "HackBP", "NGUBP" }, explicitly);
+            Assert.Equal(new[] { "AdvancedTrainingBP", "HackBP", "MileHackBP", "NGUBP" }, explicitly);
             Assert.Equal(new[] { "AugmentBP", "BestAug", "TimeMachineBP" }, incidental);
         }
 

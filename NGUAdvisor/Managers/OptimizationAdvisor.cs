@@ -620,6 +620,21 @@ namespace NGUAdvisor.Managers
             try
             {
                 var adv = Main.Character.adventure;
+
+                // THE BESTIARY FIRST, FOR EVERY VERSIONED TITAN. This used to proxy T7+ off the spawn
+                // version — `TitanVersion(i) - 1 >= v` — which is a SELECTOR, not a record: the game only
+                // writes it when the player presses the difficulty button, and the advisor pins it to
+                // whatever version it is chasing or parked on. Measured 2026-08-11: GREASY NERD V2 had
+                // died eight times and this returned false every time, so the kill ladder never left the
+                // "first kill" rung. That pinned the goal card to the first-kill bar (which the operator
+                // was clearing at 100%) instead of the idle bar, made `beast` structurally unreachable
+                // (it requires Stage != "first kill"), and priced every posture decision off the wrong
+                // requirement.
+                int kills = ZoneHelpers.VersionKills(i, v);
+                if (kills >= 0) return kills > 0;
+
+                // No bestiary record or the read failed. T6 has a second real per-version record in
+                // achievements 148..151, which is why it kept a branch of its own.
                 if (i == 5)
                 {
                     try { return Main.Character.achievements.achievementComplete[147 + v]; }
@@ -630,7 +645,7 @@ namespace NGUAdvisor.Managers
                     }
                 }
                 if (i >= 6)
-                    return ZoneHelpers.TitanVersion(i) - 1 >= v;
+                    return ZoneHelpers.TitanVersion(i) - 1 >= v;   // last resort; known-wrong, see above
                 switch (i)
                 {
                     case 0: return adv.titan1Kills >= 1;

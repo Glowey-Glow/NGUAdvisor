@@ -192,19 +192,6 @@ namespace NGUAdvisor.AllocationProfiles
                     if (Settings.ManageGear && !Settings.AutoProfile && Main.Character.buttons.inventory.interactable)
                         _wrapper.gear.Swap();
                 });
-                RunStep("Wishes (reclaim + allocate)", () =>
-                {
-                    if (Settings.ManageWishes && !preventMagicAllocation)
-                    {
-                        if (Settings.ManageEnergy)
-                            _character.removeMostEnergy();
-                        if (Settings.ManageMagic)
-                            _character.removeMostMagic();
-                        if (Settings.ManageR3)
-                            _character.removeAllRes3();
-                        WishManager.Allocate();
-                    }
-                });
                 RunStep("Energy", () =>
                 {
                     if (Settings.ManageEnergy)
@@ -220,12 +207,21 @@ namespace NGUAdvisor.AllocationProfiles
                     if (Settings.ManageR3)
                         _wrapper.r3.Swap();
                 });
-                RunStep("Wishes (spare resources)", () =>
+                RunStep("Wishes (share of remaining idle)", () =>
                 {
                     if (Settings.ManageWishes && !preventMagicAllocation)
                     {
-                        // Allocating to wishes again because there can be spare resources
-                        WishManager.Allocate(true);
+                        // Wishes are funded HERE, after the E/M/R3 swaps, and nowhere else. There
+                        // used to be a pass BEFORE the swaps that opened with removeMostEnergy/
+                        // removeMostMagic/removeAllRes3 and then applied the Wish % sliders — to a
+                        // pool the reclaim had just refilled to nearly the whole cap, so "% of
+                        // idle" behaved as "% of total, taken off the top" and the swaps divided a
+                        // denominator silently pre-shrunk by it (user-reported; audit/38 §E4.1).
+                        // Here the sliders mean what the UI label says: a share of what is
+                        // genuinely still idle once every other system has taken its fill. They
+                        // are also authoritative downward — 0% really allocates nothing, where the
+                        // old spare pass drank all residue regardless of the sliders.
+                        WishManager.Allocate();
                         WishManager.UpdateWishMenu();
                     }
                 });
@@ -261,7 +257,47 @@ namespace NGUAdvisor.AllocationProfiles
             finally
             {
                 IsAllocationRunning = false;
+                ReportReseatAfterGearSwap();
             }
+        }
+
+        // THE PRICE OF A GEAR SWAP, MEASURED RATHER THAN ESTIMATED.
+        //
+        // A swap zeroes committed energy/magic/R3 across eight controllers and then re-allocates via
+        // nothing in particular — whichever of the two timers fires first. Until now that window was
+        // invisible: the operator saw "Finished equipping gear" and no indication that eight systems had
+        // just been producing nothing, or for how long. The advisor swaps several times an hour.
+        //
+        // ⚠ THIS IS A REPORT, NOT A GATE, AND DELIBERATELY SO. Twelve triggers reach ChangeGear and most
+        // are time-critical — a titan window opening, a gold snipe, a quest acquire. A confirm prompt
+        // here would trade an invisible half-second for a missed titan, which is a worse trade every
+        // time. The swap is almost always right; only the telling was missing.
+        //
+        // It runs in the `finally` so a throw mid-allocation still closes the window rather than leaving
+        // the stamp armed and reporting a false, ever-growing gap on the next pass.
+        private static void ReportReseatAfterGearSwap()
+        {
+            try
+            {
+                var since = LoadoutManager.AllocationClearedAt;
+                if (!since.HasValue) return;
+                LoadoutManager.AllocationClearedAt = null;
+
+                var secs = (DateTime.UtcNow - since.Value).TotalSeconds;
+                if (secs < 0 || secs > 600) return;   // clock skew or a stamp that outlived its run
+
+                var mode = "gear swap";
+                try { if (LoadoutManager.LastSwap != null && !string.IsNullOrEmpty(LoadoutManager.LastSwap.Mode)) mode = LoadoutManager.LastSwap.Mode; } catch { }
+
+                // Eight is Character.removeAllEnergyAndMagic()'s own fixed list, not a count taken here.
+                var detail = $"{mode} · allocation cleared on 8 systems, re-seated after {secs:0.0}s";
+
+                // A long window is a genuine warning: it means the re-seat waited on the 10s loop because
+                // the 0.5s one is gated on not being mid-fight. A short one is just what a swap costs.
+                if (secs >= 3.0) Activity.Warning("Gear swap paused 8 systems", detail);
+                else Activity.Completed("Gear swap re-seated", detail);
+            }
+            catch (Exception e) { LogDebug($"Reseat report: {e.Message}"); }
         }
 
         // ---- per-step fault containment (audit P0: allocation-tick blackout) ----

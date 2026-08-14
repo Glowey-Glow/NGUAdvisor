@@ -47,6 +47,9 @@ namespace NGUAdvisor.Managers
             public bool OverrideIsSegment;     // true when the override is segment gear, not a challenge rotation
             public string ProfileObjective;    // GearBreakpoints.ActiveObjective
             public bool ProfileRespawn;        // GearBreakpoints.ActiveForceRespawn
+            // GearBreakpoints.ActiveLocks — the item IDs the profile's gear row pins (Gear Lock).
+            // Null/empty for every profile written before the feature existed.
+            public int[] ProfileLocks;
             public string Pin;                 // Settings.GearObjective ("" = follow the profile)
             public bool PinRespawn;            // Settings.GearObjectiveRespawn
         }
@@ -55,9 +58,20 @@ namespace NGUAdvisor.Managers
         {
             public string Name;            // null when nothing is in force
             public bool ForceRespawn;
+            // The Gear Lock in force, or null. Set ONLY on the profile row — see Resolve.
+            public int[] Locks;
             public string Source;          // one of Src.*
             public string Sentence;        // one line for the companion, already human-readable
             public bool Resolved => !string.IsNullOrEmpty(Name);
+            public int LockCount => Locks == null ? 0 : Locks.Length;
+        }
+
+        private static string LockNote(int[] locks)
+        {
+            int n = locks == null ? 0 : locks.Length;
+            if (n == 0) return "";
+            return n == 1 ? " One item is locked into the set."
+                          : " " + n + " items are locked into the set.";
         }
 
         // The sentinel GearHunter uses instead of a real objective — its set is a hybrid (curated
@@ -153,13 +167,23 @@ namespace NGUAdvisor.Managers
                         Sentence = "Running \"" + i.Override + "\" — from the challenge rotation."
                     };
 
+            // GEAR LOCK RIDES WITH THE PROFILE ROW AND NOWHERE ELSE.
+            //
+            // The segment / challenge rows above pair the override's NAME with the profile
+            // breakpoint's respawn FLAG — a pre-existing quirk this file already documents and
+            // deliberately preserves. It is NOT extended to locks. A lock names concrete items chosen
+            // for one row's plan; pairing it with an objective that came from somewhere else would
+            // pin, say, a doll set into a challenge-rotation push loadout the user never associated it
+            // with. When the override wins, the lock stands down with the row it belonged to.
             if (Has(i.ProfileObjective))
                 return new Result
                 {
                     Name = i.ProfileObjective,
                     ForceRespawn = i.ProfileRespawn,
+                    Locks = i.ProfileLocks != null && i.ProfileLocks.Length > 0 ? i.ProfileLocks : null,
                     Source = Src.Profile,
                     Sentence = "Running \"" + i.ProfileObjective + "\" — from the profile's gear timeline."
+                        + LockNote(i.ProfileLocks)
                         + (Has(i.Pin) ? " Your pick applies when the timeline has nothing to say." : "")
                 };
 

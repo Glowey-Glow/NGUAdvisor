@@ -104,6 +104,15 @@ namespace NGUAdvisor.Managers
                 Kind = TargetKind.GameDelegated, Reads = "hacksController.hitTarget(i)",
                 NeverFundMarker = true, ExplicitNeverFund = true },
 
+            // HackBP with the guide ch.5 stopping rule on top: done at hitTarget(i) OR the first
+            // milestone (level >= hacksController.milestoneThreshold(i), the reducer-adjusted spacing
+            // the game itself maintains). Still GameDelegated — both numbers are the game's own; the
+            // advisor types nothing and writes nothing. The -1 never-fund marker keeps working
+            // because hitTarget is still the first term.
+            new LaneTargetSpec { Lane = "MileHackBP", Pool = "R3", Tokens = "MILEHACK-n / CAPMILEHACK-n",
+                Kind = TargetKind.GameDelegated, Reads = "hacksController.hitTarget(i) OR hacks[i].level vs hacksController.milestoneThreshold(i)",
+                NeverFundMarker = true, ExplicitNeverFund = true },
+
             new LaneTargetSpec { Lane = "NGUBP", Pool = "Energy|Magic", Tokens = "NGU-n / CAPNGU-n / ALLNGU / CAPALLNGU",
                 Kind = TargetKind.ThresholdField, Reads = "skills[i].target|evilTarget|sadisticTarget vs matching level",
                 NeverFundMarker = true, ExplicitNeverFund = true },

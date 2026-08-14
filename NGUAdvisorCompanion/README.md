@@ -28,6 +28,18 @@ dotnet build NGUAdvisorCompanion/NGUAdvisorCompanion.csproj -c Debug
 Needs the **WebView2 Evergreen runtime** (ships with Windows 11; on Windows 10 install it once). The
 `Microsoft.Web.WebView2` SDK is restored from NuGet; `wwwroot/` is copied next to the exe.
 
+## Deploy — use `build/deploy.ps1`, not a Release build of this project
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/deploy.ps1
+```
+
+A Release build of this project alone runs `DeployCompanion`, which **fails** (`MSB3021 ... used by
+another process`) whenever the companion is running — its normal state, since the injector
+auto-launches it — and it fails *after* copying `wwwroot`, so you get a partial deploy with a FAILED
+build. `build/deploy.ps1` stops the companion, ships this project **and** the advisor DLL, verifies
+both landed, and restarts it. See `BUILD.md` and `audit/41-zone-phases-campaign.md` §7.3.
+
 ## Run (M1 end-to-end)
 
 1. Build the injector **Release** so it deploys, and **Reload Advisor** in-game so the running DLL has

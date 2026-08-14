@@ -43,6 +43,9 @@ namespace NGUAdvisor.Managers
             {
                 i.ProfileObjective = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveObjective;
                 i.ProfileRespawn = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveForceRespawn;
+                // Gear Lock. Read from the SAME publisher as the objective and the respawn flag, so
+                // the refresh pass can never re-solve an objective without the locks that came with it.
+                i.ProfileLocks = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveLocks;
             }
             catch { }
 

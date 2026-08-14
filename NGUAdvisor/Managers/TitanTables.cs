@@ -26,7 +26,80 @@ namespace NGUAdvisor.Managers
         //
         // It lives here, in a Unity-free class, so the conversion has ONE home and a headless test rather
         // than being re-derived at each call site.
+        // ⚠ DEPRECATED IN FAVOUR OF THE BESTIARY, AND THE REASON IS NOT ARITHMETIC.
+        //
+        // The conversion below is correct. Its PREMISE is not: it assumes "the version you are on" equals
+        // "one more than the versions you have defeated". The decomp says that only holds if the player
+        // presses the difficulty button by hand after every kill — `adventure.titan{n}Version` is written
+        // ONLY by changeTitanDifficulty ([DECOMP] AdventureController.cs:3835-3846) and never
+        // auto-advances. Under the advisor the field is pinned to whatever version is being CHASED or
+        // PARKED, so it is a selector, not a ledger.
+        //
+        // Measured on the operator's account 2026-08-11: GREASY NERD V2 killed eight times, and this
+        // function returned 0 defeated the whole while — because the selector had been parked on v1. That
+        // silently disabled the Evil-NGU tail, the Evil nguLevelTrack switch and the pre-T7 EXP split, all
+        // three of which gate on it, and pinned the goal card's kill-ladder stage at "first kill" forever.
+        //
+        // Kept because indices 0-4 and 12-13 have no per-version bestiary record, so callers still need a
+        // fallback. NEW CALLERS SHOULD USE ZoneHelpers.VersionsDefeatedByKills, which reads the game's own
+        // per-version kill counts.
         public static int VersionsDefeated(int humanVersion) => Math.Max(0, humanVersion - 1);
+
+        // THE GAME'S OWN PER-VERSION KILL RECORD, which nothing in this codebase read until now.
+        //
+        // Both death paths write it: the autokill branch calls addKills on the exact version id
+        // ([DECOMP] AdventureController.cs:958/975/992/1008/1021 and siblings) and a manual kill routes
+        // through enemyDeath -> confirmedKill(spriteID) ([DECOMP] BestiaryController.cs:215-232). So it
+        // counts kills however they happened, which is precisely the question the selector could not answer.
+        //
+        // V1 ids, versions consecutive ascending (V1..V4). Transcribed from the addKills call sites above,
+        // NOT derived from a pattern — the gaps are irregular (339 follows 337, 365 follows 347) and a
+        // formula would be wrong.
+        //   index 5  T6 Beast     312..315
+        //   index 6  T7 Nerd      334..337
+        //   index 7  T8 Godmother 339..342
+        //   index 8  T9 Exile     344..347
+        //   index 9  T10 Hungers  365..368
+        //   index 10 T11 Lobster  369..372
+        //   index 11 T12 Amalg    373..376
+        // -1 means "no per-version record exists" — indices 0-4 are unversioned titans with plain
+        // titan{n}Kills fields, and 12-13 (Tippi, Traitor) are unversioned entirely.
+        public static readonly int[] BestiaryV1Id =
+        {
+            -1, -1, -1, -1, -1, 312, 334, 339, 344, 365, 369, 373, -1, -1
+        };
+
+        // The bestiary enemy id for one titan version, or -1 when there is no record to read.
+        // Unity-free so the id arithmetic is testable without the game build.
+        public static int BestiaryId(int titanIndex, int version)
+        {
+            if (titanIndex < 0 || titanIndex >= BestiaryV1Id.Length) return -1;
+            if (version < 1 || version > 4) return -1;
+            int baseId = BestiaryV1Id[titanIndex];
+            return baseId < 0 ? -1 : baseId + (version - 1);
+        }
+
+        public static bool HasVersionKillRecord(int titanIndex)
+            => titanIndex >= 0 && titanIndex < BestiaryV1Id.Length && BestiaryV1Id[titanIndex] >= 0;
+
+        // ---- chase hysteresis ---------------------------------------------------------------------
+        //
+        // WHETHER TO KEEP CHASING A FIRST KILL, given how far best-gear stats reach toward the bar.
+        //
+        // The decision this replaces was a bare threshold — ready at >= 1.0x, park below it — recomputed
+        // every 60s. Sitting anywhere near the line, it alternated: observed on the operator's account
+        // 2026-08-11 flipping v2 -> v1 -> v2 inside two minutes, and each landing on v1 dropped adventure
+        // routing mid-spawn (at v1 the titan auto-kills, so there is no target to hold the zone) and
+        // handed the game a free v1 kill instead of the v2 attempt it had just committed to.
+        //
+        // A deadband fixes the whole class: commit at the full bar, abandon only after falling well
+        // below it. The asymmetry is deliberate — starting a doomed fight is cheap and recoverable,
+        // abandoning a winnable one mid-window costs the entire spawn cycle (1-4.5h for T7).
+        public const double ChaseCommitRatio  = 1.00;
+        public const double ChaseAbandonRatio = 0.90;
+
+        public static bool ChaseReady(bool wasChasing, double worstRatio)
+            => wasChasing ? worstRatio >= ChaseAbandonRatio : worstRatio >= ChaseCommitRatio;
 
         // Titan abbreviations (0-based index), relocated from the retired WinForms TitansPanel — consumed by
         // AtHourPlanner + the UiBridge titan snapshot node.

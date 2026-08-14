@@ -26,7 +26,7 @@
       the git HEAD sha here (AssemblyInformationalVersion becomes "<Version>+<40 hex>"; before this
       property existed it was "1.0.0+<40 hex>") — that is deliberate provenance and is left on.
     -->
-    <Version>2.3.0</Version>
+    <Version>2.4.0</Version>
     <ApplicationIcon>advisor.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>

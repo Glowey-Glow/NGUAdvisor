@@ -72,8 +72,14 @@ namespace NGUAdvisor.Managers
         // a dynamic one — but ONLY in the Ch.5 24h shape (T7-capable, Boss 125+) with a TIME-based rebirth
         // target; elsewhere the profile's NGUDiff owns the track. UNTESTED until Boss 125+ (T7-version read
         // via TitanVersion(6)-1 is a first cut).
+        // True while this method is past all of its gates and actively steering the NGU level track —
+        // i.e. while a SECOND writer is on the same field the profile's NGUDiff timeline owns. Read by
+        // the Profiles section readout; cleared every tick so a stale true cannot outlive the window.
+        public static bool NguTrackOwned { get; private set; }
+
         private static void TickNguTrack(Character c)
         {
+            NguTrackOwned = false;
             try
             {
                 int chapter = 0;
@@ -105,8 +111,17 @@ namespace NGUAdvisor.Managers
                 try { if (Main.Profile != null && Main.Profile.ProfileOwnsNguTrack) return; } catch { }
 
                 int t7 = 0;
-                try { t7 = TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6)); } catch { }
+                // Kills, not the selector. Under the old read this returned 0 on an account that had killed
+                // T7 v2 eight times, so the `t7 < 1` guard below returned every tick and the Evil NGU track
+                // switch has never fired once in this installation's entire log history.
+                try { t7 = ZoneHelpers.VersionsDefeatedByKills(6); } catch { }
                 if (t7 < 1) return; // no T7 version defeated → no Evil NGU hours (guide ch5 rule: N = versions defeated)
+
+                // PAST EVERY GATE, SO THIS METHOD IS A LIVE WRITER OF nguLevelTrack THIS TICK — and it is
+                // not the only one. NGUDiffBreakpoints writes the same field from the profile's own
+                // timeline, with no arbitration between them beyond the ProfileOwnsNguTrack deferral
+                // above. The Profiles readout needs to say so; there is no way to infer it from outside.
+                NguTrackOwned = true;
                 double evilHours = t7;
                 double switchAt = target - evilHours * 3600.0;
                 var want = c.rebirthTime.totalseconds >= switchAt ? difficulty.evil : difficulty.normal;
@@ -118,6 +133,17 @@ namespace NGUAdvisor.Managers
                     ChallengeOverlay.Record("NGU track", $"→ {(want == difficulty.evil ? "EVIL" : "Normal")} NGUs",
                         $"guide ch5: last {evilHours:0}h evil (T7 v{t7} done)");
                 }
+
+                // Recorded whether or not this tick changed anything: the ledger's job here is to say
+                // that a SECOND writer is live on this field, which is true while the window is open
+                // regardless of whether the two writers currently agree. They agreeing is exactly when
+                // a contested field looks healthy and is not.
+                WriteLedger.Record("ngu.track.planner", want == difficulty.evil ? "Evil" : "Normal",
+                    $"guide ch.5 — the last {evilHours:0}h of the run go on Evil NGUs",
+                    ChallengeOverlay.Segment,
+                    $"T7 versions beaten (from the bestiary): {t7} → {evilHours:0} Evil hour(s)",
+                    $"Switch point is {switchAt / 3600.0:0.0}h; the run is at {c.rebirthTime.totalseconds / 3600.0:0.0}h",
+                    "Your profile's NGUDiff timeline writes this field too — last writer each tick wins");
             }
             catch (Exception e) { Main.LogDebug($"LevelPlanner NGU track: {e.Message}"); }
         }
@@ -152,6 +178,13 @@ namespace NGUAdvisor.Managers
                     {
                         _wanReclaimed = true;
                         reclaimed = targets[3] != 0 || targets[4] != 0;
+                        if (reclaimed)
+                            WriteLedger.Record("at.wandoos.reclaim", "0 (unset)",
+                                "withdrew a target the advisor stranded here before this rule existed",
+                                ChallengeOverlay.Segment,
+                                "Slots 3 and 4 held " + targets[3] + " / " + targets[4] + " at engage",
+                                "Nothing writes these any more, so a value here was left by the old rule",
+                                "Cleared once, this process only — a target you type from here survives");
                         targets[3] = 0;   // 0 = the game's unset sentinel
                         targets[4] = 0;
                     }
@@ -202,6 +235,19 @@ namespace NGUAdvisor.Managers
             if (stop == long.MinValue) return;   // unknown — leave the current target alone
             var next = LaneTargets.AdvancedTrainingPurposeFloor(targets[slot], stop);
             if (targets[slot] != next) targets[slot] = next;
+
+            // Recorded EVERY tick, deliberately. WriteLedger keeps one row per field and ignores an
+            // unchanged value, so re-asserting a floor sixty times a minute costs one comparison and
+            // produces one row — while a value the operator raises by hand shows up on the very next
+            // tick as a new row rather than waiting for the advisor to happen to write again.
+            WriteLedger.Record("at.block", next.ToString("N0"),
+                next > stop
+                    ? "your hand-set target is higher than the floor, so it stands"
+                    : "Block hard cap — the least the advisor will accept here",
+                ChallengeOverlay.Segment,
+                "Written once when the auto profile engaged, then held as a FLOOR",
+                "A larger number you type is kept; a smaller one is raised back to this",
+                "Restored to your own value when the auto profile goes off");
         }
 
         // BlockStopLevel WAS HERE AND IS DELETED, not merely bypassed — a second way to compute a

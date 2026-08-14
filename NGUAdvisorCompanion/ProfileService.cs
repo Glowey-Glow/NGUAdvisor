@@ -239,15 +239,27 @@ public static class ProfileService
         return arr;
     }
 
+    // Three shapes now, not two. GEAR LOCK is the both-at-once row — locked IDs and an objective —
+    // and its payload has to round-trip through BreakpointEditor.ApplyGear unchanged, which is why
+    // the canonical text here is exactly the grammar that parses there.
     private static JSONArray Gear(List<ProfileModel.ListBreakpoint> list)
     {
         var arr = new JSONArray();
         foreach (var b in list)
         {
+            bool hasObjective = !string.IsNullOrEmpty(b.Objective);
+            bool hasItems = b.Items.Count > 0;
             string payload, summary;
-            if (!string.IsNullOrEmpty(b.Objective))
+            string optimize = (b.ForceRespawn ? "Optimize+Respawn: " : "Optimize: ") + b.Objective;
+            if (hasObjective && hasItems)
             {
-                payload = (b.ForceRespawn ? "Optimize+Respawn: " : "Optimize: ") + b.Objective;
+                payload = "Lock: " + string.Join(", ", b.Items) + "; " + optimize;
+                summary = "Optimize: " + b.Objective + (b.ForceRespawn ? " (+Respawn)" : "")
+                        + " · " + b.Items.Count + (b.Items.Count == 1 ? " item locked" : " items locked");
+            }
+            else if (hasObjective)
+            {
+                payload = optimize;
                 summary = "Optimize: " + b.Objective + (b.ForceRespawn ? " (+Respawn)" : "");
             }
             else

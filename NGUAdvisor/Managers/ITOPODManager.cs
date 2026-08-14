@@ -757,6 +757,13 @@ namespace NGUAdvisor.Managers
             Adventure.itopodStart = start;
             Adventure.itopodEnd = end;
 
+            WriteLedger.Record("adventure.itopod", start + " – " + end,
+                "advisor floor range for the current objective",
+                ChallengeOverlay.Segment,
+                "Two fields written together; the pair is the range, not two settings",
+                "Persists until something else writes it — there is no timer on it",
+                "A range you set by hand is replaced the next time the advisor picks one");
+
             if (_ac.itopodLevel >= start && _ac.itopodLevel <= end)
                 return;
 

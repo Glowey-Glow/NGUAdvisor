@@ -159,19 +159,28 @@ namespace NGUAdvisor.Managers
                 // one of the sources (challenge rotation, gear hunt, auto-profile segment and the user's
                 // standing pick are the others). Reading the timeline alone would advertise "no gap" for
                 // every user whose objective comes from anywhere else — including anyone who set a pin.
-                string objName = null; bool forceRespawn = false;
+                //
+                // ⚠ AND THE GEAR LOCK, for exactly the same reason the respawn flag is here. A lock
+                // pins items the optimiser would not have chosen, so the LOCKED best set scores at or
+                // below the unlocked one — permanently. Solving without it would compare an unlocked
+                // ideal against the locked set the advisor actually equips and report the difference
+                // as a gap: a standing "Re-optimize gear: +N%" recommendation that the equip path
+                // correctly refuses to act on, forever. Same phantom-gap shape as the respawn flag,
+                // and it took a user report to find that one.
+                string objName = null; bool forceRespawn = false; int[] locks = null;
                 try
                 {
                     var resolved = GearObjectiveApply.Current();
                     objName = resolved.Name;
                     forceRespawn = resolved.ForceRespawn;
+                    locks = resolved.Locks;
                 }
                 catch { }
                 if (string.IsNullOrEmpty(objName)) { _focus = ""; BestGearIds = new int[0]; BestGearFor = ""; return _focus; }
                 var obj = GearOptimizer.FindObjective(objName);
                 if (obj == null) { _focus = ""; BestGearIds = new int[0]; BestGearFor = ""; return _focus; }
                 double cur = GearOptimizer.CurrentScore(obj);
-                var best = GearOptimizer.Optimize(obj, forceRespawn);
+                var best = GearOptimizer.Optimize(obj, forceRespawn, GearLockSet.Of(locks));
                 double opt = best.Score;
                 // Free: this Optimize already ran, and its picks were being thrown away.
                 BestGearIds = best.AllIds().Where(x => x > 0).Distinct().ToArray();

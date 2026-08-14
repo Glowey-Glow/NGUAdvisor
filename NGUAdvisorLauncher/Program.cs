@@ -4,9 +4,9 @@ using System.IO;
 
 namespace NGUAdvisorLauncher
 {
-    // Public launcher: direct-injects NGUAdvisor.dll (no bootstrap / no hot-reload). Carries the advisor
-    // icon and runs from its own folder. On failure it pauses so the error stays readable. The injected
-    // advisor auto-launches the companion (injector\companion\NGUAdvisorCompanion.exe).
+    // Mirrors "Run NGU Advisor.bat" (hot-reload flow) so the double-clicked launcher carries the advisor
+    // icon. Runs from its own folder: hands the bootstrap the injector path, then injects the bootstrap
+    // via smi.exe, which byte-loads NGUAdvisor.dll. On failure it pauses so the error stays readable.
     internal static class Program
     {
         private static int Main()
@@ -16,6 +16,7 @@ namespace NGUAdvisorLauncher
                 string dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
                 string injector = Path.Combine(dir, "injector");
                 string smi = Path.Combine(injector, "smi.exe");
+
                 if (!File.Exists(smi))
                 {
                     Console.Error.WriteLine("Could not find injector\\smi.exe next to this launcher.");
@@ -23,26 +24,15 @@ namespace NGUAdvisorLauncher
                     return Fail();
                 }
 
-                // The advisor is byte-loaded by smi, so Assembly.Location is empty in-game — write it our
-                // injector path so it can find injector\companion\NGUAdvisorCompanion.exe (auto-launch + F1).
-                // "Run NGU Advisor.bat" writes the same file; keep the two in sync.
-                try
-                {
-                    string low = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                        "AppData", "LocalLow", "NGUAdvisor");
-                    Directory.CreateDirectory(low);
-                    File.WriteAllText(Path.Combine(low, "injector-path.txt"), injector);
-                }
-                catch (Exception e)
-                {
-                    // Non-fatal: the advisor still injects, only the companion auto-launch/F1 is lost.
-                    Console.Error.WriteLine("Warning: could not write injector-path.txt (" + e.Message +
-                                            ") - the companion window may not open.");
-                }
+                // The bootstrap is byte-loaded and can't know where it lives — write it the injector path.
+                string low = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "AppData", "LocalLow", "NGUAdvisor");
+                Directory.CreateDirectory(low);
+                File.WriteAllText(Path.Combine(low, "injector-path.txt"), injector);
 
                 var psi = new ProcessStartInfo(smi,
-                    "inject -p NGUIdle -a .\\injector\\NGUAdvisor.dll -n NGUAdvisor -c Loader -m Init")
+                    "inject -p NGUIdle -a .\\injector\\NGUAdvisorBootstrap.dll -n NGUAdvisorBootstrap -c Boot -m Init")
                 {
                     WorkingDirectory = dir,
                     UseShellExecute = false

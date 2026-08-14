@@ -465,6 +465,16 @@ namespace NGUAdvisor.Managers
 
         private static List<ResourceBreakpoint> Fallback(ResourceType type)
         {
+            // R3's fallback follows the CBlock-3 phase gate, so it cannot sit in the one-entry-per-
+            // type cache below — the token set changes when the block completes. ParsedList's key
+            // carries the tokens, so each phase still parses exactly once and IsValid() still runs
+            // at call time. This path fires inside challenges when the profile's own R3 list is
+            // entirely inactive; a bare ALLHACK here was the same hack-0-forever trap AutoTokens had.
+            if (type == ResourceType.R3)
+            {
+                var toks = HackPhase.R3Tokens(PostCBlock3());
+                return ParsedList($"fallback|R3|{string.Join(",", toks)}", toks, type);
+            }
             if (!_fallbackParsed.TryGetValue(type, out var parsed))
             {
                 string[] tokens;
@@ -472,7 +482,6 @@ namespace NGUAdvisor.Managers
                 {
                     case ResourceType.Energy: tokens = new[] { "CAPTM:5", "CAPWAN:40", "BESTAUG", "CAPALLAT", "ALLNGU", "ALLBT" }; break;
                     case ResourceType.Magic: tokens = new[] { "CAPTM:5", "CAPWAN:40", "ALLNGU", "BR-30" }; break;
-                    case ResourceType.R3: tokens = new[] { "ALLHACK" }; break;
                     default: tokens = new string[0]; break;
                 }
                 var arr = new JSONArray();
@@ -623,7 +632,10 @@ namespace NGUAdvisor.Managers
                 try
                 {
                     double target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
-                    int t7Defeated = TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6));
+                    // Kills, not the difficulty selector. The selector is pinned to whatever version the
+                    // advisor is chasing, so this read 0 on an account with eight confirmed T7 v2 kills —
+                    // and the Evil-NGU tail below has therefore never once been scheduled.
+                    int t7Defeated = ZoneHelpers.VersionsDefeatedByKills(6);
                     if (target > 0 && t7Defeated >= 1)
                         evilNguTail = runSec >= target - t7Defeated * 3600.0;
                 }
@@ -686,7 +698,7 @@ namespace NGUAdvisor.Managers
             try
             {
                 double target = Main.Profile != null ? Main.Profile.NextRebirthTargetSeconds() : -1;
-                return target > 0 && TitanTables.VersionsDefeated(ZoneHelpers.TitanVersion(6)) >= 1;
+                return target > 0 && ZoneHelpers.VersionsDefeatedByKills(6) >= 1;   // kills, not the selector
             }
             catch { return false; }
         }
@@ -788,9 +800,54 @@ namespace NGUAdvisor.Managers
         // Latch for the ritual-funding transition log below (null = not yet evaluated this load).
         private static bool? _lastBloodMatters;
 
+        // ---- The guide ch.5 hack-phase gate: "Post-T7, run A/D Hack until completing CBlock 3",
+        // then Adventure as the default push plus the first-milestone sweep on ids 2-6. The token
+        // lists and the index-trap resolution live in HackPhase; the block's requirements come from
+        // CampaignTables.LegRequirements (the same rows Status() reads); the live counters from
+        // Block() above. This used to be a bare ALLHACK — hacks 0..14 in index order — and the R3
+        // waterfill parks the whole pool on the head lane, so hack 0 drank everything FOREVER, at
+        // every stage: exactly the "advisor ingesting ch.5 rows without the chapter gate runs hack 0
+        // forever" failure audit/10 §A1.2 called out before this generator existed.
+        //
+        // COMPLETIONS ARE PER-DIFFICULTY AND ONLY THE CURRENT ONE IS READABLE, so the gate is
+        // decided where it can be verified: on Evil, against cblock3's Evil-leg ordinals; on
+        // Sadistic, always post (Sadistic is entered through Evil's ending — the sweep lanes then
+        // self-report done instantly if their milestones are long past); on Normal, always pre —
+        // that covers the block's own rebirth-to-Normal return trip, where hacks pay nothing and
+        // A/D is the guide's standing answer anyway. A failed read keeps the LAST answer rather
+        // than flapping the profile for up to 60s the way Chapter()'s zero-fallback used to.
+        private static bool _postCBlock3;
+        private static DateTime _postCBlock3At = DateTime.MinValue;
+
+        private static bool PostCBlock3()
+        {
+            if ((DateTime.UtcNow - _postCBlock3At).TotalSeconds <= 60) return _postCBlock3;
+            _postCBlock3At = DateTime.UtcNow;
+            bool was = _postCBlock3;
+            try
+            {
+                var diff = Main.Character.settings.rebirthDifficulty;
+                if (diff >= difficulty.sadistic) _postCBlock3 = true;
+                else if (diff != difficulty.evil) _postCBlock3 = false;
+                else
+                {
+                    var req = CampaignTables.LegRequirements(HackPhase.BlockId, CampaignTables.Evil);
+                    var live = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var e in Block()) live[e.Code] = e.Cur;
+                    _postCBlock3 = HackPhase.ChainSatisfied(req, live);
+                }
+            }
+            catch (Exception e) { Main.LogDebug($"PostCBlock3: {e.Message}"); }
+            if (_postCBlock3 != was)
+                Record("R3 → hack phase", _postCBlock3
+                    ? "CBlock 3 complete — first-milestone sweep (TM/Drop/Aug/eNGU/mNGU), then Adventure as the default push"
+                    : "pre-CBlock 3 — A/D Hack carries R3 until the block completes");
+            return _postCBlock3;
+        }
+
         public static string[] AutoTokens(ResourceType type)
         {
-            if (type == ResourceType.R3) return new[] { "ALLHACK" };
+            if (type == ResourceType.R3) return HackPhase.R3Tokens(PostCBlock3());
             if (type != ResourceType.Energy && type != ResourceType.Magic) return new string[0];
 
             bool e = type == ResourceType.Energy;

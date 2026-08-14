@@ -94,6 +94,17 @@ namespace NGUAdvisor.Managers
         // clears progress (removeAllR3 touches only .res3), so a slow hack keeps what it banked.
         public static bool WillStall(double ppt) => !(ppt >= StallFloor);
 
+        // "Get the first milestone, move on" — the guide ch.5 sweep's stopping rule (audit/10 §A1.1
+        // row 3, amendment 09 §1), as a predicate MileHackBP can report TargetMet() with.
+        //
+        // `threshold` is the game's own hacksController.milestoneThreshold(id): the serialized
+        // per-hack spacing minus the perk/quirk reducers, i.e. the level of the FIRST milestone.
+        // Reducers only ever LOWER it, so a level at-or-past the threshold stays past it — terminal
+        // stays terminal, no flap. No zero guard on purpose: the reducer caps keep the threshold >= 8
+        // (audit/08 §0 capture; the divide-by-zero ruling in amendment 07), and if it ever were 0 the
+        // `>=` reads "done", which fails safe — the lane drops out rather than absorbing forever.
+        public static bool FirstMilestoneMet(long level, long threshold) => level >= threshold;
+
         // Spend as little as possible for the rate you were going to get anyway.
         //
         // With n = ceil(need/budget) chunks, need/n lands ppt on exactly 1/n — a stair peak — so the levels

@@ -12,6 +12,7 @@
     --accent: #2bd4e6; --accent-dim: #1b8a97; --ok: #52c880; --warn: #f0b44f; --crit: #f2695f;
     --ok-bg: rgba(82,200,128,.12); --warn-bg: rgba(240,180,79,.13); --crit-bg: rgba(242,105,95,.13); --accent-bg: rgba(43,212,230,.10);
     --mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --display: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --r-container: 12px; --r: var(--r-container); --focus-ring: 2px solid var(--accent); --popover: #18222f;
     --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 22px;   /* spacing scale — see docs/COMPANION_UI.md */
@@ -21,10 +22,10 @@
     /* F1: TYPE SCALE. There were 15 distinct rendered sizes, with half-pixel steps between 9 and 12.5 that
        no one can perceive as meaning anything. Eight steps, every size in the file comes from one of them.
        Sizes are NOT era tokens — the Arcade block below redefines colour/family/radius, never these. */
-    --fs-1: 10px;   /* data label — column heads, key/value keys, badges. The floor. */
-    --fs-2: 11px;   /* dense chrome — chips, pills, tabs, buttons, small mono data, AND the section label */
-    --fs-3: 12px;   /* secondary copy — hints, rationale, captions */
-    --fs-4: 13px;   /* body and form controls */
+    --fs-1: 11px;   /* data label — column heads, key/value keys, badges. The floor. */
+    --fs-2: 12px;   /* dense chrome — chips, pills, tabs, buttons, small mono data, AND the section label */
+    --fs-3: 13px;   /* secondary copy — hints, rationale, captions */
+    --fs-4: 14px;   /* body and form controls */
     --fs-5: 15px;   /* lead sentence — the recommendation, the goal line */
     --fs-6: 19px;   /* system-view title */
     --fs-7: 23px;   /* hero title, instrument big number */
@@ -142,7 +143,7 @@
     background: url(advisor-icon.png) center/cover no-repeat;
     box-shadow: 0 0 0 1px var(--border), 0 0 22px -8px var(--accent);
   }
-  .brand b { font-family: var(--mono); font-size: var(--fs-4); letter-spacing: .04em; }
+  .brand b { font-family: var(--display); font-size: var(--fs-4); letter-spacing: .04em; }
   .brand span { display: block; font-size: var(--fs-1); color: var(--muted); }
 
   .navgroup { margin-top: 8px; }
@@ -203,14 +204,14 @@
      longest breadcrumb the group eyebrow used to overflow its shrunken box and print over the pill.
      Clip it instead — the title beside it already ellipsizes. */
   .crumb .grp { color: var(--faint); white-space: nowrap; min-width: 0; overflow: hidden; }
-  .crumb h1 { margin: 0; font-size: var(--fs-5); font-family: var(--mono); letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumb h1 { margin: 0; font-size: var(--fs-5); font-family: var(--display); letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .topbar .pill, .topbar .stat, .topbar .dseg, .topbar .btn { flex: none; }
   .hamb { display: none; }
 
   .stat { display: flex; flex-direction: column; }
   .stat .k { color: var(--faint); }
   .stat .v { font-family: var(--mono); font-size: var(--fs-4); font-variant-numeric: tabular-nums; }
-  .pill { display: inline-flex; align-items: center; gap: var(--sp-1); font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .04em; padding: 4px 9px; border-radius: 100px; border: 1px solid var(--border); background: var(--surface-2); }
+  .pill { display: inline-flex; align-items: center; gap: var(--sp-1); font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .04em; padding: 4px 9px; border-radius: 100px; border: 1px solid var(--border); background: var(--surface-2); }
   .pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); background: var(--ok-bg); }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
   .dot.live { background: var(--ok); animation: pulse 2.4s ease-out infinite; }
@@ -234,7 +235,7 @@
   .connbar[data-state="down"] .cb-dot { background: var(--crit); }
   /* E10: interactive borders use --border-control (opaque, >=3:1 on every surface they sit on) — see the
      token definition in the Arcade block. --border stays hairline for cards and dividers. */
-  .btn { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .03em; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 6px 11px; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
+  .btn { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .03em; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 6px 11px; cursor: pointer; transition: border-color .15s, background .15s, transform .05s; }
   .btn:hover { border-color: var(--accent); background: var(--accent-bg); }
   .btn:active { transform: translateY(1px); }
   .btn:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
@@ -260,7 +261,7 @@
   .fill.ok { background: linear-gradient(90deg, color-mix(in srgb,var(--ok) 55%, #000), var(--ok)); box-shadow: 0 0 12px -3px var(--ok); }
   .fill.warn { background: linear-gradient(90deg, color-mix(in srgb,var(--warn) 55%, #000), var(--warn)); box-shadow: 0 0 12px -3px var(--warn); }
   .fill.crit { background: linear-gradient(90deg, color-mix(in srgb,var(--crit) 55%, #000), var(--crit)); box-shadow: 0 0 12px -3px var(--crit); }
-  .chip { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .04em; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border-soft); color: var(--muted); background: var(--ground-2); white-space: nowrap; }
+  .chip { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .04em; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border-soft); color: var(--muted); background: var(--ground-2); white-space: nowrap; }
   .chip.evil { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, var(--border)); background: var(--crit-bg); }
   .chip.act { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); background: var(--ok-bg); }
   .chip.max { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--accent-bg); }
@@ -309,7 +310,7 @@
   .ob-dead { border-style: dashed; border-color: var(--warn); color: var(--warn); text-decoration: line-through; }
   .ob-other { opacity: .55; cursor: not-allowed; }
   .cdetail .chint { font-size: var(--fs-3); color: var(--muted); margin: 14px 0 0; }
-  .clegend { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin: var(--sp-2) 0 0; font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .06em; color: var(--faint); }
+  .clegend { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin: var(--sp-2) 0 0; font-family: var(--sans); font-size: var(--fs-1); letter-spacing: .06em; color: var(--faint); }
   .clegend .lg-q { color: var(--muted); }
   .clegend .lg-next { color: var(--accent); }
   .clegend .lg-dead { color: var(--warn); text-decoration: line-through; }
@@ -318,7 +319,7 @@
   .planrow { display: flex; align-items: center; gap: var(--sp-2); padding: 4px 9px; border-radius: 6px; font-size: var(--fs-3); }
   .planrow .ps { width: 13px; text-align: center; color: var(--faint); }
   .planrow .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .planrow .pt { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .planrow .pt { font-family: var(--sans); font-size: var(--fs-2); color: var(--faint); font-variant-numeric: tabular-nums; }
   .planrow .pr { font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .05em; color: var(--faint); min-width: 50px; text-align: right; }
   .planrow.done { opacity: .7; }   /* E11: .45 = 2.63:1. A purchased perk's name still has to be readable. */
   .planrow.current { background: var(--accent-bg); }
@@ -337,7 +338,7 @@
   /* E15: the Overview's two card headings are <h2> so the outline goes H1 (breadcrumb) -> H2 with no
      skipped level. They are styled identically to the <h3>s the other views use. */
   .card h2, .card h3 { margin: 0 0 10px; font-size: var(--fs-3); display: flex; align-items: center; gap: var(--sp-2); }
-  .stage-name { font-family: var(--mono); font-size: var(--fs-8); line-height: 1.1; letter-spacing: .01em; text-wrap: balance; }
+  .stage-name { font-family: var(--display); font-size: var(--fs-8); line-height: 1.1; letter-spacing: .01em; text-wrap: balance; }
   .stage-sub { color: var(--muted); font-size: var(--fs-4); margin-top: 6px; }
   .chips { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-1); }
   /* .persist is a structural wrapper only — the region shown in BOTH Advisor and Manual (see
@@ -356,8 +357,8 @@
   .ftile .ft-poop { position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
                     z-index: 2; background: transparent; border: 1px solid var(--faint); }
   .ftile .ft-poop.rec { background: #8a5a2b; border-color: #c98f4e; box-shadow: 0 0 0 2px rgba(138,90,43,.28); }
-  .ftile .ft-name { font-family: var(--mono); font-size: var(--fs-2); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ftile .ft-meta { margin-left: auto; font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); flex: none; }
+  .ftile .ft-name { font-family: var(--sans); font-size: var(--fs-2); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ftile .ft-meta { margin-left: auto; font-family: var(--sans); font-size: var(--fs-1); color: var(--muted); flex: none; }
   .ftile.t-even .ft-fill { background: var(--ok); }
   .ftile.t-odd  .ft-fill { background: var(--accent); }
   .ftile.max .ft-fill { background: var(--gold); opacity: .9; }
@@ -366,10 +367,10 @@
   .ftile.lock { opacity: .55; }   /* E11: .5 lands a hair under 4.5:1 */
   /* plan tabs (Perks & Quirks: Upcoming / Purchased) */
   .ptabs { display: flex; gap: var(--sp-1); margin-top: var(--sp-1); }
-  .ptab { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 4px 11px; cursor: pointer; }
+  .ptab { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 4px 11px; cursor: pointer; }
   .ptab.active { color: var(--text); background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
   .goal-line { font-size: var(--fs-5); margin: 2px 0 14px; text-wrap: balance; }
-  .goal-line b { color: var(--accent); font-family: var(--mono); }
+  .goal-line b { color: var(--accent); font-family: var(--display); }
   .gauge { display: grid; gap: var(--sp-2); }
   .gauge .rowtop { display: flex; justify-content: space-between; align-items: baseline; }
   .gauge .rowtop .val { font-family: var(--mono); font-size: var(--fs-4); font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -395,8 +396,8 @@
   .act:not(.chip)::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
   .act.crit:not(.chip)::before { background: var(--crit); } .act.warn:not(.chip)::before { background: var(--warn); } .act.ok:not(.chip)::before { background: var(--ok); }
   .act .head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: 6px; }
-  .act .sys { font-family: var(--mono); font-size: var(--fs-4); }
-  .act .go { margin-left: auto; font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .06em; color: var(--faint); background: none; border: 1px solid var(--border-soft); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+  .act .sys { font-family: var(--sans); font-size: var(--fs-4); }
+  .act .go { margin-left: auto; font-family: var(--sans); font-size: var(--fs-1); letter-spacing: .06em; color: var(--faint); background: none; border: 1px solid var(--border-soft); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
   .act .go:hover { color: var(--accent); border-color: var(--accent); }
   .src { font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .08em; color: var(--faint); border: 1px solid var(--border-soft); border-radius: 5px; padding: 2px 6px; }
   .src.advisor { color: var(--accent); border-color: color-mix(in srgb,var(--accent) 35%, var(--border)); }
@@ -416,7 +417,7 @@
   .res-row .r .p { font-family: var(--mono); font-size: var(--fs-2); font-variant-numeric: tabular-nums; text-align: right; }
   .cmp { display: grid; gap: var(--sp-2); }
   .cmp .row { display: grid; grid-template-columns: 1fr auto; gap: var(--sp-2); align-items: center; }
-  .cmp .row .who { font-family: var(--mono); font-size: var(--fs-3); } .cmp .row .who .win { color: var(--ok); }
+  .cmp .row .who { font-family: var(--sans); font-size: var(--fs-3); } .cmp .row .who .win { color: var(--ok); }
   .cmp .row .rate { font-family: var(--mono); font-size: var(--fs-3); font-variant-numeric: tabular-nums; color: var(--muted); }
   .verdict { margin-top: 10px; font-size: var(--fs-3); color: var(--muted); } .verdict b { color: var(--ok); font-family: var(--mono); }
   .spark { display: block; width: 100%; height: 34px; margin-top: 4px; }
@@ -424,7 +425,7 @@
   /* ---- SYSTEM VIEW template ---- */
   .sysview-head { display: flex; align-items: flex-start; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: 15px; }
   .sh-title { margin-right: auto; }
-  .sh-title h2 { margin: 0; font-family: var(--mono); font-size: var(--fs-6); letter-spacing: .01em; }
+  .sh-title h2 { margin: 0; font-family: var(--display); font-size: var(--fs-6); letter-spacing: .01em; }
   /* flex-wrap so .sh-note (D5) can take a full-width line UNDER the segment + switch it annotates.
      It lives inside .sh-controls on purpose: renderSystems hides that whole block on views with no
      mapped toggle, and the note must never outlive the control it describes. */
@@ -435,20 +436,20 @@
   .sh-note { flex-basis: 100%; margin-top: 2px; text-align: right; }
   .sh-note .hint { color: var(--faint); }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--ground-2); }
-  .seg-btn { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: none; border: 0; padding: 6px 13px; cursor: pointer; }
+  .seg-btn { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: none; border: 0; padding: 6px 13px; cursor: pointer; }
   .seg-btn.active { color: var(--text); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent); }
   .seg-btn:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
   /* Profile Editor system tabs. Deliberately NOT .seg-btn: that class belongs to the ADVISOR/MANUAL
      decisions control, whose delegated handler would hijack these clicks (same reason as .dseg-btn).
      A wrapping pill row rather than a .seg strip, because ten systems overflow one line. */
   .pe-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: 4px 0 14px; }
-  .pe-tab { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  .pe-tab { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .05em; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
   .pe-tab:hover { color: var(--text); border-color: var(--accent); }
   .pe-tab.active { color: var(--text); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent); border-color: var(--accent); }
   .pe-tab:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
   .pe-tab .pe-count { color: var(--faint); }
   .pe-tab.active .pe-count { color: var(--muted); }
-  .switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .04em; color: var(--muted); cursor: pointer; user-select: none; }
+  .switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .04em; color: var(--muted); cursor: pointer; user-select: none; }
   .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
   .switch .sw { width: 34px; height: 19px; border-radius: 100px; background: var(--ground-2); border: 1px solid var(--border-control); position: relative; transition: background .15s, border-color .15s; }
   .switch .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--faint); transition: transform .15s, background .15s; }
@@ -485,10 +486,10 @@
   .setfilter-empty { margin-top: var(--sp-4); }
   .field .inp[type="number"] { width: 100%; -moz-appearance: textfield; }
   .field { display: grid; gap: var(--sp-1); }
-  .field label { font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .06em; color: var(--muted); }
-  .field .inp { font-family: var(--mono); font-size: var(--fs-4); color: var(--text); background: var(--ground-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 7px 9px; }
+  .field label { font-family: var(--sans); font-size: var(--fs-1); letter-spacing: .06em; color: var(--muted); }
+  .field .inp { font-family: var(--sans); font-size: var(--fs-4); color: var(--text); background: var(--ground-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 7px 9px; }
   /* Base .inp so selects/inputs OUTSIDE a .field (card grid, list-add dropdowns) still get the theme. */
-  .inp { font-family: var(--mono); font-size: var(--fs-4); color: var(--text); background: var(--surface-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 6px 8px; }
+  .inp { font-family: var(--sans); font-size: var(--fs-4); color: var(--text); background: var(--surface-2); border: 1px solid var(--border-control); border-radius: 7px; padding: 6px 8px; }
   select.inp { cursor: pointer; }
 
   /* D1 — PROFILE TIMELINE SUMMARY (read-only, on the System Views).
@@ -512,11 +513,11 @@
   .tlsum-row { display: grid; grid-template-columns: minmax(110px,auto) minmax(88px,auto) minmax(0,1fr) auto; gap: var(--sp-3);
                align-items: center; padding: 10px 13px; border-bottom: 1px solid var(--border-soft); }
   .tlsum-row:last-child { border-bottom: 0; }
-  .tlsum-sys { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .05em; color: var(--text); }
+  .tlsum-sys { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .05em; color: var(--text); }
   .tlsum-n { font-family: var(--mono); font-size: var(--fs-2); font-variant-numeric: tabular-nums; color: var(--accent); }
-  .tlsum-next { font-family: var(--mono); font-size: var(--fs-2); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tlsum-next { font-family: var(--sans); font-size: var(--fs-2); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tlsum-next b { color: var(--accent); font-weight: 400; }
-  .tl-goedit { font-family: var(--mono); letter-spacing: .04em; padding: 5px 10px; white-space: nowrap; }
+  .tl-goedit { font-family: var(--sans); letter-spacing: .04em; padding: 5px 10px; white-space: nowrap; }
 
   /* TIMELINE EDITOR component */
   .timeline { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
@@ -524,7 +525,7 @@
   .tl-row { display: grid; grid-template-columns: 92px minmax(200px,1fr) auto; gap: var(--sp-2); align-items: center; padding: 9px 13px; border-bottom: 1px solid var(--border-soft); }
   .tl-actions { display: flex; gap: var(--sp-1); align-items: center; justify-content: flex-end; }
   /* E17: min-height 24px — a destructive control must clear SC 2.5.8 on its own, not via the spacing exception. */
-  .tl-del { font-family: var(--mono); font-size: var(--fs-3); line-height: 1; padding: 4px 8px; min-height: 24px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
+  .tl-del { font-family: var(--sans); font-size: var(--fs-3); line-height: 1; padding: 4px 8px; min-height: 24px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
   .tl-del:hover { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 45%, var(--border)); }
   .tl-row:last-child { border-bottom: 0; }
   .tl-head { background: var(--ground-2); }
@@ -534,9 +535,9 @@
   /* G3 first-run guidance is a sentence, not a payload — it has to wrap rather than ellipsize away */
   .tl-row .tl-pay.tl-empty { white-space: normal; overflow: visible; font-size: var(--fs-3); line-height: 1.45; }
   .tl-row .tl-pay.tl-empty b { color: var(--muted); font-weight: 400; }
-  .tl-edit { justify-self: end; font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .05em; color: var(--faint); background: none; border: 1px solid var(--border-soft); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+  .tl-edit { justify-self: end; font-family: var(--sans); font-size: var(--fs-1); letter-spacing: .05em; color: var(--faint); background: none; border: 1px solid var(--border-soft); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
   .tl-edit:hover { color: var(--accent); border-color: var(--accent); }
-  .tin { width: 46px; font-family: var(--mono); font-size: var(--fs-2); background: var(--ground-2); border: 1px solid var(--border-control); border-radius: 5px; padding: 3px 5px; color: var(--text); }
+  .tin { width: 46px; font-family: var(--sans); font-size: var(--fs-2); background: var(--ground-2); border: 1px solid var(--border-control); border-radius: 5px; padding: 3px 5px; color: var(--text); }
   .tl-add { margin: 11px 13px; }
   .tl-sublabel { margin-top: 18px; }
   /* Timeline breakpoint editor (Add / full content edit) */
@@ -563,7 +564,7 @@
   .kgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px,1fr)); gap: var(--sp-2); margin-top: 12px; }
   .ktile { border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; background: var(--ground-2); cursor: pointer; display: grid; gap: var(--sp-1); }
   .ktile:hover { border-color: var(--accent); }
-  .ktile .kn { font-family: var(--mono); font-size: var(--fs-3); }
+  .ktile .kn { font-family: var(--sans); font-size: var(--fs-3); }
   .ktile .ks { font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .05em; color: var(--muted); }
   .ktile.on { background: var(--accent-bg); border-color: color-mix(in srgb,var(--accent) 40%, var(--border)); }
   /* E11: .5 -> .7 takes the tile NAME from 4.46:1 to 7.39:1. Note the .ks sub-label is --faint and would
@@ -572,7 +573,7 @@
   .ktile.locked { opacity: .7; }
   /* Transform chains: tabs per chain + a panel with the per-chain toggles and a visible-steps readout */
   .tf-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: 8px 0; }
-  .tf-tab { font-family: var(--mono); font-size: var(--fs-2); padding: 5px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
+  .tf-tab { font-family: var(--sans); font-size: var(--fs-2); padding: 5px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
   .tf-tab:hover { border-color: var(--accent); }
   .tf-tab.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
   /* Per-step grid: item info + Promote / Keep / Filter toggle per row */
@@ -582,15 +583,15 @@
   .tf-steprow { padding: 5px 0; border-bottom: 1px solid var(--border-soft); }
   .tf-steprow:last-child { border-bottom: 0; }
   .tf-stepinfo { display: flex; flex-direction: column; min-width: 0; }
-  .tf-stepname { font-family: var(--mono); font-size: var(--fs-3); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tf-stepname { font-family: var(--sans); font-size: var(--fs-3); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tf-steplvl { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .tf-cell { border-radius: 6px; padding: 6px 0; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: var(--fs-4); line-height: 1; }
+  .tf-cell { border-radius: 6px; padding: 6px 0; display: flex; align-items: center; justify-content: center; font-family: var(--sans); font-size: var(--fs-4); line-height: 1; }
   .tf-cell.on { background: var(--accent-bg); border-color: color-mix(in srgb,var(--accent) 40%, var(--border)); color: var(--accent); }
   /* Card trash-filter grid: bonus type + rarity/cost threshold dropdowns */
   .cfgrid { display: flex; flex-direction: column; gap: var(--sp-1); margin: 6px 0; }
   .cf-head, .cf-row { display: grid; grid-template-columns: minmax(0,1fr) 130px 130px; gap: var(--sp-2); align-items: center; }
   .cf-head span { color: var(--faint); padding: 0 2px; }
-  .cf-name { font-family: var(--mono); font-size: var(--fs-2); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cf-name { font-family: var(--sans); font-size: var(--fs-2); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cf-sel { font-size: var(--fs-2); padding: 4px 6px; }
 
   /* BEARDS readout. The snapshot ships three numbers per beard (level / gain / perm) and they were
@@ -626,7 +627,7 @@
   .bd-row { padding: 5px 0; border-bottom: 1px solid var(--border-soft); }
   .bd-row:last-child { border-bottom: 0; }
   .bd-row.off { color: var(--muted); }
-  .bd-name { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; font-family: var(--mono); font-size: var(--fs-3); }
+  .bd-name { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; font-family: var(--sans); font-size: var(--fs-3); }
   .bd-name b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bd-mk { color: var(--ok); flex: none; }
   .bd-row.off .bd-mk { color: var(--muted); }
@@ -668,8 +669,8 @@
   .cg-row.st-complete .cg-mk { color: var(--ok); }
   .cg-row.st-active .cg-mk, .cg-row.st-next .cg-mk { color: var(--accent); }
   .cg-name { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
-  .cg-nm { font-family: var(--mono); font-size: var(--fs-3); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cg-sub { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); }
+  .cg-nm { font-family: var(--sans); font-size: var(--fs-3); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cg-sub { font-family: var(--sans); font-size: var(--fs-2); color: var(--faint); }
   .cg-tags { display: flex; flex-wrap: wrap; gap: var(--sp-1); align-items: center; }
   /* :not() on all three severities is load-bearing, not tidiness. `.cg-tags .badge` and `.badge.crit`
      have IDENTICAL specificity (0,2,0) and this block is later in the sheet, so the flat form silently
@@ -678,7 +679,7 @@
      severity was carried by a faint background wash alone — which is precisely the colour-alone failure
      this file is not allowed to have. Only the UNCLASSED tags are recoloured now. */
   .cg-tags .badge:not(.ok):not(.warn):not(.crit) { color: var(--muted); border-color: var(--border-soft); }
-  .cg-state { font-family: var(--mono); font-size: var(--fs-2); color: var(--muted); align-self: start; }
+  .cg-state { font-family: var(--sans); font-size: var(--fs-2); color: var(--muted); align-self: start; }
   .cg-state .mut { display: block; }   /* the provenance qualifier sits under the state word */
   .cg-row.st-complete .cg-state { color: var(--ok); }
   .cg-row.st-active .cg-state, .cg-row.st-next .cg-state { color: var(--accent); }
@@ -700,7 +701,7 @@
   .cg-legs { display: flex; flex-direction: column; gap: var(--sp-2); }
   .cg-leg { display: grid; grid-template-columns: 54px minmax(0,1fr); gap: var(--sp-2); align-items: start; }
   .cg-legd { color: var(--faint); padding-top: 2px; }   /* type comes from .u-datalabel above */
-  .cg-more { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); background: transparent; border: 1px solid var(--border-soft); border-radius: 6px; padding: 2px 6px; cursor: pointer; align-self: start; }
+  .cg-more { font-family: var(--sans); font-size: var(--fs-2); color: var(--faint); background: transparent; border: 1px solid var(--border-soft); border-radius: 6px; padding: 2px 6px; cursor: pointer; align-self: start; }
   .cg-more:hover { color: var(--text); border-color: var(--border); }
   .cg-more:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
   /* the expanded detail: full width under the row it belongs to, so nothing has to be truncated. */
@@ -733,15 +734,157 @@
   .growth .gl .gu { color: var(--muted); font-size: var(--fs-1); }
 
   /* log drawer */
-  .drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(400px, 90vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: -20px 0 40px -24px rgba(0,0,0,.7); transform: translateX(100%); transition: transform .24s cubic-bezier(.2,.7,.2,1); z-index: 60; display: flex; flex-direction: column; }
+  /* 400px was sized for a stack of short status lines. It is the wrong width for log FILES: real
+     inject.log lines run well past 120 characters and wrapped two or three times each, which turns a
+     scan into a read. Doubled, and capped at 92vw so it still behaves on a narrow window. */
+  .drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(820px, 92vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: -20px 0 40px -24px rgba(0,0,0,.7); transform: translateX(100%); transition: transform .24s cubic-bezier(.2,.7,.2,1); z-index: 60; display: flex; flex-direction: column; }
   .drawer.open { transform: none; }
   .drawer .dh { display: flex; align-items: center; gap: var(--sp-2); padding: 13px 15px; border-bottom: 1px solid var(--border-soft); }
   .drawer .dh .x { margin-left: auto; }
   .drawer .dh #logType { flex: 1; min-width: 0; }
-  .logtext { flex: 1; margin: 0; overflow: auto; padding: 12px 15px; font-family: var(--mono); font-size: var(--fs-2); line-height: 1.5; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
-  /* F6: .flist / .line styled an activity feed that has never rendered — renderFeed() targeted a #flist
-     that does not exist in this document. Both the rules and the function are gone. The snapshot still
-     carries a `feed` node (UiBridge.cs publishes it); wiring it up is a separate, deliberate decision. */
+  .logtext { flex: 1; margin: 0; overflow: auto; padding: 12px 15px; font-family: var(--mono); font-size: var(--fs-3); line-height: 1.55; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+  /* ⚠ THE TWO PANES MUST COLLAPSE WHEN HIDDEN, AND `hidden` ALONE DOES NOT DO IT HERE.
+     `[hidden] { display: none }` lives in the UA stylesheet, and ANY author rule that sets `display`
+     outranks it — `.flist { display: flex }` and `.logtext { flex: 1 }` both do. So the hidden pane
+     stayed in flow: switching to the Log file tab left the empty activity list occupying the top half
+     of the drawer and squashing the log into the bottom. Operator-reported on the first deploy.
+     Attribute + class beats the bare attribute, so these two rules settle it without !important. */
+  .flist[hidden], .logtext[hidden], .dsub[hidden] { display: none; }
+  /* P10 — THE ACTIVITY FEED, RESTORED. F6 deleted these rules and renderFeed() because the function
+     targeted a #flist this document never contained, so the feed had never rendered once. What F6 could
+     not do from the page side is stop UiBridge PUBLISHING it: the `feed` node has been rebuilt and
+     serialized into every snapshot this whole time, crossing the pipe about once a second and being
+     thrown away on arrival. This is that node, rendered.
+     It is worth having over a text filter because it is the ONLY structured severity in the product —
+     Main.Log/LogDebug take a bare string, so the six .log files carry no severity, no system and no
+     write/observe distinction that a filter could key on without touching ~320 call sites. */
+  .drawer .dtabs { display: flex; gap: 2px; background: var(--surface-2); border-radius: 9px; padding: 2px; flex: 1; min-width: 0; }
+  .drawer .dtab { flex: 1; min-width: 0; border: 0; background: none; color: var(--muted); font-family: var(--sans); font-size: var(--fs-2); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 7px 6px; border-radius: 7px; cursor: pointer; }
+  .drawer .dtab:hover { color: var(--text); }
+  .drawer .dtab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset; }
+  .drawer .dtab:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+  .dsub { padding: 10px 15px 0; }
+  .fchips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .fch { border: 1px solid var(--border-control, var(--border)); background: none; color: var(--muted); font-family: var(--sans); font-size: var(--fs-1); padding: 5px 9px; border-radius: 999px; cursor: pointer; }
+  .fch:hover { color: var(--text); border-color: var(--accent); }
+  .fch[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); color: var(--text); }
+  .fch:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+  .flist { flex: 1; overflow: auto; margin: 0; padding: 10px 15px 15px; display: flex; flex-direction: column; gap: 3px; }
+  /* severity is a rail plus a word, never colour alone */
+  .fline { border-left: 3px solid var(--border); background: var(--surface-2); border-radius: 0 8px 8px 0; padding: 8px 11px; }
+  .fline .fmeta { display: flex; align-items: baseline; gap: 8px; }
+  .fline .ft { font-family: var(--mono); font-size: var(--fs-1); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .fline .fk { font-family: var(--sans); font-size: var(--fs-1); font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+  .fline .fmsg { font-size: var(--fs-3); color: var(--text); margin-top: 3px; }
+  .fline .fdet { font-size: var(--fs-2); color: var(--muted); margin-top: 2px; }
+  .fline.k-ACTION { border-left-color: var(--ok); }      .fline.k-ACTION .fk { color: var(--ok); }
+  .fline.k-QUEUED { border-left-color: var(--faint); }   .fline.k-QUEUED .fk { color: var(--faint); }
+  .fline.k-WARN   { border-left-color: var(--warn); }    .fline.k-WARN   .fk { color: var(--warn); }
+  .fline.k-FAIL   { border-left-color: var(--crit); }    .fline.k-FAIL   .fk { color: var(--crit); }
+  .fline.k-INFO   { border-left-color: var(--border); }  .fline.k-INFO   .fk { color: var(--muted); }
+  .fempty { padding: 26px 15px; text-align: center; color: var(--faint); font-size: var(--fs-3); }
+
+  /* ---- pool board: where the pool actually went ----
+     The lane list doubles as the legend, so identity is never colour alone, and every lane is
+     direct-labelled — there is no separate key to cross-reference. Idle is deliberately NOT one of the
+     categorical hues: it is not a destination, it is the absence of one, so it gets a hatched neutral. */
+  .pb { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-4); }
+  .pb-pool { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); padding: 15px 17px; }
+  .pb-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-3); margin-bottom: 3px; }
+  .pb-head h3 { margin: 0; font-family: var(--display); font-size: var(--fs-5); letter-spacing: .01em; }
+  .pb-tot { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .pb-stack { display: flex; gap: 2px; height: 26px; border-radius: 5px; overflow: hidden; margin: 12px 0 6px; background: var(--surface-2); }
+  .pb-seg { min-width: 3px; border: 0; padding: 0; cursor: default; }
+  .pb-seg.idle { background: repeating-linear-gradient(135deg, var(--faint) 0 5px, transparent 5px 10px), var(--surface-2); }
+  .pb-split { display: flex; justify-content: space-between; font-family: var(--mono); font-size: var(--fs-1); color: var(--faint); font-variant-numeric: tabular-nums; margin-bottom: 13px; }
+  .pb-lanes { display: grid; gap: 1px; background: var(--border-soft); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pb-lane { background: var(--surface); padding: 8px 11px; display: grid; grid-template-columns: 10px minmax(0,1fr) auto auto; gap: 10px; align-items: center; font-size: var(--fs-2); }
+  .pb-sw { width: 9px; height: 9px; border-radius: 2px; }
+  .pb-sw.idle { background: repeating-linear-gradient(135deg, var(--faint) 0 3px, transparent 3px 6px), var(--surface-2); border: 1px solid var(--faint); }
+  .pb-nm { font-family: var(--mono); font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pb-tag { font-family: var(--sans); font-size: var(--fs-1); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); border: 1px solid var(--border-control, var(--border)); border-radius: 5px; padding: 2px 6px; white-space: nowrap; }
+  .pb-tag.sink { color: var(--warn); border-color: var(--warn); }
+  .pb-tag.out { color: var(--faint); border-style: dashed; }
+  .pb-pct { font-family: var(--mono); font-size: var(--fs-2); font-variant-numeric: tabular-nums; text-align: right; min-width: 58px; }
+  .pb-lane.is-idle .pb-nm, .pb-lane.is-idle .pb-pct { color: var(--faint); }
+  /* Loud only past the threshold: a permanently red band stops being read inside a week. */
+  .pb-loss { margin-top: 12px; border: 1px solid var(--crit); background: var(--crit-bg); border-radius: 8px; padding: 11px 13px; }
+  .pb-loss .lh { font-family: var(--sans); font-weight: 700; font-size: var(--fs-3); line-height: 1.4; color: var(--crit); }
+  .pb-loss p { margin: 5px 0 0; font-size: var(--fs-2); line-height: 1.6; color: var(--muted); }
+  .pb-quiet { margin-top: 10px; font-size: var(--fs-2); line-height: 1.6; color: var(--faint); }
+
+  /* ---- advisor ledger ----
+     ⚠ .lgfield / .lgwhy MUST STAY display:block. They are spans inside a grid CELL, not grid items —
+     only .lgfieldwrap is blockified by the grid. As plain inline spans they flowed onto one line and
+     their margin-top was silently dropped, so the field name and its reason ran together with a single
+     space between them. Operator-reported. The same trap is waiting in any two-line grid cell here. */
+  .lg-scope { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--surface); padding: 16px 18px; margin-bottom: var(--sp-4); }
+  .lg-scope .lgcov { font-family: var(--sans); font-size: var(--fs-3); line-height: 1.5; color: var(--text); margin-bottom: 9px; }
+  .lg-scope .lgcov b { color: var(--ok); }
+  .lg-scope .lgcov i { color: var(--warn); font-style: normal; }
+  .lg-scope p { margin: 0; font-size: var(--fs-2); line-height: 1.7; color: var(--muted); max-width: 88ch; }
+  .lg-filters { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+  .lg-rows { display: grid; gap: var(--sp-3); }
+  .lgrow { border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  .lgrow.s-stale     { border-left-color: var(--crit); }
+  .lgrow.s-contested { border-left-color: var(--warn); }
+  .lgrow.s-active    { border-left-color: var(--ok); }
+  .lgrow.s-reverted  { border-left-color: var(--faint); }
+  .lgh { width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+         padding: 15px 18px; display: grid; grid-template-columns: 78px 132px minmax(0,1fr) auto auto;
+         gap: var(--sp-4); align-items: start; }
+  .lgh:hover { background: var(--surface-2); }
+  .lgh:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+  /* the short columns sit on the field name's first line rather than the top of the box */
+  .lgh .lgt { font-family: var(--mono); font-size: var(--fs-1); line-height: 1.75; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .lgh .lgsys { font-family: var(--sans); font-weight: 700; font-size: var(--fs-1); line-height: 1.85; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .lgh .lgfield { display: block; font-family: var(--sans); font-size: var(--fs-3); line-height: 1.5; color: var(--text); }
+  .lgh .lgwhy { display: block; font-size: var(--fs-2); line-height: 1.6; color: var(--muted); margin-top: 6px; }
+  .lgh .lgval { font-family: var(--mono); font-size: var(--fs-3); line-height: 1.5; font-variant-numeric: tabular-nums; text-align: right; min-width: 88px; }
+  .lgstate { font-family: var(--sans); font-size: var(--fs-1); font-weight: 700; line-height: 1; letter-spacing: .06em; text-transform: uppercase; padding: 6px 9px; border-radius: 6px; white-space: nowrap; margin-top: 2px; }
+  .st-stale { background: var(--crit-bg); color: var(--crit); }
+  .st-contested { background: var(--warn-bg); color: var(--warn); }
+  .st-active { background: var(--ok-bg); color: var(--ok); }
+  .st-reverted { background: var(--surface-2); color: var(--faint); }
+  .lgd { display: none; padding: 16px 18px 18px; border-top: 1px dashed var(--border); background: var(--surface-2); }
+  .lgrow.open .lgd { display: block; }
+  .lgmeta { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--sp-4); }
+  .lgmeta .k { font-family: var(--sans); font-size: var(--fs-1); font-weight: 700; line-height: 1.2; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+  .lgmeta .v { font-family: var(--mono); font-size: var(--fs-2); line-height: 1.6; color: var(--text); word-break: break-word; }
+  .lgchain { margin-top: var(--sp-5); border-left: 2px solid var(--border-control, var(--border)); padding-left: 15px; display: grid; gap: 9px; }
+  .lgchain div { font-size: var(--fs-2); line-height: 1.65; color: var(--muted); }
+  .lgempty { padding: 34px; text-align: center; color: var(--faint); font-size: var(--fs-3); line-height: 1.6; }
+  @media (max-width: 900px) {
+    .lgh { grid-template-columns: 78px minmax(0,1fr) auto; row-gap: var(--sp-3); }
+    .lgh .lgsys { grid-column: 2 / -1; line-height: 1.4; }
+    .lgh .lgfieldwrap { grid-column: 1 / -1; }
+    .lgh .lgval { grid-column: 1 / 3; text-align: left; }
+    .lgstate { justify-self: end; }
+  }
+
+  /* P6 — per-section live/parked, on the Profiles page.
+     Three mechanisms hide behind the one "Auto Profile" flag (the pools are SUBSTITUTED, gear is
+     HARD-BLOCKED, and Wandoos/Diggers/Beards ignore it entirely), so a single banner cannot state the
+     truth in a sentence anyone would read. One row per section, each carrying its own why. */
+  .secwrap { margin-bottom: var(--sp-4); }
+  .seclist { display: grid; gap: 1px; background: var(--border-soft); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .secrow { background: var(--surface); padding: 10px 13px; display: grid; grid-template-columns: 132px 1fr auto; gap: var(--sp-3); align-items: baseline; }
+  .secrow .sname { font-family: var(--sans); font-weight: 700; font-size: var(--fs-3); }
+  .secrow .swhy { font-size: var(--fs-2); color: var(--muted); }
+  .secbadge { font-family: var(--sans); font-size: var(--fs-1); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+  .sb-profile { background: var(--ok-bg); color: var(--ok); }
+  .sb-advisor { background: var(--accent-bg); color: var(--accent); }
+  .sb-off     { background: var(--surface-2); color: var(--faint); }
+  /* Nobody is not a resting state — it is the gap where two independent flags leave a system
+     unmanaged and nothing says so. It gets the loudest treatment on the page. */
+  .sb-nobody  { background: var(--crit-bg); color: var(--crit); }
+  .secrow.is-nobody { background: var(--crit-bg); }
+  .secrow.is-nobody .swhy { color: var(--text); }
+  .sechint { margin: var(--sp-2) 0 0; color: var(--faint); font-size: var(--fs-2); }
+  @media (max-width: 720px) {
+    .secrow { grid-template-columns: 1fr auto; }
+    .secrow .swhy { grid-column: 1 / -1; }
+  }
   .scrim { position: fixed; inset: 0; background: rgba(2,6,12,.5); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 55; }
   .scrim.open { opacity: 1; pointer-events: auto; }
   /* transient action-result toast (e.g. Re-optimize gear now) */
@@ -796,8 +939,20 @@
     --accent:#22D3EE; --accent-dim:#7C5CFF;
     --ok:#3DD68C; --warn:#FFB020; --crit:#FF5470;
     --ok-bg:rgba(61,214,140,.13); --warn-bg:rgba(255,176,32,.14); --crit-bg:rgba(255,84,112,.14); --accent-bg:rgba(124,92,255,.16);
+    /* THREE ROLES, ONE JOB EACH. Before this, --mono was doing 77 jobs and --sans 12: buttons, labels,
+       tabs, inputs, pills and headings were all set in a MONOSPACE at 10-11px, which is where the
+       "hard on the eyes" came from. Monospace is for things that must align or be copied exactly;
+       everything a person READS wants a proportional face.
+
+       ⚠ AND EXPRESSWAY SHIPS ONLY A 400 WEIGHT HERE (one @font-face, no bold file), so every
+       font-weight:700 on it was SYNTHETIC bold — a stroke-widening, muddiest at exactly the small
+       uppercase sizes this UI uses most. Widening --sans onto more of the page would have made that
+       worse, not better. So the display face keeps Expressway, where it is large enough to carry its
+       character and rarely needs a bold, and the text face moves to the system UI stack, which has
+       REAL weights, is hinted for small sizes, and is what the rest of Windows renders. */
     --mono:"Space Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
-    --sans:"Expressway", "Bahnschrift", "DIN Alternate", system-ui, "Segoe UI", sans-serif;
+    --display:"Expressway", "Bahnschrift", "DIN Alternate", system-ui, "Segoe UI", sans-serif;
+    --sans:"Segoe UI Variable Text", "Segoe UI", system-ui, ui-sans-serif, Roboto, Helvetica, Arial, sans-serif;
     --r:14px;
     --shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 22px 46px -30px rgba(0,0,0,.92);
   }
@@ -922,7 +1077,7 @@
   .hero-open { font-family: var(--sans); text-transform: uppercase; letter-spacing: .04em; font-size: var(--fs-4); font-weight: 700; padding: 8px 15px; border-radius: 9px; border: 0; color: #fff; background: #5B3ADF; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 26px -12px var(--accent); cursor: pointer; }
   .hero-open:hover { filter: brightness(1.08); }
   .dseg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
-  .dseg-btn { font-family: var(--mono); font-size: var(--fs-2); letter-spacing: .08em; text-transform: uppercase; padding: 6px 11px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+  .dseg-btn { font-family: var(--sans); font-size: var(--fs-2); letter-spacing: .08em; text-transform: uppercase; padding: 6px 11px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
   .dseg-btn[aria-pressed="true"] { color: var(--text); background: var(--surface-2); }
   #canvas[data-density="focus"] .density-full { display: none; }
   .ktoggle { border: 1px solid var(--border-control); font: inherit; cursor: pointer; text-align: left; color: inherit; background: var(--surface-2); }
@@ -945,13 +1100,13 @@
      "current / interactive" colour per the colour rules, which is exactly what a drop target is. */
   .le-row.le-drag { cursor: grab; }
   .le-row.le-drag:active { cursor: grabbing; }
-  .le-grip { font-family: var(--mono); font-size: var(--fs-2); color: var(--faint); letter-spacing: -1px; }
+  .le-grip { font-family: var(--sans); font-size: var(--fs-2); color: var(--faint); letter-spacing: -1px; }
   .le-row.le-drag:hover .le-grip { color: var(--muted); }
   .le-row.dragging { opacity: .45; }
   /* inset, so the cue costs no layout — a real border would reflow every row it touches mid-drag. */
   .le-row.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
   .le-row.drop-after  { box-shadow: inset 0 -2px 0 0 var(--accent); }
-  .le-empty { font-family: var(--mono); font-size: var(--fs-3); color: var(--faint); padding: 6px 2px; }
+  .le-empty { font-family: var(--sans); font-size: var(--fs-3); color: var(--faint); padding: 6px 2px; }
   .le-add { display: flex; gap: var(--sp-2); margin: 4px 0 10px; }
   /* .tin hard-sets width:46px, and with border-box that leaves 34px of text — about five characters
      of 11px mono, before a number input's spinner takes another ~17px. So the placeholders rendered as
@@ -1047,6 +1202,7 @@
       <button class="navitem" data-view="settings"><span class="ni-dot" aria-hidden="true"></span>Settings</button>
       <button class="navitem" data-view="profiles"><span class="ni-dot" aria-hidden="true"></span>Profiles</button>
       <button class="navitem" data-view="profileEditor"><span class="ni-dot" aria-hidden="true"></span>Profile Editor</button>
+      <button class="navitem" data-view="ledger"><span class="ni-dot" aria-hidden="true"></span>Advisor Ledger</button>
     </div>
 
     <!-- WHICH BUILDS ARE RUNNING. The advisor DLL and this page are deployed by two SEPARATE
@@ -1143,6 +1299,18 @@
         <div class="seclabel density-full" id="needsLabel" style="display:none"><span class="eyebrow">Also worth doing</span></div>
         <div class="needs density-full" id="needs" aria-live="polite"></div>
 
+        <!-- WHERE THE POOL WENT. Above Instruments on purpose: the tiles say how full the pools are,
+             which is a different question from where their contents ended up, and the second one has
+             been unanswerable inside this product. Lives as an Overview SECTION rather than replacing
+             the page, so nothing anyone has learned moves. -->
+        <!-- NOT density-full: this survives Focus. Focus hides the reference material — the instrument
+             tiles, the zone tables, the "also worth doing" list — and keeps what you act on. Where the
+             pool is going is exactly that: it is the only thing on this page that can say a third of
+             your energy went nowhere this tick, and hiding it in the mode people leave running defeats
+             the reason it was built. Operator-requested. -->
+        <div class="seclabel"><span class="eyebrow">Where the pool went</span></div>
+        <div class="pb" id="poolBoard"></div>
+
         <div class="seclabel density-full"><span class="eyebrow">Instruments</span></div>
         <div class="tiles density-full">
           <div class="tile">
@@ -1177,6 +1345,24 @@
       </section>
 
       <!-- ===== TITANS (SYSTEM VIEW · full) ===== -->
+      <!-- THE ADVISOR LEDGER. Every persistent value the advisor has set on your behalf this run, why,
+           and whether it is still true. Deliberately narrow: a census found 129 write sites, five of
+           which cannot be intercepted honestly, so this covers PERSISTENT STATE only and says so at the
+           top. Irreversible actions live in the Activity drawer; per-tick allocation is reclaimed every
+           pass by design and would be ~86,400 identical rows a day. -->
+      <section class="view" id="view-ledger">
+        <div class="sysview-head"><div class="sh-title"><h2>Advisor Ledger</h2></div></div>
+        <div class="lg-scope" id="lgScope"></div>
+        <div class="lg-filters" id="lgFilters" role="group" aria-label="Filter by state">
+          <button class="fch" type="button" data-s="all" aria-pressed="true">All</button>
+          <button class="fch" type="button" data-s="stale" aria-pressed="false">Stale</button>
+          <button class="fch" type="button" data-s="contested" aria-pressed="false">Contested</button>
+          <button class="fch" type="button" data-s="active" aria-pressed="false">Active</button>
+          <button class="fch" type="button" data-s="reverted" aria-pressed="false">Reverted</button>
+        </div>
+        <div class="lg-rows" id="lgRows"></div>
+      </section>
+
       <section class="view" id="view-titans">
         <div class="sysview-head">
           <div class="sh-title"><h2>Titans</h2></div>
@@ -1444,9 +1630,24 @@
      E7: it already behaved like a modal in every way a sighted mouse user could tell — scrim, blocked page,
      close on scrim-click and on Escape — while announcing itself as a plain complementary landmark and
      never moving focus. It now says what it is, and setDrawer() moves focus in and hands it back. -->
-<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Logs" inert>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Activity and logs" inert>
   <div class="dh"><span class="dot live" aria-hidden="true"></span>
-    <select class="inp" id="logType" aria-label="Log">
+    <div class="dtabs" role="tablist" aria-label="Drawer view">
+      <button class="dtab" id="tabAct" type="button" role="tab" aria-selected="true" aria-controls="flist">Activity</button>
+      <button class="dtab" id="tabLog" type="button" role="tab" aria-selected="false" aria-controls="logtext">Log file</button>
+    </div>
+    <button class="btn x" id="drawerx" type="button">Close</button></div>
+
+  <div class="dsub" id="dsubAct">
+    <div class="fchips" role="group" aria-label="Filter activity by kind">
+      <button class="fch" type="button" data-k="ACTION" aria-pressed="true">Actions</button>
+      <button class="fch" type="button" data-k="WARN" aria-pressed="true">Warnings</button>
+      <button class="fch" type="button" data-k="FAIL" aria-pressed="true">Failures</button>
+      <button class="fch" type="button" data-k="QUEUED" aria-pressed="false">Queued</button>
+    </div>
+  </div>
+  <div class="dsub" id="dsubLog" hidden>
+    <select class="inp" id="logType" aria-label="Log file">
       <option value="inject">Session (inject.log)</option>
       <option value="debug">Debug</option>
       <option value="loot">Loot</option>
@@ -1454,8 +1655,10 @@
       <option value="cards">Cards</option>
       <option value="pitspin">Money-pit</option>
     </select>
-    <button class="btn x" id="drawerx" type="button">Close</button></div>
-  <pre class="logtext" id="logtext" role="log" aria-label="Log contents">Open a log to view it.</pre>
+  </div>
+
+  <div class="flist" id="flist" role="log" aria-label="Advisor activity"></div>
+  <pre class="logtext" id="logtext" role="log" aria-label="Log contents" hidden>Open a log to view it.</pre>
 </aside>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -1800,14 +2003,14 @@
           {t:"toggle", key:"AutoRebirth", label:"Auto rebirth"} ]}],
         kind:"timeline", tlHead:["Time","Action"], tl:[] },
       wishes:      { grp:"Economy", title:"Wishes", cons:"WishManager", sev:"ok", badge:"Auto",
-        rec:"Selects wishes by the chosen mode; the resource-share sliders cap how much idle E/M/R3 they take.",
+        rec:"Selects wishes by the chosen mode; the sliders take a share of the E/M/R3 still idle after every other system allocates.",
         why:"",
         kind:"settings", groups:[
           { label:"Wishes", controls:[
             {t:"toggle", key:"ManageWishes", label:"Manage wishes"},
             {t:"dd", key:"WishMode", label:"Selection mode", opts:["Priority order","Cheapest","Fastest","Balanced"]},
             {t:"num", key:"WishLimit", label:"Max active wishes", min:1, max:4} ]},
-          { label:"Resource share (% of idle)", controls:[
+          { label:"Resource share (% of remaining idle)", controls:[
             {t:"num", key:"WishEnergy", label:"Energy %", min:0, max:100},
             {t:"num", key:"WishMagic", label:"Magic %", min:0, max:100},
             {t:"num", key:"WishR3", label:"R3 %", min:0, max:100} ]} ],
@@ -2060,6 +2263,9 @@
     var titleOf = { overview:"Overview", titans:"Titans", campaign:"Campaign", resources:"Energy / Magic / R3",
                     boosts:"Boosts", gold:"Gold & Money-pit", profileEditor:"Profile Editor" };
     Object.keys(VIEWS).forEach(function(k){ titleOf[k] = VIEWS[k].title; });
+    // Hand-authored rather than a VIEWS entry: the generator builds an AUTOMATION/DECISIONS header and
+    // a readout/manual pair, and the Ledger is neither a system nor a thing you toggle. It reports.
+    titleOf["ledger"] = "Advisor Ledger"; groupOf["ledger"] = "Profile & Setup";
     // The live layer is a separate <script>, so it reaches the registry through here rather than
     // building a label itself. It used to call a naive cap(), which printed "Open Ngu ->" and
     // "Open Exp ->" for two acronyms — one of them the game's own name.
@@ -2109,7 +2315,18 @@
     // ---- log drawer (shows the advisor's real log files; live-tails while open) ----
     var drawer = document.getElementById("drawer"), scrim = document.getElementById("scrim");
     // window-scoped so the applySnapshot IIFE (separate <script>) can live-tail via window.reqLog.
-    window.reqLog = function(){ var t=document.getElementById("logType"); if(window._logDir && t) window.__ngu.send({cmd:"loadLog", dir:window._logDir, type:t.value}); };
+    // Only tail the file while the Log file tab is actually showing. The drawer live-tails on every
+    // snapshot, and the Activity tab is the default — without this gate, opening the drawer would ask
+    // the companion to re-read a log file off disk once a second for a pane nobody is looking at.
+    window._drawerTab = "act";
+    window.reqLog = function(){
+      if(window._drawerTab !== "log") return;
+      var t=document.getElementById("logType");
+      if(window._logDir && t) window.__ngu.send({cmd:"loadLog", dir:window._logDir, type:t.value});
+    };
+    // Which activity kinds are showing. Queued is off by default: it is the noisiest and the least
+    // actionable — it says the advisor intends to do something, not that anything changed.
+    window._feedKinds = { ACTION:true, WARN:true, FAIL:true, QUEUED:false, INFO:true };
     function setDrawer(open){
       open = !!open;
       // Only act on a real transition. Escape and the scrim both call setDrawer(false) unconditionally,
@@ -2119,7 +2336,7 @@
       if(open) drawer.removeAttribute("inert"); else drawer.setAttribute("inert","");   // keep the closed drawer out of the tab order
       if(open){
         window.reqLog();
-        var first = document.getElementById("logType");   // inert must be off before this can take focus
+        var first = document.getElementById("tabAct");    // inert must be off before this can take focus
         if(first) first.focus();
       } else {
         var back = document.getElementById("logbtn");     // E7: return focus to whatever opened it
@@ -2138,6 +2355,29 @@
       setDrawer(false);
     });
     document.getElementById("logType").addEventListener("change", window.reqLog);
+
+    // ---- drawer tabs + activity filters ----
+    function setDrawerTab(which){
+      window._drawerTab = which;
+      var act = which === "act";
+      document.getElementById("tabAct").setAttribute("aria-selected", String(act));
+      document.getElementById("tabLog").setAttribute("aria-selected", String(!act));
+      document.getElementById("dsubAct").hidden = !act;
+      document.getElementById("dsubLog").hidden = act;
+      document.getElementById("flist").hidden = !act;
+      document.getElementById("logtext").hidden = act;
+      if(!act) window.reqLog();               // first paint of the file when you switch to it
+      else if(window.renderFeed) window.renderFeed(window._lastSnap);
+    }
+    document.getElementById("tabAct").addEventListener("click", function(){ setDrawerTab("act"); });
+    document.getElementById("tabLog").addEventListener("click", function(){ setDrawerTab("log"); });
+    document.querySelector(".fchips").addEventListener("click", function(e){
+      var b = e.target.closest(".fch"); if(!b) return;
+      var on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", String(on));
+      window._feedKinds[b.dataset.k] = on;
+      if(window.renderFeed) window.renderFeed(window._lastSnap);
+    });
 
     // ---- mobile rail ----
     document.getElementById("hamb").addEventListener("click", function(){ document.getElementById("rail").classList.toggle("open"); });
@@ -2801,9 +3041,40 @@
       $("goalLine").textContent = goalText;
     }
     if($("g1lbl")) $("g1lbl").textContent = "Titan readiness";
+    // NAME THE SIDE THAT IS HOLDING IT BACK. Both figures were already in scope here: the minimum
+    // was taken from between them and the identity of the loser thrown away, so the card could say
+    // "12%" without ever saying twelve percent OF WHAT. The slack on the passing side is the
+    // actionable half — it is what tells you that Power bought from here does nothing for this goal.
+    //
+    // ⚠ REGEN IS FOLDED IN, AND THAT IS A DELIBERATE WIDENING OF THE OLD min(). instruments.titan
+    // has always carried a third gate (UiBridge emits `regen` whenever ReqRegen > 0 — a real
+    // requirement from T4 up at the auto-kill stage) and the old expression ignored it, so a titan
+    // gated on regen reported a readiness it did not have. A number that ignores a gate you cannot
+    // pass is the same defect as a number that will not name the gate it is measuring.
+    //
+    // The percentage is progress toward THIS TITAN'S CURRENT RUNG, not always the autokill gate:
+    // OptimizationAdvisor stages the requirement first kill → idle → auto-kill, so the label says
+    // which side binds and deliberately does not claim which rung is being measured.
     if(tit.known && (typeof tit.atk==="number" || typeof tit.def==="number")){
-      var atk=(typeof tit.atk==="number")?tit.atk:100, def=(typeof tit.def==="number")?tit.def:100, m=Math.min(atk,def);
-      if($("g1val")) $("g1val").textContent = m+"% · "+(tit.name||"");
+      var gates=[];
+      if(typeof tit.atk==="number") gates.push(["attack",tit.atk]);
+      if(typeof tit.def==="number") gates.push(["defence",tit.def]);
+      if(typeof tit.regen==="number") gates.push(["regen",tit.regen]);
+      var low=gates[0];
+      for(var gi=1;gi<gates.length;gi++){ if(gates[gi][1]<low[1]) low=gates[gi]; }
+      var m=low[1];
+      // Silent on a tie and silent with one gate: naming a "binding" side when nothing is uniquely
+      // binding is noise, and it would flicker every tick as two equal values jitter.
+      var tied=0; for(var gj=0;gj<gates.length;gj++){ if(gates[gj][1]===m) tied++; }
+      var side=(gates.length<2||tied>1)?"":" · "+low[0]+"-gated";
+      // The version being CHASED and the version that will actually SPAWN are different questions, and
+      // the answers legitimately differ for hours at a time — the advisor parks the spawn on a lower
+      // auto-killable version while a gold bank is pending or while a chase is abandoned. This card and
+      // the titan chip row used to publish one each, from the same snapshot, without either admitting
+      // the other existed. Say it instead.
+      var park = (typeof tit.spawnV==="number" && typeof tit.objV==="number" && tit.spawnV!==tit.objV)
+               ? " · spawn parked on v"+tit.spawnV : "";
+      if($("g1val")) $("g1val").textContent = m+"%"+side+" · "+(tit.name||"")+park;
       setFill($("g1fill"), m, m>=100?"ok":m>=90?"warn":"crit");
     } else { if($("g1val")) $("g1val").textContent="—"; setFill($("g1fill"),0,""); }
     if($("g2lbl")) $("g2lbl").textContent = "EXP balance";
@@ -3047,8 +3318,44 @@
     g.forEach(function(x,i){ drawSpark(cvs[i], x.spark); });
   }
 
-  // F6: renderFeed() used to sit here. It read s.feed and wrote it into #flist — an element this document
-  // has never contained, so the activity feed has never rendered once. Deleted along with .flist/.line.
+  // P10: renderFeed() is back, and #flist now exists. F6 deleted it because it wrote into an element the
+  // document did not contain — the right call at the time, but it left UiBridge publishing a `feed` node
+  // into the void on every snapshot. This reads that node.
+  //
+  // WHY THIS AND NOT A TEXT FILTER OVER THE LOG. Main.Log/LogDebug accept a bare string, so none of the
+  // six .log files carry severity, system, or a write-vs-observe distinction — the prefixes ("Advisor: ",
+  // "[AllocDbg]") are an author convention, unenforced, and absent on plenty of lines. Activity.Report is
+  // the one path that already classifies what it emits, so it is the one worth surfacing.
+  //
+  // The kind is rendered as a rail AND a word: severity must never be colour alone.
+  window.renderFeed = function(s){
+    var el = document.getElementById("flist"); if(!el) return;
+    if(window._drawerTab !== "act") return;                 // hidden pane: don't pay for the DOM write
+    var items = (s && s.feed) || [];
+    var keep = [];
+    for(var i=0;i<items.length;i++){
+      var k = items[i].who || "INFO";
+      if(window._feedKinds[k] !== false) keep.push(items[i]);
+    }
+    if(!keep.length){
+      el.innerHTML = '<div class="fempty">' +
+        (items.length ? "Nothing matches these filters." : "No advisor activity yet this session.") + "</div>";
+      return;
+    }
+    var html = "";
+    for(var j=keep.length-1;j>=0;j--){                      // newest first
+      var a = keep[j], kind = a.who || "INFO";
+      html += '<div class="fline k-'+esc(kind)+'">'
+            +   '<div class="fmeta"><span class="ft">'+esc(a.t||"")+'</span>'
+            +   '<span class="fk">'+esc(kind)+'</span></div>'
+            +   '<div class="fmsg">'+esc(a.msg||"")+'</div>'
+            +   (a.detail ? '<div class="fdet">'+esc(a.detail)+'</div>' : "")
+            + '</div>';
+    }
+    // Keyed on the filter set as well as the content: flipping a chip must repaint even when the
+    // underlying feed has not moved, and writeHtml compares against the last markup for THIS key.
+    writeHtml(el, "feed|" + JSON.stringify(window._feedKinds), html);
+  };
 
   // smooth loop countdown between 1s snapshots. It only ever runs while CONN is live: a countdown
   // that keeps ticking after the advisor stops answering is the most convincing lie on the screen.
@@ -3118,6 +3425,177 @@
   }
 
   var _profBuilt=false, _tlKey=null, _tlDir=null, _tlName=null, _profDir=null, _profActive=null;
+  // P6. The verdicts are computed advisor-side (ProfileSections.Evaluate) rather than here, because the
+  // rules are spread across five files and one of them — the gear gap — is a real defect that needs a
+  // test under it, not a JS expression nobody can assert on. This just draws what it is told.
+  var SECBADGE = { profile:"Profile", advisor:"Advisor", nobody:"Nobody", off:"Off" };
+  function renderSections(s){
+    var el = $("secList"); if(!el) return;
+    var rows = s.sections;
+    if(!rows || !rows.length){ writeHtml(el, "sections", '<div class="secrow"><span class="sname">—</span><span class="swhy">Waiting for the advisor.</span></div>'); return; }
+    var html = "";
+    for(var i=0;i<rows.length;i++){
+      var r = rows[i], d = r.driver || "off";
+      html += '<div class="secrow'+(d==="nobody"?" is-nobody":"")+'">'
+            +   '<span class="sname">'+esc(r.label||r.key||"")+'</span>'
+            +   '<span class="swhy">'+esc(r.why||"")+'</span>'
+            +   '<span class="secbadge sb-'+esc(d)+'">'+esc(SECBADGE[d]||d)+'</span>'
+            + '</div>';
+    }
+    writeHtml(el, "sections", html);
+  }
+
+  /* WHERE THE POOL WENT.
+     The injector gates this node on the allocator's own signature, so a tick where nothing moved
+     carries only `seq`. The page therefore CACHES the last real payload and repaints from it — the
+     alternative is the board blanking every second between allocation changes.
+
+     Six categorical hues, assigned in fixed order and never cycled, so a lane keeps its colour when
+     the set changes size. Idle is not one of them: it is the absence of a destination, not a
+     destination, so it gets a hatched neutral and reads as missing rather than as another lane. */
+  var PB_HUES = ["#6366F1","#B08810","#0E9AAF","#B02C57","#34A85F","#A64FD0"];
+  var PB_IDLE_ALARM = 5;      // percent — below this the remainder is a fact, above it it is a problem
+  window._pbLast = null;
+  function pbFmt(n){
+    n = Math.abs(+n||0);
+    if(n >= 1e12) return (n/1e12).toFixed(2)+"T";
+    if(n >= 1e9)  return (n/1e9).toFixed(2)+"B";
+    if(n >= 1e6)  return (n/1e6).toFixed(1)+"M";
+    if(n >= 1e3)  return (n/1e3).toFixed(1)+"K";
+    return String(Math.round(n));
+  }
+  function renderPools(s){
+    var host = $("poolBoard"); if(!host) return;
+    var p = s.pools;
+    // ⚠ MERGE PER POOL, NEVER REPLACE THE WHOLE OBJECT. The injector gates each pool on its OWN
+    // signature, so a tick where only energy moved carries { seq, energy } and no magic at all.
+    // Caching the payload wholesale therefore DELETED magic every time energy changed on its own —
+    // which is most ticks, because the two pools re-plan independently. Operator saw only Energy on
+    // the board and reasonably read it as a Focus-mode problem; it was this.
+    if(p){
+      window._pbLast = window._pbLast || {};
+      if(p.energy) window._pbLast.energy = p.energy;
+      if(p.magic)  window._pbLast.magic  = p.magic;
+    }
+    var data = (window._pbLast && (window._pbLast.energy || window._pbLast.magic)) ? window._pbLast : null;
+    if(!data){ writeHtml(host, "pools", '<div class="pb-quiet">Waiting for the first allocation pass.</div>'); return; }
+
+    var html = "";
+    [["energy","Energy"],["magic","Magic"]].forEach(function(pair){
+      var d = data[pair[0]]; if(!d) return;
+      var pool = +d.pool || 0, idle = +d.unallocated || 0;
+      var lanes = (d.lanes||[]).filter(function(l){ return l.seated || (+l.took) > 0; });
+      var idlePct = pool > 0 ? (idle / pool * 100) : 0;
+
+      var segs = "", rows = "", hue = 0;
+      lanes.forEach(function(l){
+        var took = +l.took || 0, pct = pool > 0 ? took / pool * 100 : 0;
+        var c = PB_HUES[hue % PB_HUES.length]; hue++;
+        if(pct > 0) segs += '<span class="pb-seg" style="flex:'+pct+';background:'+c+'"></span>';
+        var offered = +l.offered || 0;
+        rows += '<div class="pb-lane">'
+             +   '<span class="pb-sw" style="background:'+c+'"></span>'
+             +   '<span class="pb-nm">'+esc(l.name||"")+'</span>'
+             +   '<span class="pb-tag'+(l.sink?" sink":"")+'">'+(l.sink?"sink":(l.seated?"seated":"out"))+'</span>'
+             +   '<span class="pb-pct" title="offered '+pbFmt(offered)+', took '+pbFmt(took)+'">'
+             +     (pct >= 1 ? pct.toFixed(1) : pct.toFixed(3))+'%</span>'
+             + '</div>';
+      });
+      if(idlePct > 0){
+        segs += '<span class="pb-seg idle" style="flex:'+idlePct+'"></span>';
+        rows += '<div class="pb-lane is-idle"><span class="pb-sw idle"></span>'
+             +   '<span class="pb-nm">idle remainder</span>'
+             +   '<span class="pb-tag out">unallocated</span>'
+             +   '<span class="pb-pct">'+idlePct.toFixed(1)+'%</span></div>';
+      }
+
+      var tail = idlePct >= PB_IDLE_ALARM
+        ? '<div class="pb-loss"><div class="lh">'+idlePct.toFixed(1)+'% of the '+pair[1].toLowerCase()+' pool went nowhere</div>'
+          + '<p>'+pbFmt(idle)+' was offered and not taken'
+          + (d.idleWhy ? ' — '+esc(d.idleWhy) : '')+'.</p></div>'
+        : '<div class="pb-quiet">'+(idlePct > 0 ? idlePct.toFixed(1)+'% left idle — normal headroom.' : 'Fully allocated.')+'</div>';
+
+      html += '<div class="pb-pool"><div class="pb-head"><h3>'+pair[1]+'</h3>'
+           +    '<span class="pb-tot">'+pbFmt(pool)+'</span></div>'
+           +  '<div class="pb-stack">'+segs+'</div>'
+           +  '<div class="pb-split"><span>allocated '+(100-idlePct).toFixed(1)+'%</span>'
+           +    '<span>idle '+idlePct.toFixed(1)+'%</span></div>'
+           +  '<div class="pb-lanes">'+rows+'</div>'+tail+'</div>';
+    });
+    writeHtml(host, "pools", html || '<div class="pb-quiet">No allocation plan yet.</div>');
+  }
+
+  // THE ADVISOR LEDGER. Rows come from the injector already classified — the state machine lives in
+  // WriteLedger, where it has tests, not in a JS expression nobody can assert on.
+  var LGSTATE = { active:"Active", stale:"Stale", reverted:"Reverted", contested:"Contested" };
+  window._lgFilter = "all";
+  function renderLedger(s){
+    var scope = $("lgScope"), host = $("lgRows"); if(!scope || !host) return;
+    var lg = s.ledger;
+    // ⚠ ONE CACHE KEY PER ELEMENT, ALWAYS. writeHtml's contract is "a stale cache may cost an extra
+    // repaint but must never SUPPRESS one", and keying the same element by content-shape breaks it:
+    // paint under "rows|empty|reverted", then ask for "rows|all", and the cache reports that key as
+    // already painted while the DOM is showing the other one. The html comparison is what does the
+    // deduplication; the key only has to identify the element.
+    if(!lg){ writeHtml(scope, "ledgerScope", '<div class="lgcov">Waiting for the advisor.</div>'); return; }
+
+    // The coverage claim is DERIVED, never typed — a test asserts every writer counted here really has
+    // a Record call in the source, and that none still flagged pending is secretly already wired.
+    writeHtml(scope, "ledgerScope",
+      '<div class="lgcov"><b>'+lg.live+' of '+lg.declared+' state writers instrumented</b>'
+      + (lg.pending ? ' · <i>'+lg.pending+' declared, not yet wired</i>' : ' · no gaps')+'</div>'
+      + '<p>Persistent state only — settings the advisor leaves behind, which survive a reload and can '
+      + 'go stale. Irreversible actions are in the Activity drawer; per-tick allocation is reclaimed '
+      + 'every pass by design. Five write sites cannot be intercepted honestly and are excluded by name.</p>');
+
+    var rows = (lg.rows||[]).filter(function(r){
+      return window._lgFilter === "all" || r.state === window._lgFilter;
+    });
+    if(!rows.length){
+      writeHtml(host, "ledgerRows",
+        '<div class="lgempty">'+((lg.rows||[]).length ? "Nothing in this state right now."
+          : "The advisor has not set anything yet this run.")+'</div>');
+      return;
+    }
+    var html = "";
+    for(var i=rows.length-1;i>=0;i--){          // newest first
+      var r = rows[i], st = r.state || "active";
+      html += '<div class="lgrow s-'+esc(st)+'">'
+        + '<button class="lgh" aria-expanded="false">'
+        +   '<span class="lgt">'+esc(r.t||"")+'</span>'
+        +   '<span class="lgsys">'+esc(r.system||"")+'</span>'
+        // Lead with the in-game name. The code path is a debugging aid and lives in the detail pane —
+        // a screen that reports what was done to your save has to name things the way the save does.
+        +   '<span class="lgfieldwrap"><span class="lgfield">'+esc(r.game||r.field||"")+'</span>'
+        +     '<span class="lgwhy">'+esc(r.why||"")+'</span></span>'
+        +   '<span class="lgval">'+esc(r.value||"")+'</span>'
+        +   '<span class="lgstate st-'+esc(st)+'">'+esc(LGSTATE[st]||st)+'</span>'
+        + '</button>'
+        + '<div class="lgd"><div class="lgmeta">'
+        +   '<div><div class="k">Writer</div><div class="v">'+esc(r.rule||"")+'</div></div>'
+        +   '<div><div class="k">Authority</div><div class="v">'+esc(r.authority||"")+'</div></div>'
+        +   '<div><div class="k">Written during</div><div class="v">'+esc(r.segment||"—")+'</div></div>'
+        +   '<div><div class="k">Where it lives</div><div class="v">'+esc(r.field||"—")+'</div></div>'
+        + '</div>'
+        + '<div class="lgchain">'
+        +   (r.chain||[]).map(function(c){ return '<div>'+esc(c)+'</div>'; }).join("")
+        + '</div></div></div>';
+    }
+    writeHtml(host, "ledgerRows", html);
+  }
+  document.addEventListener("click", function(e){
+    var f = e.target.closest && e.target.closest("#lgFilters .fch");
+    if(f){
+      document.querySelectorAll("#lgFilters .fch").forEach(function(b){ b.setAttribute("aria-pressed","false"); });
+      f.setAttribute("aria-pressed","true");
+      window._lgFilter = f.dataset.s;
+      if(window._lastSnap) renderLedger(window._lastSnap);
+      return;
+    }
+    var h = e.target.closest && e.target.closest(".lgh");
+    if(h){ var row=h.parentElement, open=row.classList.toggle("open"); h.setAttribute("aria-expanded", String(open)); }
+  });
+
   function renderProfiles(s){
     var view = $("view-profiles"); if(!view) return;
     var prof = s.profiles||{}, list = prof.list||[];
@@ -3142,6 +3620,12 @@
             '<label class="switch" style="margin-top:2px"><input type="checkbox" role="switch" id="launchCompanionToggle"><span class="sw" aria-hidden="true"></span><span id="launchCompanionLabel">ON</span></label>'+
           '</div>'+
         '</div>'+
+        // P6: the load banner counts what the PARSER found. This says what is RUNNING — a different
+        // question, and the one an operator is actually asking when they look at this page.
+        '<div class="seclabel"><span class="eyebrow">What is driving the game right now</span></div>'+
+        '<div class="secwrap"><div id="secList" class="seclist"></div>'+
+          '<p class="hint sechint">The breakpoint counts shown when a profile loads say what was found in the '+
+          'file, not which of it is steering anything.</p></div>'+
         // Edit rides the existing [data-view] router; Open folder is a companion-local shell call.
         '<div class="seclabel"><span class="eyebrow">Profile files</span></div>'+
         '<div class="actionrow" style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap">'+
@@ -4279,7 +4763,12 @@
     energy:{hint:'Comma-separated priority tokens, in order — e.g. NGU-3, WAN, CAPAUG-10:50', chal:true},
     magic:{hint:'Comma-separated tokens — e.g. NGU-2, WAN, BR-3600, RIT-5', chal:true},
     r3:{hint:'Comma-separated tokens — e.g. HACK-13, ALLHACK, CAPHACK-1:10. Hacks: '+HACK_SLOTS.map(function(n,i){return i+' '+n;}).join(', '), chal:true},
-    gear:{hint:'Item IDs (e.g. 326, 100) — or "Optimize: <objective>" / "Optimize+Respawn: <objective>"', chal:true},
+    /* `gear:true` switches the editor from a free-text payload to the GEAR LOCK form — objective
+       picker + respawn switch + locked-item list. The hint stays for the edit-the-.json-by-hand
+       case, whose full grammar the parser still accepts. */
+    gear:{gear:true, chal:true,
+          hint:'Item IDs (e.g. 326, 100) · "Optimize: <objective>" · "Optimize+Respawn: <objective>" · '+
+               'or both — "Lock: 326, 100; Optimize: Time Machine"'},
     // `slots` names the vocabulary AND switches the editor from a free-text payload to the drag list.
     // The hint stays for the edit-the-.json-by-hand case, which the text form still supports.
     diggers:{hint:'Slot IDs 0–11 in priority order; a trailing x4 sets how many run', chal:true, slots:DIGGER_SLOTS},
@@ -4303,11 +4792,76 @@
     var ids=s.split(",").map(function(t){ return parseInt(t,10); }).filter(function(n){ return !isNaN(n) && n>=0; });
     return { ids:ids, count:count };
   }
+  /* GEAR LOCK payload <-> form. The grammar is BreakpointEditor.ApplyGear's, and this has to be its
+     exact inverse or a row would change meaning just by being opened and saved:
+        "326, 100"                                the whole loadout
+        "Optimize: X" / "Optimize+Respawn: X"     every slot optimized
+        "Lock: 326, 100; Optimize: X"             lock those, optimize the rest
+     Tolerant of the hand-written forms, because a profile edited in a text editor must still open
+     here — a bare ID clause alongside an Optimize clause is read as the lock list, same as the
+     parser does. */
+  function peParseGear(payload){
+    var out={ ids:[], objective:"", respawn:false };
+    String(payload||"").split(";").forEach(function(clause){
+      var c=clause.trim(); if(!c) return;
+      if(/^optimize/i.test(c)){
+        var ci=c.indexOf(":");
+        out.respawn = /respawn/i.test(ci>=0 ? c.slice(0,ci) : c);
+        out.objective = ci>=0 ? c.slice(ci+1).trim() : "";
+        return;
+      }
+      var body=c;
+      if(/^lock/i.test(c)){ var li=c.indexOf(":"); body = li>=0 ? c.slice(li+1) : ""; }
+      body.split(",").forEach(function(t){
+        var n=parseInt(t,10);
+        if(!isNaN(n) && n>=0 && out.ids.indexOf(n)<0) out.ids.push(n);
+      });
+    });
+    return out;
+  }
+  function peBuildGearPayload(ids, objective, respawn){
+    var opt = objective ? ((respawn?"Optimize+Respawn: ":"Optimize: ")+objective) : "";
+    if(!ids.length) return opt;                                  // objective only, or nothing at all
+    if(!opt) return ids.join(", ");                              // a plain item list, as before
+    return "Lock: "+ids.join(", ")+"; "+opt;                     // Gear Lock
+  }
+  // Read the gear form back into the hidden payload input, and keep the on-screen explanation of what
+  // this row will now DO in step with it. That sentence is the whole point of the section: "3 items +
+  // an objective" has to read as one plan, not two settings that happen to be next to each other.
+  function peSyncGear(ed){
+    var hidden=ed.querySelector('[data-k="payload"]'); if(!hidden) return;
+    var objEl=ed.querySelector('[data-k="gearobj"]'), respEl=ed.querySelector('[data-k="gearresp"]');
+    var objective = objEl ? String(objEl.value||"").trim() : "";
+    var respawn = !!(respEl && respEl.checked);
+    var ids = BLISTS.peLocks.arr||[];
+    hidden.value = peBuildGearPayload(ids, objective, respawn);
+
+    // The respawn switch only means anything alongside an objective — there is no optimize pass to
+    // pin into otherwise. Disable rather than hide, so it doesn't move under the pointer.
+    if(respEl) respEl.disabled = !objective;
+    var lab=ed.querySelector(".peg-locklabel");
+    if(lab) lab.textContent = objective ? "Locked items" : "Items to wear";
+    var say=ed.querySelector(".peg-say");
+    if(say){
+      say.textContent = !objective && !ids.length
+        ? "Nothing set — this breakpoint would equip nothing. Pick an objective, add item IDs, or both."
+        : !objective
+          ? ("Equips exactly these "+ids.length+(ids.length===1?" item.":" items.")+
+             " Pick an objective as well to have the advisor fill and optimise the rest.")
+          : !ids.length
+            ? ("Optimises every slot for “"+objective+"”"+(respawn?", keeping one respawn item on.":"."))
+            : (ids.length+(ids.length===1?" item is":" items are")+" locked in; every remaining slot is "+
+               "optimised for “"+objective+"”"+(respawn?", keeping one respawn item on.":".")+
+               " Anything that doesn’t fit is reported in the log.");
+    }
+  }
   // The list and the count are the truth; the hidden payload input is what submits. Keep them in step
-  // on every mutation so Save never has to know the widget exists.
+  // on every mutation so Save never has to know the widget exists. One dispatcher, because listSend's
+  // `local` branch lands here for BOTH breakpoint list editors and they serialise differently.
   function peSyncPayload(){
     var ed=document.querySelector(".tl-editor"); if(!ed) return;
     var hidden=ed.querySelector('[data-k="payload"]'); if(!hidden) return;
+    if(ed.getAttribute("data-sys")==="gear"){ peSyncGear(ed); return; }
     var ids=BLISTS.peSlots.arr||[];
     var cEl=ed.querySelector("#peCount"), n=cEl?parseInt(cEl.value,10):0;
     hidden.value = ids.join(", ") + (n>0 ? (ids.length? " " : "")+"x"+n : "");
@@ -4324,6 +4878,7 @@
   function closeEditor(){
     var e=document.querySelector(".tl-editor"); if(e&&e.parentNode) e.parentNode.removeChild(e);
     PE_SLOT_NAMES=null; BLISTS.peSlots.arr=[]; BLISTS.peSlots.built=false;
+    BLISTS.peLocks.arr=[]; BLISTS.peLocks.built=false;
   }
   function buildEditor(sys, mode, d){
     var meta = SYS_META[sys]||{};
@@ -4337,6 +4892,51 @@
       var tsel=REBIRTH_TYPES.map(function(t){ return '<option value="'+t[0]+'"'+(t[0]===d.payload?' selected':'')+'>'+esc(t[1])+'</option>'; }).join('');
       bodyHtml='<div class="tle-row"><label>Type</label><select class="tle-sel" data-k="payload">'+tsel+'</select></div>'+
                '<div class="tle-row"><label>Target</label><input class="tle-wide" data-k="target" value="'+esc(d.target||"")+'" placeholder="number — e.g. 1e6 (Number / Bosses only)"></div>';
+    } else if(meta.gear){
+      /* GEAR LOCK. A gear breakpoint used to be one free-text field that accepted EITHER a list of
+         item IDs OR "Optimize: X", and there was no way to write both — which is exactly what
+         several real setups need ("2 respawn + doll, optimise the rest for TM"). One form now states
+         the whole plan: what is pinned, and what the advisor does with everything else.
+
+         Deliberately the SAME list widget the loadout editors use (drawList over BLISTS), so the
+         rows, the drag, the ↑/↓, the ✕ and the [id] "name" labelling are the ones already learned
+         elsewhere. Its meaning changes with the objective — "items to wear" with none, "locked
+         items" with one — because that IS the same list; the objective is what turns a complete
+         loadout into a partial one. */
+      var g = peParseGear(d.payload||"");
+      BLISTS.peLocks.arr = g.ids; BLISTS.peLocks.built = true; BLISTS.peLocks.dirty = false;
+      // No objective list yet (older injector, or the first second after launch) => a text input, so
+      // an objective the profile already carries can still be read and re-saved rather than lost.
+      var objField;
+      if(GEAR_OBJECTIVES && GEAR_OBJECTIVES.length){
+        var known = GEAR_OBJECTIVES.indexOf(g.objective)>=0;
+        objField = '<select class="tle-sel" id="pegObj" data-k="gearobj"><option value="">None — wear the items below, unchanged</option>'+
+          (g.objective && !known ? '<option value="'+esc(g.objective)+'" selected>'+esc(g.objective)+' (not recognised)</option>' : '')+
+          GEAR_OBJECTIVES.map(function(n){
+            return '<option value="'+esc(n)+'"'+(n===g.objective?' selected':'')+'>'+esc(n)+'</option>'; }).join('')+
+          '</select>';
+      } else {
+        objField = '<input class="tle-wide" id="pegObj" data-k="gearobj" value="'+esc(g.objective)+'" placeholder="objective name — e.g. Time Machine">';
+      }
+      bodyHtml='<div class="tle-row"><label for="pegObj">Optimize for</label>'+objField+'</div>'+
+               '<div class="tle-row"><label for="pegResp">Pin respawn</label>'+
+                 '<span class="tle-time"><input type="checkbox" data-k="gearresp" id="pegResp"'+(g.respawn?' checked':'')+'>'+
+                 ' <span class="mut">keep one respawn item on, even if the objective wouldn’t pick one</span></span></div>'+
+               '<div class="tle-row"><label class="peg-locklabel">Locked items</label><span class="tle-wide">'+
+                 '<div class="listed pe-locks" id="peLocks"></div>'+
+                 '<div class="le-add"><input class="inp tin le-input" type="number" min="1" max="514" '+
+                   'placeholder="item ID" aria-label="Item ID to lock into this loadout" id="peLocksAdd">'+
+                 '<button class="btn" type="button" id="peLocksAddBtn">Add</button></div>'+
+               '</span></div>'+
+               '<input type="hidden" data-k="payload" value="'+esc(d.payload||"")+'">'+
+               '<div class="tle-hint peg-say"></div>'+
+               '<div class="tle-hint mut">Order decides which hand a weapon goes in and which accessory slot each item takes — '+
+               'and, if you lock more than fit, which ones make the cut. An ID you don’t own, or one too many for a slot, '+
+               'is named in the log rather than dropped in silence.</div>';
+      if(meta.chal){
+        var cselG=CHALLENGES.map(function(c){ return '<option value="'+c[0]+'"'+(c[0]===(d.challenge||"")?' selected':'')+'>'+esc(c[1])+'</option>'; }).join('');
+        bodyHtml+='<div class="tle-row"><label>Challenge</label><select class="tle-sel" data-k="challenge">'+cselG+'</select></div>';
+      }
     } else if(meta.slots){
       /* Diggers and beards are ORDERED SLOT lists, not free text. Typing "3, 8, 0" required knowing
          both the slot numbers and that the order is the priority — neither of which the field said.
@@ -4391,14 +4991,18 @@
   }
   // The slot list is built from BLISTS state, so it can only be drawn once the editor is in the DOM.
   function peAfterMount(ed){
-    if(!ed || !ed.querySelector("#peSlots")) return;
+    if(!ed) return;
+    if(ed.querySelector("#peLocks")){ drawList("peLocks"); peSyncGear(ed); return; }
+    if(!ed.querySelector("#peSlots")) return;
     drawList("peSlots");
     peBuildAdd();
     peSyncPayload();
   }
   function focusEditor(ed){
     // The slot editor's first real control is the Add picker; the payload input is hidden there.
-    var f=ed.querySelector('#peSlotsAdd') || ed.querySelector('[data-k="payload"],[data-k="target"]');
+    // The gear editor leads with the objective, because that is the decision the rest hangs off.
+    var f=ed.querySelector('#pegObj') || ed.querySelector('#peSlotsAdd') ||
+          ed.querySelector('[data-k="payload"],[data-k="target"]');
     if(f && f.type!=="hidden"){ try{ f.focus(); if(f.select) f.select(); }catch(e){} }
   }
   // C9: Add appended the editor below the fold on a long list, with nothing to say it had opened.
@@ -4990,6 +5594,11 @@
     // one is not a setting, it serialises into the editor's payload field and saves with the
     // breakpoint. Registering it here is what lets it reuse the drag/arrows/remove machinery whole.
     peSlots:               { key:null, local:true, ordered:true, arr:[], dirty:false, built:false, names:"slot" },
+    // LOCAL list: the gear breakpoint's item IDs. Ordered, because the order is what decides mainhand
+    // vs offhand and which accessory slot each item takes — and, when more are locked than fit, which
+    // ones make the cut. names:"item" so rows read [326] "Ascended x2 Wooden Sword" rather than a
+    // bare number: an id you cannot name is an id you cannot check.
+    peLocks:               { key:null, local:true, ordered:true, arr:[], dirty:false, built:false, names:"item" },
     wishPriorities:        { key:"WishPriorities",        ordered:true,  arr:[], dirty:false, built:false },
     wishBlacklist:         { key:"WishBlacklist",         ordered:false, arr:[], dirty:false, built:false }
   };
@@ -5182,7 +5791,14 @@
   }
   // Loadouts (finalize slice 2): objective dropdowns (built once from gearObjectives) + per-mode id lists.
   var _gearObjBuilt=false;
+  /* The objective names, kept for the Profile Editor's Gear Lock picker. That picker is built when an
+     editor OPENS, not when the snapshot arrives, so it cannot use the data-dyn sweep below — and it
+     must degrade to a free-text field when the list has never arrived (an older injector, or the
+     editor opened in the first second), because a picker with no options is a control that silently
+     cannot express what the profile already says. */
+  var GEAR_OBJECTIVES = null;
   function renderGearObjectives(s){
+    if(s.gearObjectives && !GEAR_OBJECTIVES) GEAR_OBJECTIVES = s.gearObjectives.slice();
     if(_gearObjBuilt || !s.gearObjectives) return;
     var sels=document.querySelectorAll('select[data-dyn="gearObjectives"]'); if(!sels.length) return;
     var tail=s.gearObjectives.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join("");
@@ -5614,8 +6230,10 @@
     var dr=document.getElementById("drawer"); if(dr && dr.classList.contains("open") && window.reqLog) window.reqLog();   // live-tail while open
     _seen=true;
     noteSnapshot();   // A1: real data arrived — this, not the status message, is what "live" means
+    window._lastSnap = s;              // the drawer's tab/filter handlers repaint from this without a new tick
     try{ renderHeader(s); }catch(e){}
     try{ renderStage(s); }catch(e){}
+    try{ window.renderFeed(s); }catch(e){}
     try{ renderAutoProfile(s); }catch(e){}
     try{ renderGoal(s); }catch(e){}
     try{ renderHero(s); }catch(e){}
@@ -5654,6 +6272,9 @@
     try{ renderCampaign(s); }catch(e){}   // campaign (~5 s cache) + lsc (per tick); both dirty-checked
     try{ renderSettings(s); }catch(e){}
     try{ renderProfiles(s); }catch(e){}
+    try{ renderSections(s); }catch(e){}   // after renderProfiles: #secList is built by its manual body
+    try{ renderLedger(s); }catch(e){}
+    try{ renderPools(s); }catch(e){}
     try{ syncBars(); }catch(e){}
     if(!_fitOnce){ _fitOnce = true; scheduleFit(); }   // re-fit once real data has replaced the demo content
   }
@@ -5760,6 +6381,11 @@
       } else if(t.id === "peCount"){
         // The digger activation count lives beside the list and serialises into the same payload.
         peSyncPayload();
+      } else if(t.matches && t.matches('[data-k="gearobj"],[data-k="gearresp"]')){
+        // Gear Lock: the objective and the respawn switch serialise into the same payload as the
+        // locked-item list. Deliberately NOT [data-setting] — this is breakpoint content that saves
+        // with the row, not a live setting, and posting it as one would write to the wrong place.
+        peSyncPayload();
       } else if(t.matches && t.matches("[data-setting]")){
         var skey=t.getAttribute("data-setting");
         // A key can be bound by several controls (the mirrored arming switches on Loadouts). Move every
@@ -5863,6 +6489,11 @@
       var save = ed.querySelector(".tle-save"); if(!save || save.disabled) return;
       var sys = ed.getAttribute("data-sys"), mode = ed.getAttribute("data-mode");
       var sec = edSec(ed);
+      // Re-serialise the gear form before reading the hidden payload. The change handler already does
+      // this, but Enter-to-submit can beat the `change` event out of a text field, and a save that
+      // sends a payload one keystroke behind the form is the worst possible failure here: it looks
+      // like it worked.
+      if(sys==="gear"){ try{ peSyncGear(ed); }catch(err){} }
       var payload = edVal(ed,"payload"), challenge = edVal(ed,"challenge"), target = edVal(ed,"target");
       var errEl = ed.querySelector(".tle-err"); if(errEl) errEl.textContent="";
       if(!(_tlDir && _tlName)){ if(errEl) errEl.textContent="No active profile is loaded, so there is nothing to save into. Pick one on the Profiles page."; return; }
@@ -5981,6 +6612,21 @@
       if(e.target && e.target.id === "peSlotsAddBtn"){
         var pick=$("peSlotsAdd");
         if(pick && pick.value!=="") listAdd("peSlots", pick.value);
+        return;
+      }
+      // Gear Lock: add an item ID to the breakpoint's list. Local to the editor, like the slot picker
+      // above — it saves with the breakpoint, not as a setting (see listSend's `local` branch).
+      if(e.target && e.target.id === "peLocksAddBtn"){
+        var idIn=$("peLocksAdd");
+        if(idIn && idIn.value!==""){
+          var before=(BLISTS.peLocks.arr||[]).length;
+          listAdd("peLocks", idIn.value);
+          // listAdd refuses 0/negatives and repeats. Say so rather than letting the box just sit
+          // there full: a control that silently ignores you reads as a broken one.
+          if((BLISTS.peLocks.arr||[]).length===before){
+            if(window.showToast) window.showToast("That item ID is already locked, or isn’t a valid ID.");
+          } else idIn.value="";
+        }
         return;
       }
       var fillBtn = e.target.closest ? e.target.closest("[data-fillobj]") : null;

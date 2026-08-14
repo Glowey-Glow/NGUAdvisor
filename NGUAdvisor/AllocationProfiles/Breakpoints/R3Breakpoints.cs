@@ -26,9 +26,10 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
         // yields the same waterfill without either hazard: a hack takes what it can use, the rest flows down.
         //
         // Consequence worth stating: for the first time the lane can finish with R3 left over. The wish
-        // spare pass (CustomAllocation, WishManager.Allocate(true)) takes all remaining idle, so surplus now
-        // reaches wishes instead of sitting in a saturated hack. That is the right destination — wishes are
-        // the other R3 sink — but it is a behaviour change, so HackDbg reports the leftover.
+        // share pass (CustomAllocation, WishManager.Allocate) takes the WishR3 slider's share of remaining
+        // idle, so surplus now reaches wishes instead of sitting in a saturated hack. That is the right
+        // destination — wishes are the other R3 sink — but it is a behaviour change, so HackDbg reports
+        // the leftover.
         protected override bool PerformSwap(Breakpoint bp)
         {
             // See EnergyBreakpoints.PerformSwap for why the null filter is here.
@@ -56,10 +57,10 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
         // Say it the first time it happens, once per session.
         //
         // Before the saturation clamp the lane always emptied the pool into one hack, so there was never any
-        // idle R3 at this point and the wish spare pass had nothing to pick up. Now there can be, and
-        // WishManager.Allocate(true) takes ALL of it regardless of the WishR3 share — which is the intended
-        // destination, but it means a player who set WishR3 to 0 will see wishes progress anyway. Silent
-        // would read as the advisor going behind their back.
+        // idle R3 at this point and the wish pass had nothing to pick up. Now there can be, and the wish
+        // share pass takes the WishR3 slider's cut of it — 0% really allocates nothing since the overCap
+        // spare pass was removed, so a leftover with the slider at 0 simply stays idle. The log names the
+        // destination so leftover R3 doesn't read as a stuck allocator.
         private static bool _surplusReported;
         private void ReportSurplusOnce()
         {
@@ -68,7 +69,8 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
             if (idle <= 0) return;
             _surplusReported = true;
             Main.Log($"Hacks: every hack in this list is at the most R3 it can use; "
-                   + $"{Managers.NumberFormatter.Abbrev(idle)} left over goes to wishes.");
+                   + $"{Managers.NumberFormatter.Abbrev(idle)} left over is offered to wishes "
+                   + $"(Wish R3 share: {Main.Settings.WishR3:0.#}%).");
         }
 
         public override void Reset()

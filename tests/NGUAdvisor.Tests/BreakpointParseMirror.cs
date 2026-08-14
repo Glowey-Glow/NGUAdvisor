@@ -69,7 +69,7 @@ namespace NGUAdvisor.Tests
                 (CapPercent.HasValue ? ":" + (int)Math.Round(CapPercent.Value * 100) : "") + ")";
         }
 
-        // The 14 stems, in the parser's branch order. Item1 = the literals that branch tests.
+        // The 15 stems, in the parser's branch order. Item1 = the literals that branch tests.
         public static readonly string[] StemLiterals =
         {
             "NGU", "CAPNGU",
@@ -78,6 +78,7 @@ namespace NGUAdvisor.Tests
             "AUG", "CAPAUG",
             "BESTAUG", "CAPBESTAUG",
             "BT", "CAPBT",
+            "MILEHACK", "CAPMILEHACK",
             "HACK", "CAPHACK",
             "WAN", "CAPWAN",
             "ALLBT", "CAPALLBT",
@@ -146,6 +147,8 @@ namespace NGUAdvisor.Tests
                 Add(into, "BestAug", index, capT, cap);
             else if (temp.StartsWith("BT") || temp.StartsWith("CAPBT"))
                 Add(into, "BasicTrainingBP", index, capT, cap);
+            else if (temp.StartsWith("MILEHACK") || temp.StartsWith("CAPMILEHACK"))
+                Add(into, "MileHackBP", index, capT, cap);
             else if (temp.StartsWith("HACK") || temp.StartsWith("CAPHACK"))
                 Add(into, "HackBP", index, capT, cap);
             else if (temp.StartsWith("WAN") || temp.StartsWith("CAPWAN"))

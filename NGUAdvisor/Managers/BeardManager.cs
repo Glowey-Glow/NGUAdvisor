@@ -107,6 +107,15 @@ namespace NGUAdvisor.Managers
 
             _bc.refreshMenu();
 
+            WriteLedger.Record("beards.active",
+                beards.Length == 0 ? "none" : string.Join(", ", Array.ConvertAll(beards, b => (b + 1).ToString())),
+                allEquipped ? "advisor or profile beard set for this phase"
+                            : "requested set was larger than the beard cap and was trimmed",
+                ChallengeOverlay.Segment,
+                "Cleared and re-activated as a whole set, not toggled individually",
+                "The 100LC challenge rule can empty this set deliberately — an empty set is a decision",
+                "Replaced on the next set change; nothing restores it on its own");
+
             return allEquipped;
         }
     }
