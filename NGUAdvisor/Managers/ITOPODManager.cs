@@ -752,7 +752,13 @@ namespace NGUAdvisor.Managers
                 end = _ac.maxItopodLevel();
 
             if (Adventure.itopodStart == start && Adventure.itopodEnd == end)
+            {
+                // Unchanged is an AFFIRMATION, not silence: the advisor just recomputed the range
+                // and got the same answer under the current segment. Without this the row reads
+                // stale forever from the first segment change (audit, 2026-08-19).
+                try { WriteLedger.Reaffirm("adventure.itopod", ChallengeOverlay.Segment); } catch { }
                 return;
+            }
 
             Adventure.itopodStart = start;
             Adventure.itopodEnd = end;

@@ -188,6 +188,51 @@ namespace NGUAdvisor.Tests
             Assert.DoesNotMatch(Percent, "CAPTM:ten");
         }
 
+        // ── THE SEVEN ARRAYS THAT LOST AN ELEMENT, WRITTEN OUT IN FULL ───────────────────────────
+        //
+        // Stripping a suffix can make a lane textually identical to a later copy of itself. The old
+        // share model listed some lanes TWICE on purpose — once capped with a percent to bound it
+        // early, once bare at the end to absorb the residue — and with the percent gone those are
+        // the same token. A duplicate is not harmless: ShippedPresetTests rejects it because it
+        // expands into prioCount and divides every other lane in that breakpoint down to match.
+        //
+        // The dedupe keeps the FIRST occurrence, and that is the minimal faithful edit rather than a
+        // coin toss: the first occurrence was ALREADY the author's chosen position for that lane, so
+        // keeping it preserves the order of every other token in the array. Only the trailing
+        // mop-up copy disappears — and the residue it existed to absorb now goes to the surplus
+        // sink, which the constraint layer funds last regardless of list position.
+        //
+        // Pinned in full so that if one of these ever changes again it is a decision somebody made
+        // and can see in the diff, not a side effect of the next bulk edit.
+        [Theory]
+        [InlineData("Presets/CBlock5.json", "Magic", 0,
+            "CAPWAN", "BR", "CAPTM")]
+        [InlineData("SampleProfiles/Evil/CBlock5.json", "Magic", 0,
+            "CAPWAN", "BR", "CAPTM")]
+        [InlineData("Presets/CBlock3.0-N.json", "Energy", 0,
+            "CAPALLNGU", "CAPALLBT", "CAPALLAT", "CAPWAN", "CAPTM", "CAPBESTAUG", "WAN")]
+        [InlineData("Presets/CBlock3.0-N.json", "Magic", 0,
+            "CAPALLNGU", "CAPWAN", "CAPTM", "BR", "WAN")]
+        [InlineData("Presets/CBlock2-Normal.json", "Energy", 0,
+            "CAPALLBT", "CAPWAN", "CAPTM", "BESTAUG", "CAPALLAT", "WAN")]
+        [InlineData("SampleProfiles/Normal/CBlock2.json", "Energy", 0,
+            "CAPALLBT", "CAPWAN", "CAPTM", "BESTAUG", "CAPALLAT", "WAN")]
+        [InlineData("Presets/Normal-LRB.json", "Energy", 0,
+            "CAPALLBT", "CAPTM", "BESTAUG", "CAPALLAT", "WAN")]
+        public void The_deduped_arrays_are_exactly_these(string relPath, string section, int index,
+                                                         params string[] expected)
+        {
+            var file = Path.Combine(RepoRoot(), "NGUAdvisor", relPath.Replace('/', Path.DirectorySeparatorChar));
+            Assert.True(File.Exists(file), file + " is missing");
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            var rows = doc.RootElement.GetProperty("Breakpoints").GetProperty(section);
+            var row = rows.EnumerateArray().ElementAt(index);
+            var actual = row.GetProperty("Priorities").EnumerateArray().Select(t => t.GetString()).ToArray();
+
+            Assert.Equal(expected, actual);
+        }
+
         [Fact]
         public void Every_shipped_file_is_still_strict_json()
         {

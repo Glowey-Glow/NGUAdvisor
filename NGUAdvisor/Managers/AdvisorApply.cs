@@ -265,6 +265,11 @@ namespace NGUAdvisor.Managers
             // own (RecapDiggers reads only Settings.DiggerCap, a tuning value, not a permission).
             if (!Main.Settings.ManageDiggers) return;
 
+            // The digger path reconciles membership in place and only records through EquipDiggers,
+            // so a run where the set never changes never re-records at all. Same affirmation as the
+            // beard and ITOPOD paths above.
+            try { WriteLedger.Reaffirm("diggers.active", ChallengeOverlay.Segment); } catch { }
+
             var set = OptimizationAdvisor.CurrentDiggerSet();
             // ⚠ NULL AND EMPTY ARE FOLDED HERE, the shape that made the 100LC beard rule unenforceable
             // (see BeardRule). Harmless today because no digger rule needs "equip none" — if one ever
@@ -318,7 +323,14 @@ namespace NGUAdvisor.Managers
             var active = c.beards.activeBeards;
             // Vacuously true for the empty set once the clear has landed, so the rule states itself
             // once per challenge instead of once per tick.
-            if (active.Count == set.Length && set.All(active.Contains)) return;
+            if (active.Count == set.Length && set.All(active.Contains))
+            {
+                // Same set, freshly re-decided under whatever segment is live now. Tell the ledger,
+                // or the row it wrote under the PREVIOUS segment stays marked stale for the rest of
+                // the run while the advisor keeps choosing it (audit, 2026-08-19).
+                try { WriteLedger.Reaffirm("beards.active", ChallengeOverlay.Segment); } catch { }
+                return;
+            }
 
             if (BeardManager.EquipBeards(set))
                 Main.Log(set.Length == 0

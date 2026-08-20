@@ -247,6 +247,40 @@ namespace NGUAdvisor.Managers
                     }
         }
 
+        // "STILL MINE, STILL FOR THIS REASON" — the counterpart MarkStaleOutsideSegment needs.
+        //
+        // A row goes Stale when the segment that justified it ends. Getting OUT of Stale requires the
+        // writer to say the value still stands, and Record is the only way to say that — but the
+        // three biggest writers never reach Record on a steady tick, because they all bail out early
+        // when the value has not changed:
+        //     AdvisorApply.cs   `if (active.Count == set.Length && set.All(active.Contains)) return;`
+        //     ITOPODManager.cs  `if (Adventure.itopodStart == start && ...) return;`
+        //     AdvisorApply.cs   the digger reconcile path, which never records at all
+        // Each of those returns means "I checked, and it is still right" — which is precisely the
+        // affirmation the ledger needs and precisely what it was not being told. Left alone, beards,
+        // diggers and the ITOPOD range read "stale" for the rest of the run from the first segment
+        // change onward, while the advisor was re-deciding them in favour every tick.
+        //
+        // Deliberately NOT Record: there is no new value, no new reason and no new causal chain, so
+        // the timestamp and history are preserved. This only re-stamps WHICH SEGMENT the value is
+        // currently justified under, and lifts Stale.
+        //
+        // Reverted and Contested are untouched — the same rule MarkStaleOutsideSegment follows.
+        // Reverted means the advisor withdrew; a later "still mine" would be a contradiction, and if
+        // the advisor really has re-taken the field it will go through Record and say so properly.
+        public static void Reaffirm(string writerId, string segment)
+        {
+            if (string.IsNullOrEmpty(writerId)) return;
+            lock (_gate)
+                foreach (var e in _entries)
+                {
+                    if (e.WriterId != writerId) continue;
+                    if (e.State != WriteState.Active && e.State != WriteState.Stale) continue;
+                    e.Segment = segment ?? "";
+                    e.State = WriteState.Active;
+                }
+        }
+
         // THE WIRING MarkStale WAS MISSING (audit/59 §C, decision 5). LedgerEntry.Segment's own
         // comment names the mechanism — "the run phase it was written in, THE USUAL REASON A WRITE
         // GOES STALE" — but nothing ever compared it to the live phase, so of the ledger's four
