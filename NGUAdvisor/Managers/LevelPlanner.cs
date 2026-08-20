@@ -303,6 +303,13 @@ namespace NGUAdvisor.Managers
             catch { }
             _blockSnapshot = 0;
             _purposeOn = false;
+
+            // audit/59 §C: the advisor has just put the operator's own number back, which is exactly
+            // WriteState.Reverted — "the live field no longer holds it, the advisor withdrew". Without
+            // this the at.block row read Active forever after a thaw, asserting the advisor still
+            // stood behind a value it had already given up.
+            try { WriteLedger.MarkReverted("at.block"); } catch { }
+
             ChallengeOverlay.Record("AT purpose caps off", "auto profile off — user Block target restored");
         }
 

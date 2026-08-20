@@ -92,6 +92,7 @@ namespace NGUAdvisor
         [SerializeField] private int[] _wishBlacklist;
         [SerializeField] private bool _weakPriorities;
         [SerializeField] private bool _manageWishes;
+        [SerializeField] private bool _wishSinkMode;
         [SerializeField] private int _wishLimit;
         [SerializeField] private int _wishMode;
         [SerializeField] private double _wishEnergy;
@@ -478,11 +479,12 @@ namespace NGUAdvisor
             _questBeastMode = other?.QuestBeastMode ?? false;
 
             _manageWishes = other?.ManageWishes ?? false;
+            _wishSinkMode = other?.WishSinkMode ?? false;
             AssignValue(ref _wishLimit, other?.WishLimit, (value) => value > 0 && value <= 4, 4);
             AssignValue(ref _wishEnergy, other?.WishEnergy, (value) => value >= 0.0 && value <= 100.0);
             AssignValue(ref _wishMagic, other?.WishMagic, (value) => value >= 0.0 && value <= 100.0);
             AssignValue(ref _wishR3, other?.WishR3, (value) => value >= 0.0 && value <= 100.0);
-            AssignValue(ref _wishMode, other?.WishMode, (mode) => mode >= 0 && mode <= 3);
+            AssignValue(ref _wishMode, other?.WishMode, (mode) => mode >= 0 && mode <= 4);
             _weakPriorities = other?.WeakPriorities ?? false;
             AssignValues(ref _wishPriorities, other?.WishPriorities, (id) => id >= 0 && id <= Consts.MAX_WISH_ID);
             AssignValues(ref _wishBlacklist, other?.WishBlacklist, (id) => id >= 0 && id <= Consts.MAX_WISH_ID);
@@ -1401,6 +1403,42 @@ namespace NGUAdvisor
             {
                 if (value == _manageWishes) return;
                 _manageWishes = value;
+                SaveSettings();
+            }
+        }
+
+        /// <summary>
+        /// Wishes as a SINK rather than a PRIORITY: they take what the lanes could not use, instead of
+        /// a slider share off the idle pool. The Wish % sliders are ignored while this is on.
+        /// </summary>
+        /// <remarks>
+        /// ⚠ THIS MOVES WHERE THE HOLDINGS ARE RELEASED, WHICH IS THE WHOLE MECHANISM. In priority mode
+        /// WishManager.Allocate opens with removeAllResources() — AFTER the E/M/R3 swaps have already
+        /// run — so the resources it hands back were never offered to a lane at all; they go straight
+        /// back to the wish slots. That is why the claim compounds: measured 2026-08-18 on an end-game
+        /// save, the energy pool fell 9e18 -> 1.2e16 between gear swaps while the wish slots held ~85-90%
+        /// of everything, and the only thing that ever released it was the game's own
+        /// removeAllEnergyAndMagic() on a gear change.
+        ///
+        /// In sink mode the release happens BEFORE the swaps, so the lanes allocate from the full pool,
+        /// cap out, and the wish pass then takes only what is genuinely left. That is what "keep the
+        /// NGUs capped and let wishes have the rest" requires, and it cannot be expressed as a slider
+        /// value — 0% starves wishes entirely and 100% starves the lanes.
+        ///
+        /// NOT the pre-2.4.0 behaviour this codebase already rejected. That one released before the
+        /// swaps AND THEN APPLIED THE PERCENTAGE, so "% of idle" became "% of total taken off the top"
+        /// and the swaps divided a pre-shrunk denominator (audit/38 §E4.1). Sink mode releases early and
+        /// takes the REMAINDER — no percentage anywhere.
+        ///
+        /// Defaults OFF: existing profiles keep the behaviour they were tuned against.
+        /// </remarks>
+        public bool WishSinkMode
+        {
+            get => _wishSinkMode;
+            set
+            {
+                if (value == _wishSinkMode) return;
+                _wishSinkMode = value;
                 SaveSettings();
             }
         }

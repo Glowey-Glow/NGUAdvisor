@@ -5,15 +5,15 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPWAN:10", "CAPAUG-12", "CAPAUG-13", "CAPTM:10" ],
-        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN", "CAPAUG-12", "CAPAUG-13", "CAPTM:10" ]
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPAUG-12", "CAPAUG-13", "CAPTM" ],
+        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN", "CAPAUG-12", "CAPAUG-13", "CAPTM" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPWAN:10", "BR", "CAPTM:10" ],
-        "PrioritiesDefault": [ "CAPWAN", "BR", "CAPTM:10" ]
+        "Priorities": [ "CAPWAN", "BR", "CAPTM" ],
+        "PrioritiesDefault": [ "CAPWAN", "BR", "CAPTM" ]
       }
     ],
     "R3": [

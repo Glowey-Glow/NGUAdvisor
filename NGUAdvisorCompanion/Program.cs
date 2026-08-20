@@ -7,9 +7,12 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        // Single instance: the injector auto-launches this on load, and the user may also start it — the
-        // second start exits immediately. The mutex is what makes injector auto-launch idempotent.
-        using var mutex = new System.Threading.Mutex(true, "NGUAdvisorCompanionSingleton", out bool created);
+        // Single instance PER ADVISOR INSTANCE: the injector auto-launches this on load, and the user may
+        // also start it — the second start for the SAME instance exits immediately. The mutex is what makes
+        // injector auto-launch idempotent. It is suffixed (AdvisorInstance) so that a bench game's companion
+        // is not mistaken for the live one and silently killed at startup; unsuffixed, "one companion per
+        // machine" would make an isolated bench UI impossible.
+        using var mutex = new System.Threading.Mutex(true, AdvisorInstance.CompanionMutex, out bool created);
         if (!created) return;
 
         // Lifecycle: the injector passes the GAME's process id as arg[0]. Exit when the game exits, so the

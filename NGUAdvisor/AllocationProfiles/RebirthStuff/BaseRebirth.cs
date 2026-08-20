@@ -120,6 +120,14 @@ namespace NGUAdvisor.AllocationProfiles.RebirthStuff
             _challenges = parsed.ToArray();
         }
 
+        // How many entries of the profile's Challenges array survived ParseChallenges — i.e. how many
+        // the rotation can actually engage. READ-ONLY, and deliberately the RECOGNISED count rather than
+        // the authored one: ParseChallenges drops a token with no '-', a token whose ordinal will not
+        // parse, and (with one log line) a token naming no known challenge, so "20 authored" and "18 in
+        // the rotation" are different facts and only this one is a capability. The load banner reports
+        // both; ProfileSections asks only whether the number is non-zero.
+        public static int ChallengeCount => _challenges?.Length ?? 0;
+
         public static bool AnyChallengesValid() => _challenges?.Any(x => x.ChallengeValid()) ?? false;
 
         public static bool TryStartChallenge()

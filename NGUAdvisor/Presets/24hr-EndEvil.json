@@ -11,22 +11,22 @@
 	"PriorityExample5" : "If CAPB were first instead, A,C,D and E would each get 10 energy. If CAPB were last, A,C,D and E would each get 25 energy and CAPB would get nothing",
 	"PriorityExample6" : "If C were instead CAPC, A would now get 33, CAPC would get the last 7 and D and E would get nothing. If D were instead CAPD, A would now get 33, C would get 3, CAPD would get 4 and E would get nothing",
 	
-	"PriorityPercentComment1" : "The percentages (like ALLAT:25) are a ceiling, and wont have an effect if the amount of energy to be allocated is less than the percent would allocate",
-	"PriorityPercentComment2" : "So if we had priority A with idle energy of 100 and the amount of energy to be applied was 20, A:25 would do nothing, while A:10 would lower the allocation to 10",
-	"PriorityPercentComment3" : "Also a reminder that CAP allocations work against the total, while non-CAP allocations work against the idle amount",
+	"PriorityPercentComment1" : "THE ADVISOR SIZES EVERY LANE ITSELF. It reads live capacities each tick and gives each system what it can actually use, so you do not need to write percentages at all - that is the default and the recommended setup.",
+	"PriorityPercentComment2" : "A percentage (like ALLAT:25) is therefore read as MANUAL MODE: you are telling the advisor to stop optimising that system because you want to drive it. The lane claims its authored share off the top, before the advisor allocates anything, and is excluded from the optimiser.",
+	"PriorityPercentComment3" : "Remove the ':percent' to hand that system back to the advisor. The load banner warns you for every percentage it finds, and the log tags those lanes [Manual].",
 	
-	"PriorityPercentExample1" : "For example A, B, C, D would result in all priorities getting 25 energy and is equivalent to A:25, B:33, C:50, D:100 (A gets 25 of 100 idle, B gets 25 of 75 remainder, etc)",
-	"PriorityPercentExample2" : "If we have the same A, CAPB, C, D, E definition as above, this is equivalent to A:25, CAPB:60, B:33, C:50, D:100",
-	"PriorityPercentExample3" : "For CAPB, anything 60 and above would have the same result. But if we had CAPB:45 instead for example, C, D, and E would each get 10 energy instead of 5",
+	"PriorityPercentExample1" : "The old share model these examples used to describe is gone - allocation is no longer 'A gets 25 of 100 idle, B gets 25 of the 75 remainder'. The advisor offers every seated lane min(what it can absorb, its share of what is left) and repeats until the pool is spent.",
+	"PriorityPercentExample2" : "So 'A, B, C, D' with no percentages is not equivalent to any list with them. Writing A:25 does not reproduce the old first-in-line behaviour; it takes A out of the optimiser entirely and hands it a flat 25% of the resource.",
+	"PriorityPercentExample3" : "R3 is the one place a percentage always meant what it says, and it still does - R3 is not routed through the constraint allocator. Note the R3 tail is otherwise priced by the advisor now (by marginal value density), and a percent opts that lane out of the pricing.",
 	
     "Energy": [
       {
         "Time": 0,
-	    "Priorities": [ "CAPALLBT", "CAPTM:80" ]
+	    "Priorities": [ "CAPALLBT", "CAPTM" ]
       },
       {
         "Time": { "m": 15 },
-        "Priorities": [ "CAPWAN:10", "AUG-10:10", "AUG-11:10", "CAPALLNGU", "CAPTM:10" ],
+        "Priorities": [ "CAPWAN", "AUG-10", "AUG-11", "CAPALLNGU", "CAPTM" ],
         "Note1": "Evil NGU time",
 		"Note2": "Use this time to boost up NGUs which are lagging behind according to the Gear Optimizer",
 		"Thresholds": "Magic-NGU or PP > x1.05, Respawn < x0.95, Gold > x1.2",
@@ -40,11 +40,11 @@
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPTM:80", "BR" ]
+        "Priorities": [ "CAPTM", "BR" ]
       },
       {
         "Time": { "m": 15 },
-        "Priorities": [ "CAPWAN:15", "BR", "CAPALLNGU", "CAPTM:10" ],
+        "Priorities": [ "CAPWAN", "BR", "CAPALLNGU", "CAPTM" ],
         "Note1": "Evil NGU time",
 		"Note2": "Use this time to boost up NGUs which are lagging behind according to the Gear Optimizer",
 		"Thresholds": "Energy-NGU or AdvB > x1.05, TM > x1.2",

@@ -234,6 +234,19 @@ namespace NGUAdvisor.Managers
                   .Append(" lane(s), pool ").Append(plan.RateSkipPool.ToString(inv))
                   .Append(" < cheapest capacity ").Append(plan.RateSkipCheapest.ToString(inv));
 
+            // THE ROUNDS. Every per-lane number above is a SUM over these, which is why a capped lane
+            // prints `offered` well above its capacity and why nothing in this block could previously
+            // distinguish "retired in round 1" from "survived four rounds". `n` is the roster the round
+            // opened with — the divisor — so a reader can reconstruct the share the fill actually used.
+            if (plan.Rounds > 0)
+            {
+                sb.Append("\n  rounds=").Append(plan.Rounds.ToString(inv));
+                if (!string.IsNullOrEmpty(plan.RoundTrace))
+                    sb.Append("  ").Append(plan.RoundTrace);
+                if (plan.Rounds > 6)
+                    sb.Append(" | … ").Append((plan.Rounds - 6).ToString(inv)).Append(" more");
+            }
+
             return sb.ToString();
         }
 

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Headless tests for the companion page (NGUAdvisorCompanion/wwwroot/index.html).",
   "scripts": {
-    "test": "node test-loadouts.js"
+    "test": "node test-loadouts.js && node test-goal-and-feed.js && node test-invverdict.js && node test-poolboard.js"
   },
   "devDependencies": {
     "jsdom": "^25.0.0"

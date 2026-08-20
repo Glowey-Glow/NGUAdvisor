@@ -3,12 +3,12 @@
     "_Preset": "Normal Challenge Block 2 (auto-installed). The injector runs the Challenges queue below, rebirthing into the next valid challenge (and waiting out No-Rebirth automatically). Loadout + allocation swap per active challenge: gear auto-optimizes (smart defaults: NORB->Adventure, NOTM->Gold, etc.) and the NOTM-tagged priorities drop Time Machine. Requires Manage Gear + Manage Energy/Magic ON and Auto Rebirth ON.",
     "_Injector": "Adventure: Combat ON, Idle, target A Very Strange Place with Fallthrough (ITOPOD after TM for PP). Gold tab: CBlock Mode ON. Put low targets on AT-0/1/2 and high/infinite on AT-3/4.",
     "Energy": [
-      { "Time": 0, "Priorities": [ "CAPALLBT", "CAPWAN:50", "CAPTM:40", "BESTAUG:50", "CAPALLAT", "WAN", "BESTAUG" ] },
-      { "Time": 0, "Challenge": "NOTM", "Priorities": [ "CAPALLBT", "CAPWAN:50", "CAPALLAT", "WAN", "BESTAUG" ] }
+      { "Time": 0, "Priorities": [ "CAPALLBT", "CAPWAN", "CAPTM", "BESTAUG", "CAPALLAT", "WAN" ] },
+      { "Time": 0, "Challenge": "NOTM", "Priorities": [ "CAPALLBT", "CAPWAN", "CAPALLAT", "WAN", "BESTAUG" ] }
     ],
     "Magic": [
-      { "Time": 0, "Priorities": [ "CAPWAN:50", "BR-300:20", "CAPTM", "WAN", "BR" ] },
-      { "Time": 0, "Challenge": "NOTM", "Priorities": [ "CAPWAN:50", "RIT-0:20", "WAN" ] }
+      { "Time": 0, "Priorities": [ "CAPWAN", "BR-300", "CAPTM", "WAN", "BR" ] },
+      { "Time": 0, "Challenge": "NOTM", "Priorities": [ "CAPWAN", "RIT-0", "WAN" ] }
     ],
     "R3": [ { "Time": 0, "Priorities": [] } ],
     "Gear": [

@@ -29,6 +29,7 @@ namespace NGUAdvisor.Managers
             public const string DropFarm = "dropfarm";   // the advisor's own farm, same Loot Hunter set
             public const string Segment = "segment";     // the auto-profile's segment gear
             public const string Profile = "profile";     // the active profile's gear timeline
+            public const string ProfileManual = "profilemanual"; // a profile row listing item IDs — MANUAL MODE
             public const string Pin = "pin";             // the user's standing pick (Loadouts -> Main)
             public const string None = "none";
         }
@@ -50,6 +51,9 @@ namespace NGUAdvisor.Managers
             // GearBreakpoints.ActiveLocks — the item IDs the profile's gear row pins (Gear Lock).
             // Null/empty for every profile written before the feature existed.
             public int[] ProfileLocks;
+            // GearBreakpoints.ActiveManualIds — item IDs from a profile row that names no objective.
+            // Non-empty means the operator is driving gear by hand for this row (audit/59 §A P0).
+            public int[] ProfileManualIds;
             public string Pin;                 // Settings.GearObjective ("" = follow the profile)
             public bool PinRespawn;            // Settings.GearObjectiveRespawn
         }
@@ -60,6 +64,10 @@ namespace NGUAdvisor.Managers
             public bool ForceRespawn;
             // The Gear Lock in force, or null. Set ONLY on the profile row — see Resolve.
             public int[] Locks;
+            // The manual item IDs in force, or null. Set ONLY on a ProfileManual result — the caller
+            // equips these directly rather than solving an objective.
+            public int[] ManualIds;
+            public bool IsManual => ManualIds != null && ManualIds.Length > 0;
             public string Source;          // one of Src.*
             public string Sentence;        // one line for the companion, already human-readable
             public bool Resolved => !string.IsNullOrEmpty(Name);
@@ -185,6 +193,33 @@ namespace NGUAdvisor.Managers
                     Sentence = "Running \"" + i.ProfileObjective + "\" — from the profile's gear timeline."
                         + LockNote(i.ProfileLocks)
                         + (Has(i.Pin) ? " Your pick applies when the timeline has nothing to say." : "")
+                };
+
+            // MANUAL GEAR ROW — ABOVE THE PIN, AND THAT ORDER IS THE WHOLE FIX.
+            //
+            // A row listing item IDs is an explicit instruction about THIS moment in the timeline;
+            // the pin is a standing default for when the timeline has nothing to say. Ranked below
+            // the pin (which is what "no branch at all" amounted to) the authored row lost every
+            // time and could not even re-assert, because BaseBreakpoints latches `swapped` once the
+            // pin has equipped. Ranked above it, the row wins while it is current and the pin
+            // resumes the moment the timeline moves on — which is what both features already claim
+            // to do.
+            //
+            // Below the profile's NAMED objective on purpose: an objective row and an ID row cannot
+            // both be current (GearBreakpoints sets one and nulls the other), so the order between
+            // them never actually binds — but if that ever changes, a named objective is the more
+            // specific statement and should keep winning.
+            if (i.ProfileManualIds != null && i.ProfileManualIds.Length > 0)
+                return new Result
+                {
+                    Name = null,                       // an ID row names no objective — there is nothing to solve
+                    ManualIds = i.ProfileManualIds,
+                    ForceRespawn = i.ProfileRespawn,
+                    Source = Src.ProfileManual,
+                    Sentence = "Gear is in MANUAL MODE — your profile's timeline lists "
+                        + i.ProfileManualIds.Length + (i.ProfileManualIds.Length == 1 ? " item" : " items")
+                        + " for this row, so the advisor is not choosing your loadout."
+                        + (Has(i.Pin) ? " Your standing pick resumes when the timeline has nothing to say." : "")
                 };
 
             if (Has(i.Pin))

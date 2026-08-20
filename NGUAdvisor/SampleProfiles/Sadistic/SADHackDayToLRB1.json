@@ -5,39 +5,39 @@
     "Energy": [
       {
         "Time": 0,
-	    "Priorities": [ "CAPALLBT", "CAPTM:80" ]
+	    "Priorities": [ "CAPALLBT", "CAPTM" ]
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "CAPAUG-8:20", "CAPAUG-9:20", "CAPTM:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPTM", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "CAPTM:10", "CAPALLNGU", "AUG-8", "AUG-9" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "CAPALLNGU", "AUG-8", "AUG-9" ]
       },
       {
         "Time": { "h": 25 },
-        "Priorities": [ "CAPWAN:10", "CAPAUG-8:20", "CAPAUG-9:20", "CAPTM:10", "CAPALLNGU" ],
-        "PrioritiesBak": [ "CAPWAN:10", "CAPAUG-8:20", "CAPAUG-9:20", "CAPTM:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPTM", "CAPALLNGU" ],
+        "PrioritiesBak": [ "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPTM", "CAPALLNGU" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPTM:80", "BR" ]
+        "Priorities": [ "CAPTM", "BR" ]
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "CAPTM:10", "BR:50", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "CAPTM:10", "CAPALLNGU", "BR" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "CAPALLNGU", "BR" ]
       },
       {
         "Time": { "h": 25 },
-        "Priorities": [ "CAPWAN:10", "CAPTM:10", "BR:50", "CAPALLNGU" ],
-        "PrioritiesBak": [ "CAPWAN:10", "CAPTM:10", "BR:50", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "BR", "CAPALLNGU" ],
+        "PrioritiesBak": [ "CAPWAN", "CAPTM", "BR", "CAPALLNGU" ]
       }
     ],
     "R3": [

@@ -3,7 +3,7 @@
     "_Preset": "Normal long-rebirth PUSH (auto-installed). One long run to build max stats, then kill the titan you're stuck on (T4/T6...). RebirthTime -1 = no auto-rebirth (you rebirth manually after the kill). Builds Basic/Advanced Training + Time Machine + best Augment for power; gear auto-optimizes for Adventure (max Power/Toughness) + a Respawn item. Requires Manage Gear + Manage Energy/Magic ON.",
     "_Injector": "Not a challenge block - this is a deliberate single long rebirth. Turn Auto Rebirth OFF (or leave it; -1 overrides). Adventure: Combat ON, idle, target your best push zone.",
     "Energy": [
-      { "Time": 0, "Priorities": [ "CAPALLBT", "CAPTM:50", "BESTAUG:50", "CAPALLAT", "WAN", "BESTAUG" ] }
+      { "Time": 0, "Priorities": [ "CAPALLBT", "CAPTM", "BESTAUG", "CAPALLAT", "WAN" ] }
     ],
     "Magic": [
       { "Time": 0, "Priorities": [ "CAPTM", "BR" ] },

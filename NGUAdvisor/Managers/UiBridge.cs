@@ -37,8 +37,12 @@ namespace NGUAdvisor.Managers
     /// </summary>
     internal sealed class UiBridge : IDisposable
     {
-        private const string PipeName = "NGUAdvisorUI";       // snapshots: injector -> UI (write-only)
-        private const string CmdPipeName = "NGUAdvisorUICmd"; // commands: UI -> injector (read-only)
+        // snapshots: injector -> UI (write-only) / commands: UI -> injector (read-only).
+        // Both carry the instance suffix from NGUADVISOR_INSTANCE, so a bench game's advisor cannot
+        // serve the live companion (or be served by it). Unset — every normal install — leaves these
+        // as the literal "NGUAdvisorUI" / "NGUAdvisorUICmd" they have always been. See AdvisorInstance.
+        private static readonly string PipeName = AdvisorInstance.SnapshotPipe;
+        private static readonly string CmdPipeName = AdvisorInstance.CommandPipe;
         private const int ProtocolVersion = 1;
         private const int SparkPoints = 24;
         private const int FeedMax = 20;
@@ -98,6 +102,8 @@ namespace NGUAdvisor.Managers
         private JSONObject _itemNamesCache;              // gear id->name map for the ids the snapshot references; rebuilt only when that id SET changes
         private string _itemNamesSig;                    // the id set _itemNamesCache was built from ("94,110,116,...")
         private bool _itemNamesComplete;                 // false while any id failed to resolve (item table not up yet) -> periodic retry
+        private JSONObject _invVerdictCache;             // keep/trash verdict node; rebuilt only when a new Compute() lands
+        private DateTime _invVerdictAt;                  // InventoryAdvisor.Last.At the cache was built from
         private JSONObject _campaignCache;               // CBlock campaign node; rebuilt ~every 5s (parses profile JSON)
         private List<CampaignTables.Supply> _campaignSupplyCache;  // parsed campaign profiles; re-read only when the files change
         private string _campaignFileSig;                 // "<path>|<ticks>|<len>;..." the supply cache was parsed from
@@ -203,6 +209,7 @@ namespace NGUAdvisor.Managers
             Binding.Bool("ManageInventory",     s => s.ManageInventory,     (s, v) => s.ManageInventory = v),
             Binding.Bool("ManageConsumables",   s => s.ManageConsumables,   (s, v) => s.ManageConsumables = v),
             Binding.Bool("ManageWishes",        s => s.ManageWishes,        (s, v) => s.ManageWishes = v),
+            Binding.Bool("WishSinkMode",        s => s.WishSinkMode,        (s, v) => s.WishSinkMode = v),
             Binding.Bool("ManageMayo",          s => s.ManageMayo,          (s, v) => s.ManageMayo = v),
             Binding.Bool("ManageCooking",       s => s.ManageCooking,       (s, v) => s.ManageCooking = v),
             Binding.Bool("ManageCookingLoadouts", s => s.ManageCookingLoadouts, (s, v) => s.ManageCookingLoadouts = v),
@@ -316,7 +323,7 @@ namespace NGUAdvisor.Managers
                          (s, v) => { if (v == -1 || InventoryManager.macguffinList.ContainsKey(v)) s.FavoredMacguffin = v; }, -1, 100000),
             // Wishes
             Binding.Int ("WishLimit",           s => s.WishLimit,           (s, v) => s.WishLimit = v, 1, 4),
-            Binding.Int ("WishMode",            s => s.WishMode,            (s, v) => s.WishMode = v, 0, 3),
+            Binding.Int ("WishMode",            s => s.WishMode,            (s, v) => s.WishMode = v, 0, 4),
             Binding.Dbl ("WishEnergy",          s => s.WishEnergy,          (s, v) => s.WishEnergy = v, 0, 100),
             Binding.Dbl ("WishMagic",           s => s.WishMagic,           (s, v) => s.WishMagic = v, 0, 100),
             Binding.Dbl ("WishR3",              s => s.WishR3,              (s, v) => s.WishR3 = v, 0, 100),
@@ -377,6 +384,10 @@ namespace NGUAdvisor.Managers
             // "Re-optimize gear now" — force an immediate optimize+equip of the active objective's best set
             // (main thread) and stash the human-readable outcome for the next snapshot's `notice` toast.
             d["refreshGear"] = () => { _notice = AdvisorApply.ForceGearReoptimize(); };
+            // "Recompute keep/trash" (Gear > Inventory) — the full objective sweep (30+ optimizations, one
+            // frame's hitch), same work the 10-minute ApplyBoostPriority pass does. Read-only: it changes
+            // no gear and trashes nothing; the verdict rides the next snapshot's `invVerdict` node.
+            d["computeInventory"] = () => { _notice = InventoryAdvisor.ComputeForUi(); };
             // "Locate" on the Walderp chip — jumps the GAME to the menu he is hiding in. Strictly
             // player-initiated: never fired on a timer, and it does NOT click him. He relocates every 180s,
             // so acting on our own would risk yanking the screen toward a target that has already moved.
@@ -1641,6 +1652,11 @@ namespace NGUAdvisor.Managers
                 g["objective"] = r.Name ?? "";
                 g["source"] = r.Source ?? "";
                 g["forceRespawn"] = r.ForceRespawn;
+                // MANUAL MODE has no objective NAME by construction — the profile row lists item ids.
+                // Without this the panel reads "nothing running" on a row that is very much running,
+                // which is the failure the whole gear readout exists to prevent.
+                g["manual"] = r.IsManual;
+                g["manualCount"] = r.IsManual ? r.ManualIds.Length : 0;
                 // An objective name can be any string: profiles are hand-editable files, and the pin is
                 // a Binding.Str. If it doesn't resolve, the equip path silently does nothing — so the
                 // readout must not keep asserting "Running X". FindObjective is a lookup over a static
@@ -1703,6 +1719,33 @@ namespace NGUAdvisor.Managers
                 var bp = settings.BoostPriority;
                 if (bp != null) foreach (var s in bp) arr.Add(s);
                 root["boostPriority"] = arr;
+            });
+
+            // --- keep/trash verdict (Gear > Inventory readout). Serialization only — Compute() runs on
+            //     the 10-minute boost-priority cadence or the computeInventory action, never here. The
+            //     arrays are rebuilt only when a new verdict lands (At changes); agoSec is re-stamped
+            //     every snapshot so the page can show staleness and decide when to auto-recompute. ---
+            Safe("invVerdict", () =>
+            {
+                var v = InventoryAdvisor.Last;
+                if (v == null) return;
+                if (_invVerdictCache == null || _invVerdictAt != v.At)
+                {
+                    var o = new JSONObject();
+                    var k = new JSONArray();
+                    foreach (var kv in v.Keep) { var e = new JSONObject(); e["id"] = kv.Key; e["n"] = Main.CollapseAscended(kv.Value); k.Add(e); }
+                    var t = new JSONArray();
+                    foreach (var kv in v.Trash) { var e = new JSONObject(); e["id"] = kv.Key; e["n"] = Main.CollapseAscended(kv.Value); t.Add(e); }
+                    o["keep"] = k;
+                    o["trash"] = t;
+                    o["chapter"] = v.GuideChapter ?? "";
+                    // Change signature for the page: it rebuilds its lists only when this moves.
+                    o["at"] = v.At.Ticks.ToString(CultureInfo.InvariantCulture);
+                    _invVerdictCache = o;
+                    _invVerdictAt = v.At;
+                }
+                _invVerdictCache["agoSec"] = Num(Math.Round((DateTime.UtcNow - v.At).TotalSeconds));
+                root["invVerdict"] = _invVerdictCache;
             });
 
             // --- transform chains: per-chain {name, step} descriptors + the 3 per-chain flag arrays. The
@@ -2321,8 +2364,22 @@ namespace NGUAdvisor.Managers
                 Action<string, ConstraintLayer.Plan> emit = (key, plan) =>
                 {
                     if (plan == null || plan.Lanes == null) return;
+
+                    // The wish take is read BEFORE the signature, because it is PART of the signature.
+                    // AllocTelemetry.Signature describes the plan's own lanes, and the wish lane is not
+                    // one of them — so a tick where only the wish share moved would compare equal, the
+                    // node would be withheld as "nothing moved", and the page would keep repainting a
+                    // stale wish bar from its cache. That is the same class of bug as the per-pool merge
+                    // this board already carries a comment about.
+                    var wishShare = key == "energy" ? WishShareView.Energy
+                                  : key == "magic" ? WishShareView.Magic
+                                  : default(WishShareView.Share);
+
                     string sig;
                     try { sig = AllocTelemetry.Signature(plan, null); } catch { sig = null; }
+                    if (sig != null && wishShare.Recorded)
+                        sig = sig + "|w" + wishShare.Taken.ToString(CultureInfo.InvariantCulture)
+                                  + "/" + wishShare.Offered.ToString(CultureInfo.InvariantCulture);
                     string prev;
                     _poolSig.TryGetValue(key, out prev);
                     if (prev != null && prev == sig) return;   // nothing moved — do not pay for it
@@ -2347,15 +2404,66 @@ namespace NGUAdvisor.Managers
                         o["sink"] = i == plan.SinkIndex;
                         o["took"] = Num(d.Allocation);
                         o["offered"] = Num(d.Offered);
-                        if (!d.Seated && !string.IsNullOrEmpty(d.Reason)) o["why"] = d.Reason;
+                        // ⚠ NOT `!d.Seated &&` ANY MORE. A SEATED lane carries a Reason in exactly the
+                        // cases the operator most needs one — a rate lane the fill skipped for pool
+                        // shortness on E/M, and on R3 a hack holding a real share of the pool at a
+                        // progress-per-tick below the 2^-25 float stall floor, which converts nothing
+                        // ever (HackMath.StallFloor). Both rendered as a healthy coloured segment with
+                        // the sentence explaining them dropped on the floor at this line.
+                        if (!string.IsNullOrEmpty(d.Reason)) o["why"] = d.Reason;
                         lanes.Add(o);
                     }
+                    // THE WISH LANE ON ENERGY AND MAGIC. Appended here, in the snapshot, rather than in
+                    // the plan: WishManager runs AFTER the swap that produced this plan, so the layer
+                    // cannot know the take — it only knows what it left on the table. Appending at
+                    // publish time reads both at the freshest instant either exists, which is the same
+                    // thing BuildR3Plan does for R3.
+                    //
+                    // Consequence stated rather than hidden: the plan's residue and the wish take are
+                    // measured one step apart, so `unallocated` is reduced by the take and floored at
+                    // zero instead of being asserted to close exactly. A board that invented precision
+                    // here would be lying in a subtler way than the one this fixes.
+                    if (wishShare.Recorded)
+                    {
+                        var w = new JSONObject();
+                        w["name"] = "Wishes";
+                        w["seated"] = true;
+                        w["sink"] = false;
+                        w["took"] = Num(wishShare.Taken);
+                        w["offered"] = Num(wishShare.Offered);
+                        w["why"] = WishShareView.LaneWhy(wishShare.Taken > 0);
+                        lanes.Add(w);
+
+                        // WIDEN THE DENOMINATOR — do not scale the bar.
+                        //
+                        // plan.Pool was measured during the swap, while the wish slots still HELD last
+                        // tick's resources, so it excludes them. The take is a share of the pool AFTER
+                        // those holdings were released. Drawing one against the other reported ~300% on
+                        // an end-game save (lanes working from ~1e16, wish slots sitting on ~8e18) —
+                        // observed live, and the reason this block exists.
+                        //
+                        // The honest pool is everything the lanes committed plus everything that was
+                        // idle when the wish pass ran, so lanes + wishes + idle closes. Every existing
+                        // lane's share shrinks accordingly, and that is the POINT: on this save the NGU
+                        // lanes really are a sliver beside the wish holdings, and the old denominator
+                        // was hiding it.
+                        long laneAllocated = plan.Pool - plan.Unallocated;
+                        p["pool"] = Num(wishShare.BoardPool(laneAllocated, plan.Pool));
+                        p["unallocated"] = Num(wishShare.Untaken);
+                    }
+
                     p["lanes"] = lanes;
                     pools[key] = p;
                 };
 
                 emit("energy", ConstraintLayerBridge.LastEnergyPlan);
                 emit("magic", ConstraintLayerBridge.LastMagicPlan);
+                // THE THIRD POOL, through the identical contract. R3 is deliberately not routed
+                // through the constraint layer (ConstraintLayerBridge.cs:19-23), so there is no
+                // LastR3Plan to hand over — R3PoolView composes one from what the R3 allocator
+                // records plus the live holdings. `emit` cannot tell the difference, which is the
+                // point: if R3 is ever routed for real, only the argument to this line changes.
+                emit("r3", BuildR3Plan());
                 if (anyChanged || _poolsEverSent == false)
                 {
                     _poolsEverSent = true;
@@ -2425,7 +2533,13 @@ namespace NGUAdvisor.Managers
                     ManageBeards = st.ManageBeards, AdvisorBeards = st.AdvisorBeards,
                     ManageNGUDiff = st.ManageNGUDiff, ManageConsumables = st.ManageConsumables,
                     AutoRebirth = st.AutoRebirth,
-                    NguTrackOverrideActive = LevelPlanner.NguTrackOwned
+                    NguTrackOverrideActive = LevelPlanner.NguTrackOwned,
+                    // The challenge rotation's three facts. Each is guarded on its own: a throw in any
+                    // one of them must not cost the whole sections node, and FALSE is the safe answer
+                    // for all three — it reads as "cannot run", never as "running fine".
+                    RebirthArmed = SafeRebirthArmed(),
+                    ProfileHasChallenges = SafeChallengeCount() > 0,
+                    AdvisorChallenges = st.AdvisorChallenges
                 };
                 var arr = new JSONArray();
                 foreach (var v in ProfileSections.Evaluate(inputs))
@@ -2937,10 +3051,85 @@ namespace NGUAdvisor.Managers
                 settings != null && settings.AdvisorChallenges);
         }
 
+        // THE LIVE HALF OF THE R3 BOARD. R3PoolView owns every decision and every sentence; this
+        // method only reads, and it reads all three summands — what the hacks hold, what the wishes
+        // hold, what is idle — at ONE instant, so `hacks + wishes + idle` closes exactly against the
+        // pool the board draws. Mixing a recorded allocation with a live idle cannot close: the R3 bar
+        // regenerates into idle continuously ([DECOMP] Resource3Display.cs:62-74).
+        //
+        // progressPerTick is asked only of hacks that actually hold R3. It is a live multiplier-stack
+        // read on the Unity main thread at 1 Hz, and for a hack holding nothing the answer changes
+        // nothing on the board — on a save whose hacks are all hard-capped and empty (the state that
+        // silences the R3 lane entirely) that is fifteen calls avoided per second.
+        private ConstraintLayer.Plan BuildR3Plan()
+        {
+            try
+            {
+                var c = Main.Character;
+                if (c == null || c.res3 == null || !c.res3.res3On) return null;
+
+                var holdings = new List<R3PoolView.HackHolding>(15);
+                var hc = c.hacksController;
+                if (hc != null && c.hacks != null && c.hacks.hacks != null)
+                {
+                    int n = Math.Min(c.hacks.hacks.Count, 15);
+                    for (int id = 0; id < n; id++)
+                    {
+                        var h = c.hacks.hacks[id];
+                        if (h == null) continue;
+                        holdings.Add(new R3PoolView.HackHolding
+                        {
+                            Id = id,
+                            Held = h.res3,
+                            ProgressPerTick = h.res3 > 0 ? hc.progressPerTick(id) : 0,
+                        });
+                    }
+                }
+
+                long wishHeld = 0;
+                var wishes = c.wishes != null ? c.wishes.wishes : null;
+                if (wishes != null)
+                    for (int i = 0; i < wishes.Count; i++)
+                        if (wishes[i] != null && wishes[i].res3 > 0) wishHeld += wishes[i].res3;
+
+                var s = Main.Settings;
+                return R3PoolView.Compose(new R3PoolView.Inputs
+                {
+                    Swap = R3PoolView.LastSwap,
+                    Wish = R3PoolView.LastWishShare,
+                    Hacks = holdings,
+                    WishHeld = wishHeld,
+                    Idle = c.res3.idleRes3,
+                    R3Managed = s != null && s.ManageR3,
+                    WishesManaged = s != null && s.ManageWishes,
+                });
+            }
+            catch (Exception e)
+            {
+                Main.LogDebug("UiBridge R3 pool: " + e.Message);
+                return null;
+            }
+        }
+
         private void Safe(string name, Action read)
         {
             try { read(); }
             catch (Exception e) { try { Main.LogDebug("UiBridge read '" + name + "': " + e.Message); } catch { } }
+        }
+
+        // The two profile-side facts the Challenges verdict needs. Separately guarded rather than folded
+        // into the sections node's own Safe(): Main.Profile is null before the first load and
+        // RebirthIsArmed walks the parsed rebirth array, so a fault in either would otherwise drop the
+        // whole sections readout — which is the one part of the snapshot whose job is to say what is NOT
+        // running. False is the fail-safe on both: it renders as "cannot run", never as a false all-clear.
+        private static bool SafeRebirthArmed()
+        {
+            try { return Main.Profile != null && Main.Profile.RebirthIsArmed(); } catch { return false; }
+        }
+
+        private static int SafeChallengeCount()
+        {
+            try { return AllocationProfiles.RebirthStuff.BaseRebirth.ChallengeCount; } catch { return 0; }
         }
 
         private static double Pct(double cur, double cap)

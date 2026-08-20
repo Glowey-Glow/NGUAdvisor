@@ -9,11 +9,11 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "AUG-8", "AUG-9" ]
+        "Priorities": [ "CAPWAN", "AUG-8", "AUG-9" ]
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "CAPNGU-4:50", "NGU-0", "NGU-1", "NGU-3", "NGU-4", "NGU-5", "NGU-6", "NGU-7", "NGU-8" ],
+        "Priorities": [ "CAPWAN", "CAPNGU-4", "NGU-0", "NGU-1", "NGU-3", "NGU-4", "NGU-5", "NGU-6", "NGU-7", "NGU-8" ],
         "Note": "Figure out SAD NGU gear/allocation needs to BB NGU up to Adv a"
       }
     ],
@@ -25,11 +25,11 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "BR" ]
+        "Priorities": [ "CAPWAN", "BR" ]
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "BR:10", "CAPNGU-1:50", "ALLNGU" ],
+        "Priorities": [ "CAPWAN", "BR", "CAPNGU-1", "ALLNGU" ],
         "Note": "Figure out SAD NGU gear/allocation needs to BB NGU up to Exp"
       }
     ],
@@ -40,7 +40,7 @@
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ ]
+        "Priorities": []
       }
     ],
 	"Gear Note 1": "Make sure to set hardcap input in Gear Optimizer!",

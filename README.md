@@ -3,32 +3,37 @@
 NGU Advisor is an automation platform and advisor for the Steam version of NGU Idle. An injected DLL runs
 the automation in-game; a separate **companion window** is the configuration surface and live dashboard.
 
-**Version 2.4.0** — the Allocation Engine & Wishes release.
+**Version 2.4.1** — the advisor owns the percentages.
 
-### New in 2.4.0
+### New in 2.4.1
 
-The resource allocator has been rebuilt around a capacity-aware constraint layer, and the wish
-sliders now mean what they say. What changed for you day to day:
+The allocator now decides how much every system gets, sized from what that system can actually
+absorb this tick. What changed for you day to day:
 
-- **Wish sliders: "% of idle" is now a share of what is actually left.** They used to take their
-  percentage of your entire pool before anything else allocated — and leftover idle flowed to
-  wishes even at 0%. Wishes are now funded last, from what genuinely remains, and 0% allocates
-  nothing. **Low sliders will visibly slow wish progress — that is the fix working.** If wishes
-  do something you don't expect, please open an issue with your slider values and a log snippet.
-- **Allocation is capacity-aware.** Each system is offered what it can actually use this tick;
-  surplus is routed instead of vanishing, and the companion's pool bar explains any idle remainder.
-- **R3 after CBlock 3** runs the guide's first-milestone sweep across hacks 3–7 instead of
-  sitting on hack 0 forever.
-- **Titan spawns park on the highest *killable* version**, and surplus stats above a titan's kill
-  requirement are spent on loot instead of wasted. New live-fight behaviours — reports welcome.
+- **`:P` on a priority now means MANUAL MODE, not "cap it at P%".** You no longer need percentages
+  at all — the advisor sizes every lane from live capacities, and that is the recommended setup.
+  Writing `:P` tells it to **stop optimising that system**; the lane takes P% off the top and leaves
+  the optimiser. **The shipped presets and sample profiles have been migrated for you**, so they
+  behave exactly as before. If you hand-wrote a profile with `:P` on an Energy or Magic priority,
+  read the [Resource priorities](#resource-priorities-energy--magic--r3) section — there are two
+  things it deliberately cannot do.
+- **R3 picks the hack actually worth the most.** After the guide's first-milestone sweep, R3 used to
+  park on the Adventure hack forever. It is now priced every minute from live game values. On a
+  mature board the Adventure hack ranked eleventh of fifteen.
+- **Idle energy and magic before wishes unlock now gets used.** A share of the pool was reserved for
+  Wandoos each round beyond what Wandoos can absorb, and before a T8 titan kill nothing else could
+  claim it — measured at 26% of energy and 30% of magic on a live save.
+- **A profile gear row that lists item IDs now holds** instead of being overwritten by your standing
+  pick within the same second.
+- **Beards fill limited slots in a set order**, and wishes can be chosen by **value** rather than
+  only by speed or price.
 
-Settings and profiles carry over. Full detail in [CHANGELOG.md](CHANGELOG.md), including the
-2.3.0 Allocation Safety release.
+Settings and profiles carry over. Full detail in [CHANGELOG.md](CHANGELOG.md).
 
 # Install & update
 
 1. Download the latest release from the [releases page](https://github.com/Glowey-Glow/NGUAdvisor/releases)
-   — grab the zip named for the version (`NGUAdvisor_2.4.0.zip`), **not** the source archive.
+   — grab the zip named for the version (`NGUAdvisor_2.4.1.zip`), **not** the source archive.
 2. Extract it anywhere.
 3. With **NGU Idle open**, run **`Advisor Launcher.exe`** (or the `Run NGU Advisor.bat` fallback).
 
@@ -461,14 +466,49 @@ A profile looks like this (every lane is optional):
 
 ## Resource priorities (Energy / Magic / R3)
 
-Each priority is a **code**, optionally with `-X` (a 0-indexed target) and `:P` (a percent cap). Two flavours:
+Each priority is a **code**, optionally with `-X` (a 0-indexed target) and `:P`. Two flavours:
 
 - **CAP…** — fills that lane to its 10-second cap; a single CAP priority can drink the whole idle pool.
 - **no prefix** — takes an even share of the remaining idle resource. Excess always spills to later
   priorities.
 
-Add `:P` to limit a priority to **P % of your cap** (or of idle resource for non-cap priorities), e.g.
-`CAPRIT-0:30`.
+### `:P` puts that system into MANUAL MODE
+
+**You do not need percentages.** The advisor sizes every lane itself, from live capacities, every
+tick — that is the default and the recommended setup.
+
+Adding `:P` to a priority tells the advisor to **stop optimising that system** because you want to
+drive it yourself. The lane claims **P % of the resource off the top**, before the advisor allocates
+anything, and is excluded from the optimiser. To hand the system back, remove the `:P`.
+
+The load banner warns you for every percentage it finds, and those lanes are tagged `[Manual]` in the
+log. A manual lane still has to pass the allocator's safety gates — the 100-Level-Challenge budget
+and the per-system unlock/feasibility checks — so a `:P` chooses the **amount**, not the rules; if a
+gate refuses it, the log says which one and why.
+
+**Two things `:P` cannot do.**
+
+- **It does nothing while Auto Profile is on.** Auto Profile generates the Energy/Magic/R3 lists
+  itself, so your profile's timeline — percentages included — is not consulted at all. Manual mode
+  applies to *your* list, and with Auto Profile on there isn't one. Turn Auto Profile off if you want
+  to drive a system by hand.
+- **It cannot claim Wandoos.** Wandoos is the *surplus sink*: the lane every other lane's leftovers
+  fall into. Taking it out of the optimiser would leave the remainder with nowhere to go, so a `:P`
+  on Wandoos is ignored and the advisor keeps sizing it. Every other `:P` in the list still applies,
+  and the log says so once.
+
+> **Changed in this release.** `:P` used to mean "cap this lane at P %". The shipped presets and
+> sample profiles have been migrated: percentages were removed from their Energy and Magic timelines
+> and kept on R3, where they were always honoured.
+>
+> Under the constraint allocator (the default) the removed Energy/Magic percentages did nothing, so
+> those presets behave exactly as before. **If you have turned the constraint allocator off**, the
+> original share loop *does* read them, and removing a percentage from a `CAP…` priority makes that
+> lane unbounded rather than inert — so re-check any preset you rely on in that mode.
+>
+> If you hand-wrote a profile with `:P` on an Energy or Magic priority, and you run with Auto Profile
+> off, that system is now in manual mode — delete the `:P` if you would rather the advisor kept
+> optimising it.
 
 | Code (add `CAP` prefix to cap) | Lane | Target |
 |---|---|---|

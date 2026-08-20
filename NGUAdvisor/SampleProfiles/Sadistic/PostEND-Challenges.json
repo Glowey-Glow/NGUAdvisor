@@ -5,31 +5,31 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPTM:10", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
-        "PrioritiesLSC": [ "CAPALLBT", "CAPTM:10", "CAPAUG-12", "CAPAUG-13", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
-        "PrioritiesDefault": [ "CAPALLBT", "CAPTM:10", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ]
+        "Priorities": [ "CAPALLBT", "CAPTM", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
+        "PrioritiesLSC": [ "CAPALLBT", "CAPTM", "CAPAUG-12", "CAPAUG-13", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
+        "PrioritiesDefault": [ "CAPALLBT", "CAPTM", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ]
       },
       {
         "Time": { "m": 5 },
-        "Priorities": [ "CAPALLBT", "CAPWAN:20", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
-        "PrioritiesLSC": [ "CAPALLBT", "CAPWAN:10", "CAPAUG-12", "CAPAUG-13", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
-        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN:20", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ]		
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
+        "PrioritiesLSC": [ "CAPALLBT", "CAPWAN", "CAPAUG-12", "CAPAUG-13", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ],
+        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN", "CAPAUG-10", "CAPAUG-11", "ALLNGU" ]		
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPTM:10", "BR", "ALLNGU" ]
+        "Priorities": [ "CAPTM", "BR", "ALLNGU" ]
       },
       {
         "Time": { "m": 5 },
-        "Priorities": [ "CAPWAN:20", "BR", "ALLNGU" ]
+        "Priorities": [ "CAPWAN", "BR", "ALLNGU" ]
       }
     ],
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ ]
+        "Priorities": []
       }
     ],
 	"Gear Note 1": "Make sure to set hardcap input in Gear Optimizer!",

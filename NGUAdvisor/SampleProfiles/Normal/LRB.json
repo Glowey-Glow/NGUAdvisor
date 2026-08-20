@@ -13,8 +13,8 @@
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "BR:10", "NGU-0", "NGU-1" ],
-        "PrioritiesDefault": [ "BR:25", "NGU-0" ],
+        "Priorities": [ "BR", "NGU-0", "NGU-1" ],
+        "PrioritiesDefault": [ "BR", "NGU-0" ],
         "Comment": "Since this is a long running mode, get some levels in Blood Magic and turn up the spell thresholds"
       }
     ],

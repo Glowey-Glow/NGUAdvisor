@@ -49,4 +49,4 @@ using System.Runtime.InteropServices;
 // So AssemblyVersion agrees on major.minor; AssemblyFileVersion, the informational one a player reads,
 // agrees exactly.
 [assembly: AssemblyVersion("2.4.*")]
-[assembly: AssemblyFileVersion("2.4.0.0")]
+[assembly: AssemblyFileVersion("2.4.1.0")]

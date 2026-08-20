@@ -16,7 +16,9 @@ namespace NGUAdvisorCompanion;
 public sealed class MainForm : Form
 {
     private readonly WebView2 _web = new();
-    private readonly PipeClient _pipe = new("NGUAdvisorUI");
+    // "NGUAdvisorUI" / "NGUAdvisorUICmd" for the live instance; both suffixed for a bench. Passed as a
+    // PAIR rather than letting PipeClient derive the second — see AdvisorInstance for the aliasing.
+    private readonly PipeClient _pipe = new(AdvisorInstance.SnapshotPipe, AdvisorInstance.CommandPipe);
     private volatile bool _webReady;
     private volatile string _latestLine;     // last snapshot, flushed once the page is ready
     private volatile string _latestStatus;   // A4: last connection-status payload, flushed once the page is ready

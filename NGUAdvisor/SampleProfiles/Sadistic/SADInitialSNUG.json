@@ -4,7 +4,7 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPWAN:10", "CAPAUG-4:10", "CAPAUG-5:10", "CAPTM" ]
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPAUG-4", "CAPAUG-5", "CAPTM" ]
       },
       {
         "Time": { "m": 15 },
@@ -12,13 +12,13 @@
       },
       {
         "Time": { "h": 6, "m": 15 },
-        "Priorities": [ "CAPWAN:10", "CAPAUG-4:10", "CAPAUG-5:10", "CAPTM:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPAUG-4", "CAPAUG-5", "CAPTM", "CAPALLNGU" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPWAN:10", "BR:10", "CAPTM" ]
+        "Priorities": [ "CAPWAN", "BR", "CAPTM" ]
       },
       {
         "Time": { "m": 15 },
@@ -26,7 +26,7 @@
       },
       {
         "Time": { "h": 6, "m": 15 },
-        "Priorities": [ "CAPWAN:10", "CAPTM:10", "BR:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "BR", "CAPALLNGU" ]
       }
     ],
     "R3": [

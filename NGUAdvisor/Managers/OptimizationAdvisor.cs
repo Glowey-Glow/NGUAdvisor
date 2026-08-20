@@ -262,7 +262,19 @@ namespace NGUAdvisor.Managers
             {
                 var active = ToIntList(c.beards.activeBeards);
                 int slots = Math.Max(1, c.allBeards.capBeards());
-                var recommended = RecommendedBeards(mode).Where(b => b != 6 || GoldenUnlocked()).Take(slots).ToList();
+                // ⚠ THE PANEL MUST ADVISE WHAT THE ADVISOR ACTUALLY EQUIPS. This read
+                // RecommendedBeards(mode) - the push/farm heads - while CurrentBeardSet was changed
+                // to follow BeardPriority's operator ruling, so on a titan push the panel told the
+                // operator to "Add Fu Manchu/LadyBeard" for a set the advisor would never equip and
+                // then reported the gap forever. Same source, same order, same gates.
+                long revPerm = 0, ladyPerm = 0;
+                try
+                {
+                    revPerm = c.beards.beards[BeardPriority.Reverse].permLevel;
+                    ladyPerm = c.beards.beards[BeardPriority.Lady].permLevel;
+                }
+                catch { }
+                var recommended = BeardPriority.Order(revPerm, ladyPerm, GoldenUnlocked()).Take(slots).ToList();
                 if (mode == "challenge")
                     list.Add(new Rec { System = "Beards", AutoKey = "beards", Text = "Set by the challenge block", Optimal = true });
                 else
@@ -1107,11 +1119,32 @@ namespace NGUAdvisor.Managers
                 // one case where wearing them is not allowed at all.
                 if (mode == "challenge" && !Main.Settings.AutoProfile) return null;
                 int slots = Math.Max(1, c.allBeards.capBeards());
-                // Beards cost nothing — fill EVERY slot (user rule): mode heads lead, rest follow.
-                var order = new List<int>(RecommendedBeards(mode));
+
+                // Beards cost nothing — fill EVERY slot (standing user rule). WHICH beards fill them
+                // is BeardPriority's ruling, and it supersedes the mode heads that used to lead here.
+                //
+                // ⚠ THE MODE SPLIT IS GONE FROM THIS PATH, deliberately. RecommendedBeards still
+                // returns push/farm heads and the recommendations panel (:265) still renders them,
+                // but the equipped set no longer varies by mode: the operator's order is a statement
+                // about which bonuses matter over a whole run, and a push/farm flip inside that run
+                // was reshuffling slots for a system whose levels are permanent. Its farm head
+                // {5,1,3} was already this ruling's first three, so the change is smaller than it
+                // reads — what it removes is the push head {0,5,4} promoting Fu Manchu and LadyBeard
+                // over Neckbeard and Beard Cage for the length of a titan push.
+                long reversePerm = 0, ladyPerm = 0;
+                try
+                {
+                    reversePerm = c.beards.beards[BeardPriority.Reverse].permLevel;
+                    ladyPerm = c.beards.beards[BeardPriority.Lady].permLevel;
+                }
+                catch { }   // unreadable levels read as 0, i.e. still under the softcap: push them
+
+                var order = new List<int>(BeardPriority.Order(reversePerm, ladyPerm, GoldenUnlocked()));
+                // Backstop, not policy: anything BeardPriority does not name still gets a slot rather
+                // than being silently dropped, so a beard added to the game later cannot go missing.
                 for (int i = 0; i <= Consts.MAX_BEARD_ID; i++)
-                    if (!order.Contains(i)) order.Add(i);
-                return order.Where(b => b != Consts.MAX_BEARD_ID || GoldenUnlocked()).Take(slots).ToArray();
+                    if (!order.Contains(i) && (i != Consts.MAX_BEARD_ID || GoldenUnlocked())) order.Add(i);
+                return order.Take(slots).ToArray();
             }
             catch { return null; }
         }

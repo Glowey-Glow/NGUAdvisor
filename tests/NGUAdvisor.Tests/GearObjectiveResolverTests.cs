@@ -418,5 +418,103 @@ namespace NGUAdvisor.Tests
                     $"=> expected '{expected ?? "null"}' but got '{r.Name ?? "null"}'");
             }
         }
-    }
+    
+        // ── MANUAL GEAR ROW ranks ABOVE the standing pin (audit/59 §A P0, ruling 2026-08-18) ──────
+        //
+        // THE DEFECT: Resolve had no branch for a profile row that lists item IDs instead of naming
+        // an objective. ProfileObjective is null for such a row, so control fell through to the pin,
+        // the pin re-equipped within the same second, and BaseBreakpoints latched `swapped` so the
+        // authored row never re-asserted. The operator picked a loadout and wore something else,
+        // permanently and silently.
+
+        [Fact]
+        public void A_manual_id_row_beats_the_standing_pin()
+        {
+            var r = GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+            {
+                ProfileManualIds = new[] { 12, 34, 56 },
+                Pin = "SOME PIN",
+            });
+
+            Assert.Equal(GearObjectiveResolver.Src.ProfileManual, r.Source);
+            Assert.True(r.IsManual);
+            Assert.Equal(new[] { 12, 34, 56 }, r.ManualIds);
+            Assert.Null(r.Name);                       // an ID row names no objective to solve
+        }
+
+        [Fact]
+        public void The_manual_row_says_it_is_manual_and_that_the_pin_comes_back()
+        {
+            var r = GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+            {
+                ProfileManualIds = new[] { 7 },
+                Pin = "SOME PIN",
+            });
+
+            Assert.Contains("MANUAL MODE", r.Sentence);
+            Assert.Contains("the advisor is not choosing your loadout", r.Sentence);
+            Assert.Contains("standing pick resumes", r.Sentence);
+            Assert.Contains("1 item", r.Sentence);     // singular, not "1 items"
+        }
+
+        [Fact]
+        public void With_no_pin_the_manual_row_does_not_promise_one_will_resume()
+        {
+            var r = GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+            {
+                ProfileManualIds = new[] { 7, 8 },
+            });
+            Assert.Contains("2 items", r.Sentence);
+            Assert.DoesNotContain("standing pick resumes", r.Sentence);
+        }
+
+        [Fact]
+        public void An_empty_manual_row_is_not_a_manual_declaration()
+        {
+            // A row with no objective AND no ids is an empty row, not an instruction. It must fall
+            // through to the pin exactly as before, or every gearless row would seize gear.
+            foreach (var ids in new[] { null, new int[0] })
+            {
+                var r = GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+                {
+                    ProfileManualIds = ids,
+                    Pin = "SOME PIN",
+                });
+                Assert.Equal(GearObjectiveResolver.Src.Pin, r.Source);
+                Assert.False(r.IsManual);
+            }
+        }
+
+        [Fact]
+        public void A_named_profile_objective_still_outranks_a_manual_row()
+        {
+            // GearBreakpoints sets one and nulls the other, so this cannot happen today — but if it
+            // ever can, the named objective is the more specific statement and must keep winning.
+            var r = GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+            {
+                ProfileObjective = "NAMED",
+                ProfileManualIds = new[] { 1, 2 },
+                Pin = "SOME PIN",
+            });
+            Assert.Equal(GearObjectiveResolver.Src.Profile, r.Source);
+            Assert.Equal("NAMED", r.Name);
+        }
+
+        [Fact]
+        public void Everything_that_outranked_the_pin_before_still_outranks_the_manual_row()
+        {
+            // The new branch sits between the profile objective and the pin. It must not have
+            // displaced NOEC, the challenge overlay, the hunt or the drop farm, all of which are
+            // statements about a situation the operator's timeline cannot know about.
+            var manual = new[] { 1, 2, 3 };
+
+            Assert.NotEqual(GearObjectiveResolver.Src.ProfileManual,
+                GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+                { Noec = true, ProfileManualIds = manual }).Source);
+
+            Assert.NotEqual(GearObjectiveResolver.Src.ProfileManual,
+                GearObjectiveResolver.Resolve(new GearObjectiveResolver.Inputs
+                { HuntActive = true, ProfileManualIds = manual }).Source);
+        }
+}
 }

@@ -1441,6 +1441,11 @@ namespace NGUAdvisor.Managers
                 var resolved = GearObjectiveApply.Current();
                 if (resolved.Source == GearObjectiveResolver.Src.Noec)
                     return "No-Equipment Challenge is active — there's nothing to equip.";
+                // A manual ID row is a gear breakpoint — it just names items instead of an objective.
+                // Telling the operator to "add a gear breakpoint" when they authored one is the same
+                // class of wrong answer as the old ":percent is ignored" line.
+                if (resolved.IsManual) return resolved.Sentence;
+
                 string objName = resolved.Name;
                 if (string.IsNullOrEmpty(objName))
                     return "No gear objective is active — pick one under Loadouts › Main, or add a gear breakpoint to your profile.";
@@ -1459,7 +1464,9 @@ namespace NGUAdvisor.Managers
                         "Four advisor gear paths do this; all of them land here",
                         "The contents that were in the slot before are not kept anywhere",
                         "Re-save the slot yourself if you were using it");
-                    _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
+                    // NOT _lastGearCheck — see the main path below for why the button must not move the
+                    // periodic pass's clock.
+                    _gearAsserted = true; _lastGearObjective = objName;
                     Main.Log($"Advisor: gear re-optimized on request — loot hunter ({what})");
                     return $"Equipped the loot-hunter set ({what}).";
                 }
@@ -1477,16 +1484,45 @@ namespace NGUAdvisor.Managers
                 var ids = best.AllIds().Where(x => x > 0).Distinct().ToArray();
                 if (ids.Length == 0) return "The optimizer returned an empty set.";
 
-                _gearAsserted = true; _lastGearObjective = objName; _lastGearCheck = DateTime.UtcNow;
-                // Don't downgrade: if the worn set already scores at/above the optimizer's best, leave it.
+                // ── THREE RULES THIS BUTTON USED TO BREAK, ALL OF WHICH ApplyGearRefresh BELOW ALREADY
+                //    STATES AS LAW. They are repeated here because the two paths answer the SAME user
+                //    request ("give me gear for this objective") and used to answer it differently.
                 //
-                // ⚠ THE SCORE COMPARISON IS BLIND TO A LOCK, and a lock usually COSTS score — that is
-                // what pinning an item the optimizer would not have chosen means. Without the second
-                // clause, pressing the button while wearing a better unlocked set answers "already
-                // optimal" and never equips the locked one, which is a flat lie about a set the user
-                // explicitly asked for. So the guard only applies once the locks are actually on.
-                if (cur > 0 && best.Score <= cur && LocksAreWorn(best.Lock))
+                // 1. THE GUARD ITSELF IS SHARED, NOT RESTATED. Both paths decline on
+                //    "worn out-scores best, and the locks are on"; only the periodic pass adds its 5%
+                //    anti-churn bar on top (objectiveChanged bypasses THAT bar, and nothing else —
+                //    AdvisorApply.cs:1601-1606 still declines to equip on a changed objective when the
+                //    worn set wins). The guard now lives in GearRefreshPolicy so the next edit to
+                //    either path cannot quietly diverge.
+                // 2. THE TRACKERS COMMIT ONLY WHEN THE PASS RESOLVES. Committing before the guard
+                //    recorded "this objective is handled" for a pass that equipped nothing — the exact
+                //    thing ApplyGearRefresh's comment forbids ("a no-op pass must NOT consume the
+                //    bypass"). A declining click therefore consumed the objective change, and the
+                //    periodic pass that would have honoured it saw objectiveChanged == false.
+                // 3. THE BUTTON DOES NOT OWN THE PERIODIC CLOCK. _lastGearCheck gates ApplyGearRefresh
+                //    to one pass per 120s; setting it here meant every click PUSHED THE AUTOMATIC PASS
+                //    OUT ANOTHER TWO MINUTES. Clicking "Re-optimize gear now" repeatedly was the
+                //    slowest way to get re-optimized gear. The button equips synchronously and needs no
+                //    clock of its own.
+                string lockKey = GearRefreshPolicy.LockKey(resolved.Locks);
+                bool objectiveChanged = GearRefreshPolicy.ObjectiveChanged(objName, _lastGearObjective, lockKey, _lastGearLocks);
+
+                // Don't downgrade: if the worn set already scores at/above the optimizer's best, leave it.
+                // On a CHANGED objective this same test means "you are already wearing the best set for
+                // it", because the optimiser searched the whole inventory — so declining is right, and
+                // re-equipping would be a pure cost: ChangeGear zeroes energy/magic/R3 allocation.
+                if (GearRefreshPolicy.Decide(cur, best.Score, LocksAreWorn(best.Lock))
+                    == GearRefreshPolicy.Verdict.AlreadyOptimal)
+                {
+                    // A VERIFIED already-optimal IS a resolution (ApplyGearRefresh commits on the same
+                    // footing), so it commits — but AFTER the decision, never before it.
+                    _gearAsserted = true; _lastGearObjective = objName; _lastGearLocks = lockKey;
+                    // Rule 3's other half: a declining click used to be invisible. Five of them in a row
+                    // left NOTHING in the log, so "I pressed it and nothing happened" could not be told
+                    // apart from "the command never arrived".
+                    Main.Log($"Advisor: gear already optimal for '{obj.Name}' — nothing re-equipped.");
                     return $"Already optimal for '{obj.Name}' — your equipped set is the best available.";
+                }
 
                 double gain = cur > 0 ? (best.Score / cur - 1) * 100 : 0;
                 LoadoutManager.ChangeGear(ids);
@@ -1499,7 +1535,10 @@ namespace NGUAdvisor.Managers
                     "Four advisor gear paths do this; all of them land here",
                     "The contents that were in the slot before are not kept anywhere",
                     "Re-save the slot yourself if you were using it");
-                Main.Log($"Advisor: gear re-optimized on request for '{obj.Name}' (+{gain:0.#}%)");
+                _gearAsserted = true; _lastGearObjective = objName; _lastGearLocks = lockKey;
+                Main.Log(objectiveChanged
+                    ? $"Advisor: gear switched to '{obj.Name}' on request (objective change, {gain:+0.#;-0.#;+0.0}%)"
+                    : $"Advisor: gear re-optimized on request for '{obj.Name}' (+{gain:0.#}%)");
                 return gain > 0.05
                     ? $"Equipped the best set for '{obj.Name}' — +{gain:0.#}% over what was on."
                     : $"Equipped the best set for '{obj.Name}'.";
@@ -1583,8 +1622,10 @@ namespace NGUAdvisor.Managers
             // the locks never go on. Nothing anywhere would have said so. Same rule the objective
             // switch already has, for the same reason: "gear that is within 5% but not what was asked
             // for" is still the wrong gear.
-            string lockKey = resolved.Locks == null ? "" : string.Join(",", resolved.Locks.Select(x => x.ToString()));
-            bool objectiveChanged = objName != _lastGearObjective || lockKey != _lastGearLocks;
+            // Same two helpers the button uses (GearRefreshPolicy) — these were two separately written
+            // copies of the same expression, which is how the two paths drifted apart in the first place.
+            string lockKey = GearRefreshPolicy.LockKey(resolved.Locks);
+            bool objectiveChanged = GearRefreshPolicy.ObjectiveChanged(objName, _lastGearObjective, lockKey, _lastGearLocks);
             double cur = GearOptimizer.CurrentScore(obj);
             // Same resolution supplied the name, the respawn flag AND the Gear Lock, so this score
             // always describes the set that would actually be equipped. Unchanged from before for

@@ -30,6 +30,121 @@ namespace NGUAdvisor.Managers
         // ever finish", which is absolute, because progress must cross that binade to reach 1.
         public const double StallFloor = 1.0 / 33554432.0;   // 2^-25 == 2.98023223876953e-8
 
+        // ── MARGINAL VALUE DENSITY: which hack should the R3 pool be pointed at RIGHT NOW ────────
+        //
+        // hackBonus(id) = (1 + L*b) * m^floor(L/T)   (HacksController.cs:415-428), b/m/T being
+        // baseEffectPerLevel / milestoneEffect / milestoneThreshold.
+        //
+        // THE MILESTONE FACTOR CANCELS, which is the whole reason this is one cheap line. The
+        // RELATIVE gain from one more level is
+        //
+        //     d(bonus)/bonus = [ b * m^k ] / [ (1 + L*b) * m^k ] = b / (1 + L*b)
+        //
+        // — independent of how many milestones the hack has banked. So a hack's value rate does not
+        // need the milestone term at all, except as the discrete step it adds when a level crossing
+        // actually lands (see MilestoneStep).
+        //
+        // COST. progressPerTick = res3 * res3Power * hackSpeed / (baseDivider * levelDivider), and
+        // Saturation(cap, ppt) = cap * baseDivider * levelDivider / (cap * res3Power * hackSpeed),
+        // so SATURATION IS THE COST TERM ITSELF, already carrying baseDivider, the 1.0078^L ladder
+        // and the (L+1) factor, and already scaled by the player's own res3 power and hack speed.
+        // Ticks to the next level with the whole pool in one lane = saturation / pool, which is why
+        // this needs no constant table: the game computes the price for us.
+        //
+        // Verified against the live board 2026-08-18: Adventure at L153 reported sat=19.2e9 with a
+        // 100K pool, predicting 192,000 ticks/level against the game's own reported 191,511.
+        //
+        // ⚠ WHAT THIS DOES NOT KNOW. The result is a percentage of THAT HACK'S OWN bonus, and the
+        // fifteen bonuses multiply different things — hack 11 lands on nextAttackMulti
+        // (Rebirth.cs:782-783), hack 1 on the adventure stat stack (Character.cs:1513), hack 7 on
+        // blood magic (BloodMagicController.cs:43). Ranking by this treats one percent as one
+        // percent everywhere. That is the right default when the alternative is a hand-guessed
+        // weight table, and the ordering it produces is dominated by cost, which IS commensurable:
+        // on the live board the top lane beat the incumbent by 73x on pure rate (49.8x once the
+        // amortised milestone step is folded in), far outside any weighting argument. Do not read a
+        // 5% gap between two lanes as meaningful.
+        // THE SHARED LAW. Both hacks and wishes grow a bonus LINEARLY in level off a per-level
+        // coefficient, so the relative worth of one more level is the same expression for both:
+        //
+        //     hackBonus(id) = (1 + L*b) * m^floor(L/T)   -> d/bonus = b / (1 + L*b)   (m^k cancels)
+        //     wishEffect(id) = 1 + L*e                   -> d/bonus = e / (1 + L*e)
+        //
+        // ([DECOMP] HacksController.cs:415-428, WishesController.cs:1108-1120. Wishes have no
+        // milestone term at all, so theirs is the same formula with the cancelling factor absent.)
+        //
+        // Divide by a COST to rank hacks (saturation is the cost term); multiply by a RATE to rank
+        // wishes (progressPerTick is levels/tick). Same law, two denominators.
+        public static double RelativeGainPerLevel(double effectPerLevel, long level)
+        {
+            if (effectPerLevel <= 0 || level < 0) return 0.0;
+            double denom = 1.0 + level * effectPerLevel;
+            if (denom <= 0 || double.IsNaN(denom) || double.IsInfinity(denom)) return 0.0;
+            double g = effectPerLevel / denom;
+            return double.IsNaN(g) || double.IsInfinity(g) || g < 0 ? 0.0 : g;
+        }
+
+        // THE REDUCER FORM. Wish 46 (respawn time) is the one WISH whose multiplier subtracts:
+        // respawn1() = 1 - L*e ([DECOMP] WishesController.cs:1373). Feeding it to
+        // RelativeGainPerLevel uses the wrong denominator - that formula assumes 1 + L*e.
+        //
+        // ⚠ SCOPE, STATED NARROWLY ON PURPOSE. This is not "the only subtracting bonus in the
+        // game". Wish 20 subtracts too (Rebirth.cs:299) but is integer SECONDS, not a multiplier,
+        // so this expression does not describe it; and hacks 76/77/78 (milestoneThreshold reducers,
+        // HacksController.cs:509-524) and BeastQuest 80/81 subtract in their own units. None of
+        // those are ranked by WishValueRate. Only wish 46 is both a wish AND a 1 - L*e multiplier.
+        //
+        // ⚠ THE 0.9 FLOOR IS DELIBERATELY NOT MODELLED. The game clamps respawn1 at 0.9, but
+        // audit/16 §F2 ruled that clamp unreachable: effectPerLevel[46] ~ 0.01 against
+        // maxLevel[46] = 10, and GetValidWishes filters level < maxLevel, so L <= 9 and the
+        // multiplier never falls below ~0.91. A guard here would be dead code pretending to be a
+        // safeguard - the same call the audit made about minimumWishTime().
+        public static double ReducerGainPerLevel(double effectPerLevel, long level)
+        {
+            if (effectPerLevel <= 0 || level < 0) return 0.0;
+            double m = 1.0 - level * effectPerLevel;
+            if (m <= 0) return 0.0;                        // degenerate input, not the game's clamp
+            double g = effectPerLevel / m;
+            return double.IsNaN(g) || double.IsInfinity(g) || g < 0 ? 0.0 : g;
+        }
+
+        public static double ReducerValueRate(double effectPerLevel, long level, double progressPerTick)
+        {
+            if (progressPerTick <= 0 || double.IsNaN(progressPerTick) || double.IsInfinity(progressPerTick))
+                return 0.0;
+            double r = ReducerGainPerLevel(effectPerLevel, level) * progressPerTick;
+            return double.IsNaN(r) || double.IsInfinity(r) || r < 0 ? 0.0 : r;
+        }
+
+        // Wish form: value per TICK. progressPerTick is already levels-per-tick, so this multiplies
+        // where MarginalDensity divides.
+        public static double WishValueRate(double effectPerLevel, long level, double progressPerTick)
+        {
+            if (progressPerTick <= 0 || double.IsNaN(progressPerTick) || double.IsInfinity(progressPerTick))
+                return 0.0;
+            double r = RelativeGainPerLevel(effectPerLevel, level) * progressPerTick;
+            return double.IsNaN(r) || double.IsInfinity(r) || r < 0 ? 0.0 : r;
+        }
+
+        public static double MarginalDensity(double baseEffectPerLevel, long level, long saturation)
+        {
+            if (saturation <= 0) return 0.0;
+            double d = RelativeGainPerLevel(baseEffectPerLevel, level) / saturation;
+            return double.IsNaN(d) || double.IsInfinity(d) || d < 0 ? 0.0 : d;
+        }
+
+        // The one-off fractional bump a milestone crossing adds, amortised over the levels still
+        // needed to reach it — the term MarginalDensity legitimately drops. Kept separate because it
+        // is a STEP, not a rate: folding it into the density above would smear a discrete event
+        // across levels that do not receive it. Callers that want the milestone to influence the
+        // ranking add this; callers that want pure rate do not.
+        public static double MilestoneStep(double milestoneEffect, long levelsToNextMilestone, long saturation)
+        {
+            if (saturation <= 0 || levelsToNextMilestone <= 0 || milestoneEffect <= 1.0) return 0.0;
+            double step = (milestoneEffect - 1.0) / levelsToNextMilestone;
+            double d = step / saturation;
+            return double.IsNaN(d) || double.IsInfinity(d) || d < 0 ? 0.0 : d;
+        }
+
         // levelDivider(id) = 1.0078^level * (level+1)  (HacksController.cs:150-158).
         // Returns float.MaxValue past the float range, as the game does.
         public static double LevelDivider(long level)

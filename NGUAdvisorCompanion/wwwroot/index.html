@@ -103,6 +103,9 @@
                                      classes rather than inventing a third. */
   .cg-legd,                       /* per-leg difficulty (EVIL / NORMAL) — names a value, same role */
   .cg-dl > span:first-child,      /* key column of the expanded block detail */
+  .inv-head,                      /* keep/trash column heads — the third labelled column grid joins
+                                     the two classes, per the .bd-head note above. Colour is stated
+                                     by .inv-head.k/.t below, not here. */
   .badge {                        /* was 9.5px / .1em */
     font-family: var(--mono); font-size: var(--fs-1); letter-spacing: .1em; text-transform: uppercase;
   }
@@ -587,6 +590,21 @@
   .tf-steplvl { font-family: var(--mono); font-size: var(--fs-1); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .tf-cell { border-radius: 6px; padding: 6px 0; display: flex; align-items: center; justify-content: center; font-family: var(--sans); font-size: var(--fs-4); line-height: 1; }
   .tf-cell.on { background: var(--accent-bg); border-color: color-mix(in srgb,var(--accent) 40%, var(--border)); color: var(--accent); }
+  /* Gear > Inventory keep/trash columns (the retired WinForms InventoryAdvisorPanel, companion form).
+     Two independent scroll lists so a long inventory can't stretch the page; heads join .u-datalabel. */
+  .inv-cols { display: flex; gap: var(--sp-2); align-items: flex-start; }
+  .inv-col { flex: 1 1 0; min-width: 0; }
+  .inv-head { margin: 0 2px 6px; }
+  .inv-head.k { color: var(--ok); }
+  .inv-head.t { color: var(--warn); }
+  .inv-list { border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-2); max-height: 340px; overflow-y: auto; padding: 3px 0; }
+  .inv-row { display: flex; gap: var(--sp-2); padding: 3px 10px; align-items: baseline; border-bottom: 1px solid var(--border-soft); }
+  .inv-row:last-child { border-bottom: 0; }
+  .inv-row .nm { font-family: var(--sans); font-size: var(--fs-3); color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+  .inv-row .tag { color: var(--faint); font-size: var(--fs-2); white-space: nowrap; }
+  .inv-row .iid { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: var(--fs-1); font-variant-numeric: tabular-nums; flex: none; }
+  .inv-empty { color: var(--faint); font-size: var(--fs-3); padding: 4px 10px; }
+
   /* Card trash-filter grid: bonus type + rarity/cost threshold dropdowns */
   .cfgrid { display: flex; flex-direction: column; gap: var(--sp-1); margin: 6px 0; }
   .cf-head, .cf-row { display: grid; grid-template-columns: minmax(0,1fr) 130px 130px; gap: var(--sp-2); align-items: center; }
@@ -1902,6 +1920,28 @@
       inventory:   { grp:"Gear", title:"Inventory", cons:"InventoryAdvisor", sev:"ok", badge:"Auto",
         rec:"Merges and converts spare gear safely — never a transform-chain tier or a protected level-100 copy.",
         why:"",
+        // Keep/trash readout (the retired WinForms InventoryAdvisorPanel, restored). `persist`, not
+        // `after`: it is advice the user acts on by hand, so it must be visible in BOTH modes — the
+        // same contract as the Loadouts "currently equipped" readout. Lists fill from the invVerdict
+        // snapshot node; the button fires the computeInventory doAction; show("inventory") auto-fires
+        // the same action when the verdict is missing or stale (window.reqInvVerdict).
+        persist:
+          '<div class="seclabel"><span class="eyebrow">Keep / trash</span></div>'+
+          '<div class="chips"><span class="chip" id="invVerdictAge">Not computed yet</span>'+
+            '<span class="chip" id="invVerdictChapter" style="display:none"></span></div>'+
+          '<div class="inv-cols" style="margin-top:8px">'+
+            '<div class="inv-col"><div class="inv-head k" id="invKeepHead">KEEP</div>'+
+              '<div class="inv-list" id="invKeepList"><div class="inv-empty">No verdict yet — recompute below.</div></div></div>'+
+            '<div class="inv-col"><div class="inv-head t" id="invTrashHead">TRASH</div>'+
+              '<div class="inv-list" id="invTrashList"><div class="inv-empty">No verdict yet — recompute below.</div></div></div>'+
+          '</div>'+
+          '<div class="actionrow" style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap;margin-top:11px">'+
+            '<button class="btn" type="button" data-action="computeInventory">Recompute keep / trash</button>'+
+            '<span class="hint" style="color:var(--faint)">Runs the full objective sweep. Also runs on its own when you open this view with a stale verdict.</span></div>'+
+          '<div class="mh" style="margin-top:8px"><span class="hint" style="color:var(--faint)">'+
+            'KEEP = wins a slot in an optimizer objective, a saved loadout, is worn right now, or is on the community guide’s '+
+            '“Items to Keep” list for your chapter. Duplicates of a KEEP item are merge fodder — merge them, don’t trash them. '+
+            'TRASH = maxed, wins nothing anywhere, and past any guide horizon. Nothing is trashed automatically.</span></div>',
         kind:"settings", groups:[
           { label:"Inventory automation", controls:[
             {t:"toggle", key:"ManageInventory", label:"Manage inventory"},
@@ -2003,14 +2043,21 @@
           {t:"toggle", key:"AutoRebirth", label:"Auto rebirth"} ]}],
         kind:"timeline", tlHead:["Time","Action"], tl:[] },
       wishes:      { grp:"Economy", title:"Wishes", cons:"WishManager", sev:"ok", badge:"Auto",
-        rec:"Selects wishes by the chosen mode; the sliders take a share of the E/M/R3 still idle after every other system allocates.",
+        rec:"Selects wishes by the chosen mode. As a SINK they take only what the lanes could not use, so capped NGUs stay capped; as a PRIORITY the sliders claim a share of the idle pool before the lanes can reclaim it.",
         why:"",
         kind:"settings", groups:[
           { label:"Wishes", controls:[
             {t:"toggle", key:"ManageWishes", label:"Manage wishes"},
-            {t:"dd", key:"WishMode", label:"Selection mode", opts:["Priority order","Cheapest","Fastest","Balanced"]},
+            {t:"dd", key:"WishMode", label:"Selection mode", opts:["Priority order","Cheapest","Fastest","Balanced","Value (recommended)"]},
             {t:"num", key:"WishLimit", label:"Max active wishes", min:1, max:4} ]},
-          { label:"Resource share (% of remaining idle)", controls:[
+          // SINK vs PRIORITY is an ORDERING, not a number, which is why it cannot be a slider value:
+          // 0% starves wishes and 100% starves the lanes. Sink hands the wish holdings back BEFORE the
+          // swaps so the lanes allocate from them and cap out; priority hands them back after, so they
+          // return straight to the wish slots and the claim compounds (measured: an energy pool falling
+          // 9e18 -> 1.2e16 between gear swaps). The sliders below are ignored while sink is on.
+          { label:"Allocation role", controls:[
+            {t:"toggle", key:"WishSinkMode", label:"Use wishes as a sink (take only leftovers)"} ]},
+          { label:"Resource share (% of remaining idle) — priority mode only", controls:[
             {t:"num", key:"WishEnergy", label:"Energy %", min:0, max:100},
             {t:"num", key:"WishMagic", label:"Magic %", min:0, max:100},
             {t:"num", key:"WishR3", label:"R3 %", min:0, max:100} ]} ],
@@ -2284,6 +2331,9 @@
       crumbTitle.textContent = titleOf[key] || key;
       document.querySelector(".main").scrollTo ? window.scrollTo(0,0) : null;
       animateFills(target);
+      // Gear > Inventory: ask the injector for a keep/trash verdict when the view opens with none or
+      // a stale one (the old WinForms panel computed on tab-open; this is the same contract).
+      if (key === "inventory" && window.reqInvVerdict) window.reqInvVerdict();
       // close mobile rail
       document.getElementById("rail").classList.remove("open");
     }
@@ -3456,6 +3506,12 @@
   var PB_HUES = ["#6366F1","#B08810","#0E9AAF","#B02C57","#34A85F","#A64FD0"];
   var PB_IDLE_ALARM = 5;      // percent — below this the remainder is a fact, above it it is a problem
   window._pbLast = null;
+  // esc() escapes &, < and > because every other caller writes into an element BODY. The lane
+  // reasons go into a title ATTRIBUTE, and they are prose the injector composes — several of them
+  // quote the game's own wording — so an unescaped " would close the attribute and let the rest of
+  // the sentence become markup. Local rather than a change to esc(): widening a helper this page
+  // calls in ~90 places to fix one attribute is the larger risk.
+  function pbAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
   function pbFmt(n){
     n = Math.abs(+n||0);
     if(n >= 1e12) return (n/1e12).toFixed(2)+"T";
@@ -3476,12 +3532,16 @@
       window._pbLast = window._pbLast || {};
       if(p.energy) window._pbLast.energy = p.energy;
       if(p.magic)  window._pbLast.magic  = p.magic;
+      // R3 rides the same per-pool gate and therefore the same merge rule. It is the pool most often
+      // absent from a payload — its plan only changes when a hack's disposition does, which on a save
+      // whose hacks are all hard-capped is never — so replacing wholesale would delete it hardest.
+      if(p.r3)     window._pbLast.r3     = p.r3;
     }
-    var data = (window._pbLast && (window._pbLast.energy || window._pbLast.magic)) ? window._pbLast : null;
+    var data = (window._pbLast && (window._pbLast.energy || window._pbLast.magic || window._pbLast.r3)) ? window._pbLast : null;
     if(!data){ writeHtml(host, "pools", '<div class="pb-quiet">Waiting for the first allocation pass.</div>'); return; }
 
     var html = "";
-    [["energy","Energy"],["magic","Magic"]].forEach(function(pair){
+    [["energy","Energy"],["magic","Magic"],["r3","R3"]].forEach(function(pair){
       var d = data[pair[0]]; if(!d) return;
       var pool = +d.pool || 0, idle = +d.unallocated || 0;
       var lanes = (d.lanes||[]).filter(function(l){ return l.seated || (+l.took) > 0; });
@@ -3497,7 +3557,13 @@
              +   '<span class="pb-sw" style="background:'+c+'"></span>'
              +   '<span class="pb-nm">'+esc(l.name||"")+'</span>'
              +   '<span class="pb-tag'+(l.sink?" sink":"")+'">'+(l.sink?"sink":(l.seated?"seated":"out"))+'</span>'
-             +   '<span class="pb-pct" title="offered '+pbFmt(offered)+', took '+pbFmt(took)+'">'
+             // The lane's own reason, when it has one. The injector now sends `why` for SEATED lanes
+             // too, and that is where it earns its keep: a hack holding a real share of R3 below the
+             // float stall floor converts none of it, and without this it is a healthy-looking
+             // coloured segment. There is no room in the row's four-column grid for prose, so it
+             // rides the tooltip that already carries offered/took rather than inventing a row shape.
+             +   '<span class="pb-pct" title="offered '+pbFmt(offered)+', took '+pbFmt(took)
+             +     (l.why ? ' — '+pbAttr(l.why) : '')+'">'
              +     (pct >= 1 ? pct.toFixed(1) : pct.toFixed(3))+'%</span>'
              + '</div>';
       });
@@ -3515,12 +3581,20 @@
           + (d.idleWhy ? ' — '+esc(d.idleWhy) : '')+'.</p></div>'
         : '<div class="pb-quiet">'+(idlePct > 0 ? idlePct.toFixed(1)+'% left idle — normal headroom.' : 'Fully allocated.')+'</div>';
 
+      // THE POOL-LEVEL MESSAGE, which until now the injector sent and nothing displayed. It is the
+      // only thing that can explain an EMPTY lane list: a pool whose every lane was refused draws no
+      // rows at all (the filter above keeps seated lanes and non-zero takes), and a board that
+      // renders blank in that state is no better than the silence it replaced. On E/M it carries
+      // BudgetPass.SurfaceMessage — the 100-level-challenge budget; on R3 it carries the held pass,
+      // where R3Breakpoints returned before its own reclaim because no token was fundable.
+      var note = d.budget ? '<div class="pb-quiet">'+esc(d.budget)+'</div>' : '';
+
       html += '<div class="pb-pool"><div class="pb-head"><h3>'+pair[1]+'</h3>'
            +    '<span class="pb-tot">'+pbFmt(pool)+'</span></div>'
            +  '<div class="pb-stack">'+segs+'</div>'
            +  '<div class="pb-split"><span>allocated '+(100-idlePct).toFixed(1)+'%</span>'
            +    '<span>idle '+idlePct.toFixed(1)+'%</span></div>'
-           +  '<div class="pb-lanes">'+rows+'</div>'+tail+'</div>';
+           +  '<div class="pb-lanes">'+rows+'</div>'+tail+note+'</div>';
     });
     writeHtml(host, "pools", html || '<div class="pb-quiet">No allocation plan yet.</div>');
   }
@@ -6197,6 +6271,55 @@
   }
 
   var _seen=false, _lastNavSeq=null;
+  /* ===== Gear > Inventory keep/trash (invVerdict) — the retired WinForms InventoryAdvisorPanel =====
+     The verdict arrays only change when a new Compute() lands on the injector side (`at` moves);
+     `agoSec` re-stamps every snapshot. Lists rebuild on an `at` change only; the age chip is cheap
+     text and updates every tick. window.reqInvVerdict is window-scoped because show("inventory")
+     lives in a separate IIFE — it asks for a recompute when there is no verdict yet or it has gone
+     stale, mirroring the old panel's compute-on-open. */
+  var _invAt = null, _invAgo = null, _invReqAt = 0;
+  function invRows(list){
+    var html = list.map(function(e){
+      // The injector appends verdict tags to the name as "Name  [tag]" — split the trailing tag out
+      // so it can render faint. Item names never contain a double-space-bracket run.
+      var n = String(e.n||""), tag = "";
+      var i = n.indexOf("  [");
+      if(i >= 0){ tag = n.slice(i+2); n = n.slice(0,i); }
+      return '<div class="inv-row"><span class="nm">'+esc(n)+(tag?' <span class="tag">'+esc(tag)+'</span>':'')+'</span><span class="iid">#'+(e.id|0)+'</span></div>';
+    }).join("");
+    return html || '<div class="inv-empty">Nothing here.</div>';
+  }
+  function renderInvVerdict(s){
+    var v = s.invVerdict;
+    if(!v){ _invAgo = null; return; }
+    _invAgo = v.agoSec;
+    var age = $("invVerdictAge");
+    if(age) age.textContent = v.agoSec < 90 ? "Computed just now" : "Computed "+Math.round(v.agoSec/60)+" min ago";
+    var ch = $("invVerdictChapter");
+    if(ch){
+      if(v.chapter){ ch.textContent = "Guide horizons: "+v.chapter; ch.style.display = ""; }
+      else ch.style.display = "none";
+    }
+    if(v.at === _invAt) return;
+    _invAt = v.at;
+    var keep = v.keep||[], trash = v.trash||[];
+    var kh=$("invKeepHead"), th=$("invTrashHead");
+    if(kh) kh.textContent = "KEEP ("+keep.length+")";
+    if(th) th.textContent = "TRASH ("+trash.length+")";
+    var kl=$("invKeepList"), tl=$("invTrashList");
+    if(kl) writeHtml(kl, "invKeepList", invRows(keep));
+    if(tl) writeHtml(tl, "invTrashList", invRows(trash));
+  }
+  window.reqInvVerdict = function(){
+    // Auto-compute on view open: verdict absent or >10 min old. Rate-limited so a rapid close/open
+    // can't stack objective sweeps on the injector's main thread.
+    var now = Date.now();
+    if(now - _invReqAt < 15000) return;
+    if(_invAgo != null && _invAgo < 600) return;
+    _invReqAt = now;
+    try{ window.__ngu.send({cmd:"doAction", action:"computeInventory"}); }catch(e){}
+  };
+
   // transient action-result toast; window-scoped so the [data-action] handler (a separate IIFE) can also fire it.
   window.showToast = function(msg){
     var t=document.getElementById("toast"); if(!t || !msg) return;
@@ -6268,6 +6391,7 @@
     try{ renderTransform(s); }catch(e){}
     try{ renderCards(s); }catch(e){}
     try{ renderEquipped(s); }catch(e){}
+    try{ renderInvVerdict(s); }catch(e){}
     try{ renderChallengeState(s); }catch(e){}
     try{ renderCampaign(s); }catch(e){}   // campaign (~5 s cache) + lsc (per tick); both dirty-checked
     try{ renderSettings(s); }catch(e){}

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -5,7 +6,8 @@ namespace NGUAdvisor.Managers
 {
     // KEEP/TRASH verdicts for owned equipment. KEEP = an item earns a slot in at least one gear
     // objective's optimal loadout (the same optimizer the modes use), or appears in a configured
-    // static loadout, or is currently worn. TRASH = owned equipment that wins nothing anywhere at
+    // static loadout, or is currently worn, or is on the community guide's "Items to Keep" list for
+    // the current chapter (GuideGear). TRASH = owned equipment that wins nothing anywhere at
     // max level. Verdicts are per item ID: duplicate copies of a KEEP item are merge fodder, not
     // trash — the UI carries that caveat.
     public static class InventoryAdvisor
@@ -16,9 +18,12 @@ namespace NGUAdvisor.Managers
             public List<KeyValuePair<int, string>> Trash = new List<KeyValuePair<int, string>>();
             // id -> how many objective-optimal loadouts include it (drives the auto boost priority).
             public Dictionary<int, int> Usage = new Dictionary<int, int>();
+            public DateTime At;          // when this verdict was computed (UTC) — the UI ages it
+            public string GuideChapter;  // chapter label the guide horizons were evaluated at ("" = unknown)
         }
 
-        // Most recent verdict (BoostsPanel readout reuses it instead of re-running 30+ optimizations).
+        // Most recent verdict (the companion's Gear > Inventory readout and the BoostsPanel-style
+        // boost-priority pass reuse it instead of re-running 30+ optimizations).
         public static Verdict Last;
 
         public static Verdict Compute()
@@ -88,6 +93,18 @@ namespace NGUAdvisor.Managers
             }
             catch { }
 
+            // Community-guide chapter, for the GuideGear horizons below. ProgressionAnalyzer is the
+            // canonical (titan-kill) chapter engine — see its class note — and it lags boss progress,
+            // which errs toward keeping. Unknown (0) keeps every guide entry active.
+            int guideCh = 0;
+            try
+            {
+                var prog = ProgressionAnalyzer.Detect();
+                if (prog.Known) { guideCh = prog.Chapter; v.GuideChapter = prog.Label; }
+            }
+            catch { }
+            if (v.GuideChapter == null) v.GuideChapter = "";
+
             // Never-maxed items and transform-chain tiers are excluded from TRASH (user rule):
             // an unmaxed item still owes its permanent item-list max bonus (farm it to 100 first),
             // and chain tiers are consolidation/climb fodder, never trash.
@@ -97,6 +114,17 @@ namespace NGUAdvisor.Managers
                 if (keep.Contains(kv.Key))
                 {
                     v.Keep.Add(kv);
+                    continue;
+                }
+                // Guide hold: the community guide names this item on a chapter's "Items to Keep" list
+                // and its horizon hasn't passed. Checked AFTER the optimizer sweep (an optimizer win
+                // needs no tag) and BEFORE the chain/unmaxed fallbacks (the guide reason is the more
+                // useful label). Protects unique-special items the optimizer undervalues TODAY but a
+                // future chapter needs (the whole reason the guide lists exist).
+                bool onGuide = GuideGear.TryGet(kv.Key, out var ge);
+                if (onGuide && GuideGear.KeepActive(ge, guideCh))
+                {
+                    v.Keep.Add(new KeyValuePair<int, string>(kv.Key, kv.Value + "  [guide: " + ge.Reason + "]"));
                     continue;
                 }
                 if (TransformManager.ChainItem(kv.Key))
@@ -111,10 +139,24 @@ namespace NGUAdvisor.Managers
                     v.Keep.Add(new KeyValuePair<int, string>(kv.Key, kv.Value + "  [max first]"));
                     continue;
                 }
-                v.Trash.Add(kv);
+                // A guide item past its horizon that also wins nothing is trash like anything else —
+                // but say WHY the protection lapsed, or the trash call looks like it contradicts the guide.
+                v.Trash.Add(onGuide
+                    ? new KeyValuePair<int, string>(kv.Key, kv.Value + "  [guide horizon passed]")
+                    : kv);
             }
+            v.At = DateTime.UtcNow;
             Last = v;
             return v;
+        }
+
+        // Companion action entry point ("Recompute" on Gear > Inventory): main-thread only, same as
+        // every other doAction. Returns the one-line notice the UI toasts.
+        public static string ComputeForUi()
+        {
+            if (Main.Character == null) return "Keep/trash: game not ready yet";
+            var v = Compute();
+            return $"Keep/trash: {v.Keep.Count} keep · {v.Trash.Count} trash";
         }
 
         // Advisor-driven boost priority: unequipped KEEP items ranked by objective usage, then chain

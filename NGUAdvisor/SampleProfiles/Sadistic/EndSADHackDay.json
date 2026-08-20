@@ -9,16 +9,16 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "AUG-10", "AUG-11" ]
+        "Priorities": [ "CAPWAN", "AUG-10", "AUG-11" ]
 	  },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "CAPALLNGU" ],
+        "Priorities": [ "CAPWAN", "CAPALLNGU" ],
 		"Comment": "All R3 is dedicated to Hacks, no reason to put any into wishes"
       },
       {
         "Time": { "h": 25, "m": 15 },
-        "Priorities": [ "CAPWAN:10", "CAPALLNGU" ],
+        "Priorities": [ "CAPWAN", "CAPALLNGU" ],
         "Note": "Return to normal RB allocation after R3 pots wear off, swap profiles when able"
       }
     ],
@@ -29,16 +29,16 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPWAN:10", "BR" ]
+        "Priorities": [ "CAPWAN", "BR" ]
       },
       {
         "Time": { "h": 1 },
-        "Priorities": [ "CAPWAN:10", "BR:10", "CAPALLNGU" ],
+        "Priorities": [ "CAPWAN", "BR", "CAPALLNGU" ],
 		"Comment": "All R3 is dedicated to Hacks, no reason to put any into wishes"
       },
       {
         "Time": { "h": 25, "m": 15 },
-        "Priorities": [ "CAPWAN:10", "BR:10", "CAPALLNGU" ],
+        "Priorities": [ "CAPWAN", "BR", "CAPALLNGU" ],
         "Note": "Return to normal allocation after R3 pots wear off, swap profiles when able"
       }
     ],
@@ -49,7 +49,7 @@
       },
       {
         "Time": { "h": 25, "m": 15 },
-        "Priorities": [ ],
+        "Priorities": [],
 		"Comment": "Return to normal allocation after R3 pots wear off, swap profiles when able" 
       }
     ],

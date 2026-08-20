@@ -2,6 +2,77 @@
 
 All notable changes to NGU Advisor are documented in this file.
 
+## [2.4.1] - 2026-08-19 — The advisor owns the percentages
+
+The allocator now decides how much every system gets, sized from what that system can actually
+absorb this tick. The knob you used to turn by hand is still there, but it means something
+different — read the first section if any of your profiles use `:percent`. Settings and profiles
+carry over — extract over your old copy.
+
+### Changed — read this if your profile uses `:percent`
+
+- **`:P` on a priority now means MANUAL MODE for that system, not "cap it at P%".** The advisor
+  sizes every lane it owns from live capacities, so you no longer need percentages at all — that
+  is the default and the recommended setup. Writing `:P` tells the advisor to **stop optimising
+  that system**: the lane claims P% of the resource off the top, before anything else allocates,
+  and is excluded from the optimiser. Remove the `:P` to hand the system back. The load banner
+  warns you for every percentage it finds, and those lanes are tagged `[Manual]` in the log.
+
+  Two things `:P` cannot do. **It does nothing while Auto Profile is on** — Auto Profile generates
+  the lists itself, so your timeline is never consulted. And **it cannot claim Wandoos**, which is
+  the surplus sink every other lane's leftovers fall into; taking it out of the optimiser would
+  leave the remainder nowhere to go, so the percentage is ignored there and the log says so once.
+
+  A manual lane still has to pass the allocator's safety gates — the 100-Level-Challenge budget and
+  the per-system unlock checks — so `:P` chooses the **amount**, not the rules. If a gate refuses
+  one, the log names the gate and the reason.
+
+- **The shipped presets and sample profiles have been migrated for you.** Percentages were removed
+  from their Energy and Magic timelines and kept on R3. Under the constraint allocator (the
+  default) the removed ones did nothing, so those presets behave exactly as before. **If you have
+  turned the constraint allocator off**, the original share loop does read them, and removing a
+  percentage from a `CAP…` priority makes that lane unbounded rather than inert — re-check any
+  preset you rely on in that mode.
+
+### Added
+
+- **R3 picks the hack that is actually worth the most.** After the guide's first-milestone sweep,
+  R3 used to park on the Adventure hack for the rest of the run no matter what it was worth.
+  It is now priced every minute — value per level against what a level costs, both read live from
+  the game — and the pool goes to whichever hack wins. On a mature board the Adventure hack ranked
+  **eleventh of fifteen**. The order re-prices itself as levels land, so nothing needs tuning.
+- **Beards fill limited slots in a set order**: BEARd, Neckbeard, Beard Cage, then Reverse Hitler
+  and LadyBeard up to their 1000 permanent-level softcap, then the Golden Beard once Troll
+  Challenge 7 is done, then Fu Manchu, then whichever of Reverse/Lady has already saturated.
+  Past 1000 permanent levels a beard's bonus stops growing linearly and starts growing as a square
+  root, which is why the pair drops down the order once they cross it.
+- **Wishes can be chosen by value.** The existing modes rank on speed or price, so two wishes that
+  finish at the same rate were indistinguishable however differently they paid. The new **Value**
+  mode ranks on what a level is actually worth. Relevant if you run wishes as a surplus sink.
+- **The augment lane is funded during the NGU+AT phase.** That phase previously held nothing that
+  could absorb a large pool — every capped lane in it summed to about 14% of energy.
+- **Allocation telemetry now reports per round**: how many lanes were in each round, what each was
+  offered, and what it took. This is what the pool bar's numbers are built from.
+
+### Fixed
+
+- **Idle energy and magic that had nowhere to go before the wish system unlocks.** The allocator
+  reserved a share of the pool for Wandoos every round, but Wandoos can only absorb so much per
+  tick, and the surplus was reserved rather than offered onward. Before wishes unlock (a T8 titan
+  kill) nothing else could claim it, so it simply sat idle — measured at **26% of energy and 30% of
+  magic** on a live save. It now flows to the lanes that can use it. After wishes unlock the
+  reserve is left alone, because that surplus is what funds them.
+- **A profile gear row that lists item IDs now holds.** It used to be overwritten within the same
+  second by your standing pick from Loadouts › Main, and could never re-assert — so you wore
+  something other than what your timeline said, permanently and silently. The authored row now
+  wins while it is current, and your standing pick resumes when the timeline moves on.
+- **The advisor no longer claims your profile is allocating when it isn't.** With Auto Profile on,
+  generated lane lists were labelled as the profile's, alongside a line stating the profile was
+  still in charge. Both now say which list is actually running.
+- **Writes whose reason has expired are reported as stale** rather than still active — for example
+  an Advanced Training target set for a run phase that has since ended.
+- **The beard recommendation panel no longer suggests a set the advisor will not equip.**
+
 ## [2.4.0] - 2026-08-14 — Allocation engine & wishes
 
 The largest release since the companion. The resource allocator has been rebuilt around a

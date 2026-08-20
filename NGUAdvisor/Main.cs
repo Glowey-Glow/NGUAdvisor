@@ -46,7 +46,7 @@ namespace NGUAdvisor
         private static float _overlayStyleScale = -1f;
         // NGU Advisor's own product version (SemVer). Bump by hand only at real milestones; the per-build
         // identity is the auto BuildTag below, so this no longer needs touching every compile.
-        public const string Version = "2.4.0";
+        public const string Version = "2.4.1";
         // "dev" or "public", baked in at compile time from <AdvisorChannel> in NGUAdvisor.csproj — the
         // ONE line that differs between the two repos (see that property's comment for why it is not a
         // #if and not a hand-edited const here beside Version).
@@ -490,8 +490,9 @@ namespace NGUAdvisor
         {
             try
             {
-                // Already running? The companion holds a named single-instance mutex.
-                try { using (System.Threading.Mutex.OpenExisting("NGUAdvisorCompanionSingleton")) { LogDebug("Companion already running; skip auto-launch."); return; } }
+                // Already running? The companion holds a named single-instance mutex — per instance, so a
+                // bench advisor does not read the LIVE companion's mutex and conclude it already has a UI.
+                try { using (System.Threading.Mutex.OpenExisting(Managers.AdvisorInstance.CompanionMutex)) { LogDebug("Companion already running; skip auto-launch."); return; } }
                 catch { /* not running -> launch */ }
                 var exe = FindCompanionExe();
                 if (exe == null) { LogDebug("Companion exe not found; skip auto-launch."); return; }
@@ -499,9 +500,14 @@ namespace NGUAdvisor
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = exe,
-                    // Pass the game's PID so the companion exits when NGU closes (lifecycle fix): the
-                    // advisor runs in-process, so our PID IS the game's.
-                    Arguments = System.Diagnostics.Process.GetCurrentProcess().Id.ToString(),
+                    // argv[0] is the game's PID, so the companion exits when NGU closes (lifecycle fix):
+                    // the advisor runs in-process, so our PID IS the game's. argv[1] is the instance id,
+                    // appended ONLY when there is one — an old companion.exe meeting a new advisor DLL
+                    // across a partial deploy must still see exactly the one argument it expects, and a
+                    // default-instance launch is then byte-identical to what it has always been. The id
+                    // is sanitised to [A-Za-z0-9_-] (AdvisorInstance.Sanitize), so it needs no quoting.
+                    Arguments = System.Diagnostics.Process.GetCurrentProcess().Id.ToString() +
+                                (Managers.AdvisorInstance.Id.Length == 0 ? "" : " " + Managers.AdvisorInstance.Id),
                     WorkingDirectory = Path.GetDirectoryName(exe),
                     UseShellExecute = true
                 });

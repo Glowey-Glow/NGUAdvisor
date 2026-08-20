@@ -9,10 +9,13 @@ namespace NGUAdvisor.Managers
     // LaneSpec per membership lane from live game state, runs ConstraintLayer.Compose, and executes
     // the plan through the lanes' own Allocate() — each lane's stair-snap math IS its Pass 2
     // capacity (CapacityPass.Table's Advisor rows), so a seated lane is offered the remaining pool
-    // and self-limits below it. Evil-track NGU lanes are the exception: RATE lanes (amendment 18
+    // and self-limits below it. NGU lanes are the exception: RATE lanes ON EVERY TRACK (amendment 21
     // §1), capacity read from the game's own cap helpers (energyNGUCapAmount/magicNGUCapAmount,
     // [DECOMP] AllNGUController.cs:1380-1424 / :1426-1470), chunked into their share per amendment
-    // 19 §3.1's NguCap arithmetic. ⚠ EVERY seated lane — self-limiting or rate — is now offered
+    // 19 §3.1's NguCap arithmetic. This was Evil-ONLY until 2026-08-18, which left Normal- and
+    // Sadistic-track NGUs self-limiting against a heuristic and plateauing around 40% of their caps
+    // once there was a full pool in front of them; the helpers select the track themselves, so the
+    // restriction was never the game's. ⚠ EVERY seated lane — self-limiting or rate — is now offered
     // min(capacity, remaining / seated destinations not yet offered), NOT the whole remaining pool
     // (amendment 28: the two regimes are gone, and so is offer-what-is-left).
     //
@@ -148,15 +151,89 @@ namespace NGUAdvisor.Managers
             }
             catch (Exception e) { Main.LogDebug($"Constraint budget read: {e.Message}"); }
 
-            // Amendment 18: the LIVE track selector is settings.nguLevelTrack — NOT
-            // rebirthDifficulty; a player runs Normal NGUs inside an Evil rebirth for most of the
-            // day (23 §2.3). Evil track => every NGU lane is a rate lane, both pools.
+            // Amendment 18: the LIVE track selector is settings.nguLevelTrack — NOT rebirthDifficulty;
+            // a player runs Normal NGUs inside an Evil rebirth for most of the day (23 §2.3). The track
+            // no longer decides whether an NGU lane is a rate lane — every one of them is, on every
+            // track (see BuildSpec) — because the game's own cap helpers already select by track. The
+            // read stays because the lane still needs to know WHICH track it is on for its telemetry.
             bool evilTrack = false;
             try { evilTrack = c.settings.nguLevelTrack == difficulty.evil; } catch { }
 
-            var specs = new List<ConstraintLayer.LaneSpec>(membership.Count);
+            // ── `:percent` IS A MANUAL-MODE DECLARATION (operator ruling 2026-08-18) ────────────
+            //
+            // audit/59 §1 left three options open: honour the percent as a Pass 2 capacity, reject it
+            // at parse, or strip it from the grammar. The ruling is none of those exactly — the
+            // ADVISOR owns percentages, sized to the best optimal outcome, and an authored `:percent`
+            // is the operator saying "not this system, I'll drive". So the lane is not ignored and it
+            // is not refused: it is REMOVED FROM THE OPTIMISATION and honoured literally.
+            //
+            // Mechanically that makes it a reservation taken off the top. The manual lane runs the
+            // legacy sequence (UpdateMaxAllocation -> Allocate, exactly as EnergyBreakpoints.cs:49-56
+            // does) against the freshly reclaimed pool, and the constraint layer then optimises what
+            // is left. That is the only reading under which the authored number means what it says:
+            // a percent OF THE RESOURCE, decided before anything else competes for it.
+            //
+            // WHY OFF THE TOP AND NOT INSIDE THE FILL. The fill's whole contract is that it decides
+            // every seated lane's budget from the remaining pool; a lane carrying a fixed external
+            // number is not a participant in that, it is a precondition of it. Seating it would also
+            // silently re-enter the share model the constraint layer replaced, since the percent is
+            // of the resource CAP while the fill divides the IDLE pool — the exact mismatch that made
+            // `CAPTM:10` measure 12.5-19.3% on a live save.
+            //
+            // The operator is told once per profile load, by ProfileSections.PercentNotice; this path
+            // stays silent per tick and reports through telemetry only.
+            // THE ADVISOR WRITES `:percent` TOO, SO THE TOKEN ALONE CANNOT MEAN MANUAL MODE.
+            //
+            // ChallengeOverlay's own generated programs carry the syntax - CAPWAN:40, CAPWAN:60,
+            // CAPTM:5/10/30, CAPBR-300:10, CAPALLAT:10, CAPBESTAUG:10 - and they reach this exact
+            // parser through ParsedList/Fallback. Partitioning on the token alone therefore put the
+            // ADVISOR'S OWN Wandoos lane into manual mode on every auto-profile tick, and Wandoos is
+            // the surplus sink (SurplusSink = bp is WandoosBP, below). With no sink among the specs,
+            // plan.SinkIndex is -1 and every tick ends on ConstraintLayer's
+            //     "no surplus sink in this lane set - the remainder stays idle"
+            // i.e. the change would have deleted the sink it also spent the day tuning.
+            //
+            // MembershipSourceOf is the existing answer to "whose list is this". It reads Profile
+            // only when the operator's own tokens survived TransformPriorities untouched; anything
+            // generated, templated or fallen back to is the advisor talking to itself, and a percent
+            // in THAT is vestigial share-model syntax (amendment 28 already stripped it from two
+            // segments), not a declaration.
+            //
+            // Conservative on purpose: the Laser Sword overlay can wrap a PROFILE base list, and
+            // that case is not partitioned. It fails toward the advisor optimising, which is the
+            // default the ruling asks for.
+            bool operatorAuthored = false;
+            try { operatorAuthored = ChallengeOverlay.MembershipSourceOf(type) == ObjectiveParity.MembershipSource.Profile; }
+            catch { }
+
+            var manual = new List<ResourceBreakpoint>();
+            var optimised = new List<ResourceBreakpoint>();
             foreach (var bp in membership)
-                specs.Add(BuildSpec(bp, c, evilTrack));
+            {
+                bool hasPercent = false;
+                if (operatorAuthored) { try { hasPercent = bp.CapPercentView.HasValue; } catch { } }
+
+                // ⚠ THE SURPLUS SINK IS STRUCTURAL AND CANNOT BE TAKEN INTO MANUAL MODE.
+                //
+                // SurplusSink is set in BuildSpec, which only runs over `optimised` - so moving
+                // Wandoos out of it does not merely opt one lane out of sizing, it deletes the sink
+                // for the whole tick: plan.SinkIndex = -1 and every unallocated unit strands on
+                // "no surplus sink in this lane set - the remainder stays idle". Spec §8's
+                // always-a-destination guarantee holds only when the set includes Wandoos.
+                //
+                // The provenance gate above fixed this for the ADVISOR'S generated CAPWAN:40/60, but
+                // an operator profile running with Auto Profile OFF and a hand-written CAPWAN:50 hits
+                // exactly the same path. A percent is a statement about ONE lane's amount; it is not
+                // a licence to remove the destination every other lane depends on. So the sink stays
+                // seated and the operator is told their percent did not apply to it.
+                if (hasPercent && bp is WandoosBP)
+                {
+                    SinkPercentIgnored(type, bp);
+                    hasPercent = false;
+                }
+
+                (hasPercent ? manual : optimised).Add(bp);
+            }
 
             // Reclaim before reading the pool — same reclaim the old loop performs.
             //
@@ -169,6 +246,58 @@ namespace NGUAdvisor.Managers
             long[] btBefore = reclaimsBasicTraining ? SnapshotBasicTraining(c) : null;
             Reclaim(c, type, reclaimsBasicTraining);
             if (btBefore != null) RestoreUnseatedBasicTraining(c, membership, btBefore);
+
+            // Manual lanes claim their authored share of the freshly reclaimed pool, in token order,
+            // before the optimiser sees anything. prioCount is 1 because a percent lane never divides:
+            // UpdateMaxAllocation takes the CapPercent branch and ignores it entirely (:71-79).
+            // MANUAL MEANS "YOU CHOOSE THE AMOUNT", NOT "YOU SKIP THE GATES". Passes 0 and 1 are
+            // not optimisation, they are SAFETY, and skipping them was a defect:
+            //
+            //   Pass 0 is the 100LC budget. BudgetPass refuses counting lanes once
+            //   levelChallenge10k.inChallenge && rebirthLevels >= 100. A manual CAPTM:25 that never
+            //   entered Compose kept levelling TimeMachine straight through the challenge.
+            //
+            //   Pass 1 is feasibility, and for NGU it is the ONLY guard there is. NGUBP.Unlocked()
+            //   reads buttons.ngu.interactable, which ButtonShower ties to settings.nguOn (vacation)
+            //   and NOT to NGU.disabled - the flag the No-NGU and Troll challenges set. Only
+            //   FeasibilityPass.NguLane tests that. A manual CAPALLNGU:5 expands to NINE lanes, each
+            //   claiming 5% of the pool every tick into NGUs the challenge has disabled. Rituals,
+            //   augments and TimeMachine lose their boss/gold gates the same way.
+            //
+            // So each manual lane is built into a real LaneSpec and put through the same two passes
+            // Compose would run, in the same order, using the same calls. Only the SIZING is skipped.
+            long manualTook = 0;
+            foreach (var bp in manual)
+            {
+                try
+                {
+                    var mspec = BuildSpec(bp, c, evilTrack);
+
+                    var budgetVerdict = BudgetPass.Evaluate(mspec.Name, budget);
+                    if (!budgetVerdict.Seated) { ManualRefused(type, bp, "budget", budgetVerdict.Reason); continue; }
+                    if (!mspec.Feasibility.Seated) { ManualRefused(type, bp, "feasibility", mspec.Feasibility.Reason); continue; }
+
+                    long before = Idle(c, type);
+                    bp.UpdateMaxAllocation(1);
+                    bp.Allocate();
+                    long took = before - Idle(c, type);
+                    if (took > 0) manualTook += took;
+                    ManualLaneTelemetry(type, bp, took);
+                }
+                catch (Exception e) { Main.LogDebug($"Manual lane {SafeLabel(bp)}: {e.Message}"); }
+            }
+
+            // Every seated lane was manual. NOT an early return any more: `return true` is the only
+            // "swapped" value BaseBreakpoints understands and it LATCHES (BaseBreakpoints :195-198)
+            // - the pool would have been reclaimed and allocated once and then never touched again
+            // for the life of that breakpoint, while Surface/Telemetry kept rendering the previous
+            // tick forever. Compose handles an empty roster (count = 0), so this reports and flows on.
+            if (optimised.Count == 0 && manual.Count > 0) ManualOnlyNotice(type, manual.Count, manualTook);
+
+            var specs = new List<ConstraintLayer.LaneSpec>(optimised.Count);
+            foreach (var bp in optimised)
+                specs.Add(BuildSpec(bp, c, evilTrack));
+
             long pool = Idle(c, type);
 
             var plan = ConstraintLayer.Compose(pool, budget, specs);
@@ -191,19 +320,30 @@ namespace NGUAdvisor.Managers
             // one-level-per-tick price — fail rule A in the round that discovers them and are never
             // offered again. Termination is proved in the Waterfill header, not counted.
             var fill = new ConstraintLayer.Waterfill(pool, plan.Lanes, plan.SinkIndex);
-            var takes = new long[membership.Count];
+            // ⚠ SIZED AND INDEXED BY `optimised`, NOT `membership`. plan.Lanes[i] is built from `optimised`
+            // (:232-234), so any array walked alongside the plan must be too — a manual lane removed
+            // from the front would otherwise shift every take onto the wrong lane, silently.
+            var takes = new long[optimised.Count];
             // What the fill OFFERED each lane, kept alongside what it TOOK. FillSession already
             // returns the number — it is not hidden state — but nothing downstream held it, and the
             // GAP between offered and taken is the single most diagnostic figure on this path: a
             // self-limiting lane offered the whole pool and absorbing one unit of it looks identical
             // to a healthy one in every existing channel. Same local-array shape as `takes`, which
             // Parity already consumes. Both are CUMULATIVE across the rounds.
-            var offers = new long[membership.Count];
+            var offers = new long[optimised.Count];
             ConstraintLayer.FillSession session;
             ConstraintLayer.FillSession firstRound = null;
+            // ROUND TELEMETRY (Plan.Rounds / Plan.RoundTrace). Observation only — nothing below reads
+            // these back into an allocation decision. See ConstraintLayer.Plan for why they exist.
+            int rounds = 0;
+            var roundTrace = new List<string>(8);
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
             while ((session = fill.BeginRound()) != null)
             {
-                for (int i = 0; i < membership.Count; i++)
+                rounds++;
+                int rosterAtStart = session.LanesLeft;
+                long offeredThisRound = 0, tookThisRound = 0;
+                for (int i = 0; i < optimised.Count; i++)
                 {
                     if (i == plan.SinkIndex || !fill.IsLive(i))
                         continue;
@@ -219,7 +359,7 @@ namespace NGUAdvisor.Managers
                         continue;
                     }
 
-                    var bp = membership[i];
+                    var bp = optimised[i];
                     long before = Idle(c, type);
                     bp.OfferBudget(Math.Min(offer, before));
                     try { bp.Allocate(); }
@@ -228,16 +368,26 @@ namespace NGUAdvisor.Managers
                     if (take < 0) take = 0;
                     offers[i] += offer;
                     takes[i] += take;
+                    offeredThisRound += offer;
+                    tookThisRound += take;
                     plan.Lanes[i].Allocation = takes[i];
                     plan.Lanes[i].Offered = offers[i];   // survives the tick, unlike the local array
                     session.Commit(take);
                     fill.Record(i, offer, take);
                 }
                 // The GAME is the authority on what is left, not the session's running subtraction.
-                fill.EndRound(Idle(c, type));
+                long leftAfterRound = Idle(c, type);
+                fill.EndRound(leftAfterRound);
+                if (roundTrace.Count < 6)
+                    roundTrace.Add("r" + rounds.ToString(inv) + " n=" + rosterAtStart.ToString(inv)
+                                 + " offered=" + offeredThisRound.ToString(inv)
+                                 + " took=" + tookThisRound.ToString(inv)
+                                 + " left=" + leftAfterRound.ToString(inv));
                 if (firstRound == null)
                     firstRound = session;
             }
+            plan.Rounds = rounds;
+            plan.RoundTrace = roundTrace.Count > 0 ? string.Join(" | ", roundTrace.ToArray()) : null;
             ConstraintLayer.RecordRateSkips(plan, firstRound);
 
             // The remainder → the surplus sink, funded LAST and through its own Allocate() so its
@@ -252,7 +402,7 @@ namespace NGUAdvisor.Managers
             {
                 // Only a SEATED sink is offered anything; a refused one must not read as if it were.
                 offers[plan.SinkIndex] = remainder;
-                var sink = membership[plan.SinkIndex];
+                var sink = optimised[plan.SinkIndex];
                 sink.OfferBudget(remainder);
                 try { sink.Allocate(); }
                 catch (Exception e) { Main.LogDebug($"Constraint sink {sink.Label}: {e.Message}"); }
@@ -266,8 +416,18 @@ namespace NGUAdvisor.Managers
                 if (residue > 0)
                 {
                     plan.Unallocated = residue;
+                    // ⚠ "reclaimed next swap" WAS WRONG AND IT MATTERED. Reclaim() (this file) releases
+                    // wandoos, augments, TM, AT, NGU and BT and NEVER touches wishesController, so the
+                    // portion the wish pass takes is not reclaimed by any swap — only the game's own
+                    // removeAllEnergyAndMagic() releases it, which in practice means a gear change.
+                    // At a slider of exactly 100 that makes the claim compounding: measured 2026-08-18,
+                    // the energy pool fell 9e18 -> 1.4e16 (0.155% of cap) between gear swaps while the
+                    // board said the residue came back every tick. The Wishes lane the snapshot now
+                    // appends shows what was actually taken; this sentence covers the rest.
                     plan.UnallocatedReason = "beyond the sink's per-tick absorptive capacity — " +
-                        "offered to the wish share pass (the Wish % sliders decide its take); reclaimed next swap";
+                        "offered to the wish share pass (the Wish % sliders decide its take). What the " +
+                        "wish slots take is HELD, not reclaimed by the next swap; only what they leave " +
+                        "returns to the lanes";
                 }
             }
             else
@@ -280,13 +440,13 @@ namespace NGUAdvisor.Managers
             Surface(type, plan);
             Telemetry(type, plan, offers);
             if (Main.Settings != null && Main.Settings.ConstraintParityLog)
-                Parity(c, type, plan, membership, takes, pool);
+                Parity(c, type, plan, optimised, takes, pool);
             // THE OBJECTIVE LAYER'S COMPARISON RUN (amendment 34 §7.1). Placed here, after the fill
             // has committed, for the same reason Parity is: it is a report on a tick that is already
             // over. It is handed the MEMBERSHIP and nothing else — no plan, no takes, no pool — so
             // there is no argument through which it could move a unit of the pool.
             if (Main.Settings != null && Main.Settings.ObjectiveCompareLog)
-                ObjectiveCompare(c, type, membership);
+                ObjectiveCompare(c, type, optimised);
 
             if (type == ResourceType.Energy) LastEnergyPlan = plan; else LastMagicPlan = plan;
 
@@ -295,6 +455,76 @@ namespace NGUAdvisor.Managers
         }
 
         // ---- per-lane Pass 1 verdicts + rate capacities, from live state --------------------------
+
+        // ── MANUAL-MODE REPORTING ────────────────────────────────────────────────────────────────
+        //
+        // Standing rule 3: a system the advisor has stopped optimising must say so, and must say WHY,
+        // or it is indistinguishable from a system the advisor is failing to optimise. These fire on
+        // the ORDER-of-magnitude event (which lanes are manual) rather than per tick.
+        private static readonly Dictionary<string, string> _manualShape = new Dictionary<string, string>();
+
+        private static string SafeLabel(ResourceBreakpoint bp)
+        {
+            try { return bp.Label; } catch { return bp == null ? "?" : bp.GetType().Name; }
+        }
+
+        private static void ManualLaneTelemetry(ResourceType type, ResourceBreakpoint bp, long took)
+        {
+            string key = type + "|" + SafeLabel(bp);
+            string shape = took > 0 ? "took" : "took-nothing";
+            string had;
+            if (_manualShape.TryGetValue(key, out had) && had == shape) return;
+            _manualShape[key] = shape;
+
+            double pct = 0;
+            try { pct = (bp.CapPercentView ?? 0) * 100.0; } catch { }
+            // Main.Log, not LogDebug: readme.MD and the in-profile comment blocks both tell the
+            // operator "the log tags those lanes [Manual]", and the debug log is not the log they
+            // read. Latched per shape above, so this is once per lane, not once per tick.
+            Main.Log("[Manual] " + type + " " + SafeLabel(bp) + " :" + pct.ToString("0.##")
+                + "% — MANUAL MODE, claimed " + NumberFormatter.Abbrev(took)
+                + " off the top; the advisor does not optimise this lane");
+        }
+
+        // The one lane a `:percent` cannot claim. Said on the operator-facing log, not debug: they
+        // wrote something that did not take effect, and the reason is structural.
+        private static void SinkPercentIgnored(ResourceType type, ResourceBreakpoint bp)
+        {
+            string key = type + "|sinkpct|" + SafeLabel(bp);
+            if (_manualShape.ContainsKey(key)) return;
+            _manualShape[key] = "told";
+            Main.Log("Constraint layer [" + type + "]: " + SafeLabel(bp) + " carries a :percent, but it is "
+                + "the SURPLUS SINK - the lane every other lane's leftovers fall into. Putting it in manual "
+                + "mode would leave the remainder with nowhere to go, so the percent is ignored here and "
+                + "the advisor keeps sizing it. Every other :percent in this list still applies.");
+        }
+
+        // A manual lane refused by Pass 0 or Pass 1. Said out loud, once per shape: the operator
+        // asked for a fixed share and did not get it, and the reason is a rule they cannot see.
+        private static void ManualRefused(ResourceType type, ResourceBreakpoint bp, string pass, string why)
+        {
+            string key = type + "|refused|" + SafeLabel(bp);
+            string shape = pass + "|" + (why ?? "");
+            string had;
+            if (_manualShape.TryGetValue(key, out had) && had == shape) return;
+            _manualShape[key] = shape;
+            Main.Log("Constraint layer [" + type + "]: MANUAL lane " + SafeLabel(bp)
+                + " refused at " + pass + " - " + (why ?? "no reason given")
+                + ". A :percent chooses the AMOUNT; it does not bypass the allocator gates.");
+        }
+
+        private static void ManualOnlyNotice(ResourceType type, int lanes, long took)
+        {
+            string key = type + "|__all__";
+            string shape = lanes + "/" + (took > 0);
+            string had;
+            if (_manualShape.TryGetValue(key, out had) && had == shape) return;
+            _manualShape[key] = shape;
+
+            Main.Log("Constraint layer [" + type + "]: every seated lane authors a :percent, so all "
+                + lanes + " are in MANUAL MODE and there is nothing left for the advisor to optimise. "
+                + "Remove a :percent to hand that system back to the advisor.");
+        }
 
         private static ConstraintLayer.LaneSpec BuildSpec(ResourceBreakpoint bp, Character c, bool evilTrack)
         {
@@ -356,6 +586,7 @@ namespace NGUAdvisor.Managers
                 }
                 else if (bp is RitualBP)
                 {
+                    WarnIfBloodHasNoConsumer();
                     spec.Feasibility = FeasibilityPass.Ritual(new FeasibilityPass.RitualState
                     {
                         BossId = c.bossID,
@@ -395,20 +626,117 @@ namespace NGUAdvisor.Managers
                     if (nguExternal.ChallengeLock == null)
                         nguExternal.ChallengeLock = ChallengeLocks.NguLane(c.challenges.nguChallenge.inChallenge);
                     spec.Feasibility = FeasibilityPass.NguLane(c.NGU.disabled, nguExternal);
-                    if (evilTrack)
-                    {
-                        // Amendment 18 §1: every Evil NGU is a rate row, both pools, all ids —
-                        // capacity from the GAME's cap helper (CapacityPass.Table's Game row),
-                        // never re-derived.
-                        spec.RateLane = true;
-                        spec.Capacity = bp.LaneType == ResourceType.Energy
-                            ? c.NGUController.energyNGUCapAmount(bp.LaneIndex)
-                            : c.NGUController.magicNGUCapAmount(bp.LaneIndex);
-                    }
+                    // EVERY NGU IS A RATE ROW, ON EVERY TRACK — both pools, all ids, capacity from the
+                    // GAME's cap helper (CapacityPass.Table's Game row), never re-derived.
+                    //
+                    // ── WHY THE `evilTrack` GATE IS GONE ──────────────────────────────────────────
+                    // It used to read `if (evilTrack)`, so on the Normal and Sadistic tracks the lane
+                    // got no capacity at all and fell through to self-limiting — the waterfill then
+                    // guessed with the AppetiteProven heuristic instead of doing exact residual
+                    // bookkeeping, and the rate-skip surfacing line was structurally unreachable.
+                    //
+                    // The gate was never justified by the game. Both helpers select the track
+                    // THEMSELVES (decomp AllNGUController.energyNGUCapAmount / magicNGUCapAmount):
+                    //     normal   -> skills[id].level + 1
+                    //     evil     -> skills[id].evilLevel + 1
+                    //     sadistic -> skills[id].sadisticLevel + 1
+                    // so the number was already correct on all three; the advisor was simply declining
+                    // to ask for it on two of them. Amendment 21 §1 says every NGU lane is a rate lane
+                    // on any track; this is the code catching up to it.
+                    //
+                    // FOUND BY MEASUREMENT, not by reading. On a Sadistic-track end-game save the NGU
+                    // lanes plateaued at roughly 40% of their caps with a full 9e18 pool sitting idle in
+                    // front of them, and every lane in 2183 telemetry rows read `cap=self`. It stayed
+                    // invisible while the wish pass was draining the pool — the lanes never had enough
+                    // to reach a cap, so a missing cap cost nothing. Wish sink mode removed the
+                    // starvation and the capacity model became the binding constraint the same hour.
+                    //
+                    // ⚠ THIS CHANGES ALLOCATION on the Normal and Sadistic tracks — which is the point,
+                    // and is what the earlier in-source note deferred rather than disputed.
+                    spec.RateLane = true;
+                    spec.Capacity = bp.LaneType == ResourceType.Energy
+                        ? c.NGUController.energyNGUCapAmount(bp.LaneIndex)
+                        : c.NGUController.magicNGUCapAmount(bp.LaneIndex);
                 }
                 else if (bp is WandoosBP)
                 {
                     spec.Feasibility = FeasibilityPass.WandoosLane(c.wandoos98.disabled, external);
+
+                    // THE SINK'S CEILING, FROM THE GAME'S OWN HELPER. Wandoos buys exactly one level per
+                    // tick and discards the rest ([DECOMP] Wandoos98Controller.cs:276 `energyProgress = 0f`,
+                    // magic :459), so this is a true per-tick capacity with no offer term in it —
+                    // `baseEnergyTime()/totalWandoosEnergySpeed() + 1` ([DECOMP] :409, :434). The comment
+                    // at the head of this file has named these two helpers since the layer was written and
+                    // called neither.
+                    //
+                    // ⚠ THIS IS NOT THE "wire every lane's capacity" change, and deliberately so. TM and
+                    // AdvancedTraining compute their ceiling through a TWO-PASS FIXED POINT seeded at a
+                    // constant (TimeMachineBP.cs:45-67: `calcA = Calculate(500)`, then re-solve with
+                    // `calcA.Offset`, where Offset derives from PPT which derives from the offer), so
+                    // "the" capacity there depends on what you offer and picking one is a judgement call.
+                    // Wandoos has no such loop. It is the one lane where the number is simply available.
+                    //
+                    // What it is USED for is the sink bank clamp in ConstraintLayer.Waterfill.BeginRound —
+                    // see the measurement there. Setting Capacity on the sink changes nothing else:
+                    // FillSession.Offer returns 0 for a SurplusSink before it ever reads Capacity, so the
+                    // sink is still funded once, after the round loop, exactly as before.
+                    // THE SINK BANK CLAMP — GATED ON WHETHER THE REMAINDER HAS A CONSUMER.
+                    //
+                    // Waterfill.BeginRound reserves `_remaining / roster.Count` for the sink each round
+                    // and EndRound removes the whole reserve from `_remaining`. That reserve is a SHARE;
+                    // the sink's appetite is a CEILING. Declaring the ceiling lets the clamp hand the
+                    // difference back to the round loop instead of banking it.
+                    //
+                    // ⚠ WHY THIS IS GATED, AND NOT UNCONDITIONAL. It shipped unconditional on
+                    // 2026-08-18 and was reverted the same day. The bank does not only feed the sink:
+                    // what the sink declines becomes the REMAINDER, and the remainder is the wish
+                    // funding channel — the whole mechanism behind the sink-vs-priority toggle, where
+                    // wishes live on what the lanes leave. Clamping unconditionally drove the remainder
+                    // to exactly 0 and starved the wish pass. Measured on the bench, Melody's save,
+                    // energy pool 9e18:
+                    //   before  TM 20.894%  NGU-7 5.791%  NGU-8 24.872%  remainder 47.612% -> wishes
+                    //   after   TM 12.484%  NGU-7 33.824% NGU-8 48.042%  remainder 0      -> starved
+                    // The freed 47.6% also did not reach TimeMachine, which LOST 8.4 points: that save's
+                    // NGU-7/NGU-8 caps are 3.55e18 and 9e18, at or above the pool, so they are unbounded
+                    // in practice and absorb anything offered.
+                    //
+                    // So the bank's consumer set is {sink, wish pass}, and it must cover both. Wishes
+                    // unlock on a T8 titan kill (WishManager.Unlocked, wishes.wishesOn) — before that the
+                    // wish pass cannot run at all, the remainder has NO consumer, and every unit banked
+                    // past the sink's ceiling is dead. Measured on the live pre-T8 save the same day,
+                    // energy pool 5.319e12 / magic 3.207e12:
+                    //   Wandoos offered 1,533,867,963,723 took 142,907,739,583 -> declined 1,390,960,224,140
+                    //   remainder                                                          1,390,960,224,140
+                    // Exactly equal, both resources, every tick — 100% of the idle, not a fraction of it.
+                    // Zero [WishDbg] lines in that log: the pass never ran. The lanes that WOULD take it
+                    // are TimeMachine and BestAug, both cap=self and both taking >99.99% of every offer,
+                    // and every NGU lane there is rate-bound at its ceiling — the unbounded tail that ate
+                    // Melody's surplus does not exist on a pre-T8 board.
+                    //
+                    // POST-T8 THIS STAYS OFF and the path is byte-identical to today. The principled
+                    // version — seating the wish pass as a destination INSIDE the fill so the bank is
+                    // sized to both consumers at once — is the real fix and is not a same-day change.
+                    // FAILS SAFE, AND THE DIRECTION MATTERS. WishManager.Unlocked() returns false when
+                    // the character cannot be read, so `!Unlocked()` would treat an unreadable board as
+                    // pre-T8 and clamp — failing TOWARD the new behaviour on exactly the saves where it
+                    // starves the wish pass. Read wishesOn positively instead: clamp only when the board
+                    // is readable AND says wishes are off. Any doubt leaves Capacity at SelfLimiting,
+                    // which makes the clamp inert and the path byte-identical to today.
+                    bool wishesProvenLocked = false;
+                    try { wishesProvenLocked = c != null && c.wishes != null && !c.wishes.wishesOn; }
+                    catch { wishesProvenLocked = false; }
+
+                    if (wishesProvenLocked)
+                    {
+                        try
+                        {
+                            long sinkCap = bp.LaneType == ResourceType.Energy
+                                ? c.wandoos98Controller.capAmountEnergy()
+                                : c.wandoos98Controller.capAmountMagic();
+                            if (sinkCap > 0) spec.Capacity = sinkCap;
+                        }
+                        catch { /* a failed read leaves SelfLimiting, i.e. today's behaviour exactly */ }
+                    }
                 }
                 else
                 {
@@ -630,6 +958,48 @@ namespace NGUAdvisor.Managers
 
         // ---- surfacing (spec §3.4, §10): log on state CHANGE, hold the full plan for the UI -------
 
+        // A PROFILE THAT MINTS BLOOD NOBODY SPENDS — say so once, and do not act on it.
+        //
+        // ── WHY THIS IS A WARNING AND NOT A REFUSAL ───────────────────────────────────────────────
+        // The advisor already computes this verdict: BloodPlanner.BloodMatters() answers "is there a
+        // live consumer for blood right now", and with Auto Rebirth off the answer is no — the router
+        // decides Idle, the pre-rebirth force-cast never fires, and every blood point is destroyed at
+        // the next rebirth. The AUTO profile acts on that verdict and drops the ritual token
+        // (ChallengeOverlay's "rituals OFF — no live blood consumer" line). A HAND-WRITTEN profile
+        // never reaches that path, so the token is funded unconditionally.
+        //
+        // Measured 2026-08-18 on an end-game save, 686 h into a run: CAPRIT-7 took 8.1–10.0% of EVERY
+        // magic swap while the same predicate was demoting the blood digger to the tail of the digger
+        // order for exactly this reason. Both readings came from one tick of one advisor.
+        //
+        // The operator's ruling is WARN, NOT DEFUND: an explicit token in a profile the user wrote is a
+        // request, and the advisor's job here is to make sure they know what it costs — not to overrule
+        // it. Refusing the seat would also be a silent behaviour change for every existing profile that
+        // carries a ritual token, which is the failure mode this codebase keeps re-learning.
+        //
+        // Latched on the STATE, not fired once per process: it warns on entry to "no consumer" and
+        // re-arms when a consumer appears, so turning Auto Rebirth off again warns again. Same idiom as
+        // Surface()'s _lastBudgetMsg / _lastSinkIssue below. BloodMatters() caches for 10s
+        // (BloodPlanner.cs:484), so calling this per ritual lane per pass is cheap.
+        private static bool _bloodNoConsumerWarned;
+
+        private static void WarnIfBloodHasNoConsumer()
+        {
+            bool matters;
+            try { matters = BloodPlanner.BloodMatters(); }
+            catch { return; }   // never let a diagnostic take the allocation pass down with it
+
+            if (matters) { _bloodNoConsumerWarned = false; return; }
+            if (_bloodNoConsumerWarned) return;
+            _bloodNoConsumerWarned = true;
+
+            Main.Log("Constraint layer [Magic]: your profile funds a RITUAL lane, but nothing is "
+                   + "currently spending blood — so the magic it takes is lost at the next rebirth. "
+                   + "The auto profile drops rituals in this state; a profile you wrote is honoured as "
+                   + "authored. Give blood a consumer (Auto Rebirth, so a banked NUMBER multi is "
+                   + "cashed) or drop the RIT/CAPRIT/BR token from the Magic timeline.");
+        }
+
         private static void Surface(ResourceType type, ConstraintLayer.Plan plan)
         {
             string last;
@@ -801,8 +1171,13 @@ namespace NGUAdvisor.Managers
                         EnergyPool = bp.LaneType == ResourceType.Energy,
                     });
 
+                // ⚠ WHOSE LIST THIS IS, TAKEN FROM THE THING THAT DECIDED IT. `membership` is the
+                // direct return of ChallengeOverlay.TransformPriorities (:141), and that method can
+                // hand back a generated, templated or fallback list instead of the profile's — which
+                // is precisely what the report used to mislabel. Reading the source rather than
+                // assuming it is the whole of the fix (audit/59 §A, measured 2026-08-18).
                 var report = ObjectiveParity.Compare(stage.Chapter, stage.Known, nguTrack, runTrack,
-                    type == ResourceType.Energy, lanes);
+                    type == ResourceType.Energy, lanes, ChallengeOverlay.MembershipSourceOf(type));
 
                 // The held state is LATCHED, not discarded (spec §3.4): a comparison that silently
                 // never ran is indistinguishable from one that always agrees, and the difference is

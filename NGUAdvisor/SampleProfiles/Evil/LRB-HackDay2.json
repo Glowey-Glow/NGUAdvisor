@@ -5,7 +5,7 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPALLAT", "CAPWAN:20", "CAPTM:20", "AUG-8", "AUG-9" ]
+        "Priorities": [ "CAPALLBT", "CAPALLAT", "CAPWAN", "CAPTM", "AUG-8", "AUG-9" ]
       },
       {
         "Time": { "m": 30 },

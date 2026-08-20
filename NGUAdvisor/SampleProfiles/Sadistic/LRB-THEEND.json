@@ -8,23 +8,23 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPAUG-10:40", "CAPAUG-11:30", "WAN" ]
+        "Priorities": [ "CAPAUG-10", "CAPAUG-11", "WAN" ]
       },
       {
         "Time": { "h": 2 },
-        "Priorities": [ "CAPWAN:20", "CAPALLNGU:30" ]
+        "Priorities": [ "CAPWAN", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 48 },
-        "Priorities": [ "CAPWAN:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 144 },
-        "Priorities": [ "CAPALLNGU:50" ]
+        "Priorities": [ "CAPALLNGU" ]
       },
       {
         "Time": { "h": 206 },
-        "Priorities": [ "CAPWAN:15", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 456 },
@@ -38,33 +38,33 @@
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "BR:25", "WAN" ]
+        "Priorities": [ "BR", "WAN" ]
       },
       {
         "Time": { "h": 2 },
-		"Priorities": [ "CAPWAN:20", "BR:25", "CAPALLNGU:25" ]
+		"Priorities": [ "CAPWAN", "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 48 },
-	  "Priorities": [ "CAPWAN:10", "BR:5", "CAPALLNGU" ]
+	  "Priorities": [ "CAPWAN", "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 144 },
-		"Priorities": [ "BR:5", "CAPALLNGU:50" ]
+		"Priorities": [ "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 206 },
-		"Priorities": [ "CAPWAN:15", "BR:5", "CAPALLNGU" ]
+		"Priorities": [ "CAPWAN", "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "h": 456 },
-		"Priorities": [ "BR:15", "CAPALLNGU" ]
+		"Priorities": [ "BR", "CAPALLNGU" ]
       }
     ],
     "R3": [
       {
         "Time": 0,
-        "Priorities": [ ]
+        "Priorities": []
       }
     ],
 	"Gear Note 1": "Make sure to set hardcap input in Gear Optimizer!",

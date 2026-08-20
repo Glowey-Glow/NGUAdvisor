@@ -5,11 +5,11 @@
     "Energy": [
       {
         "Time": 0,
-	    "Priorities": [ "CAPALLBT", "CAPTM:80" ]
+	    "Priorities": [ "CAPALLBT", "CAPTM" ]
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPTM:10", "CAPALLNGU", "CAPWAN", "AUG-8", "AUG-9" ]
+        "Priorities": [ "CAPTM", "CAPALLNGU", "CAPWAN", "AUG-8", "AUG-9" ]
       },
       {
         "Time": { "h": 24, "m": 30 },
@@ -17,17 +17,17 @@
       },
       {
         "Time": { "h": 48, "m": 30 },
-        "Priorities": [ "CAPWAN:15", "CAPAUG-8:20", "CAPAUG-9:20", "CAPTM:10", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPTM", "CAPALLNGU" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPTM:80" ]
+        "Priorities": [ "CAPTM" ]
       },
       {
         "Time": { "m": 30 },
-        "Priorities": [ "CAPTM:10", "CAPALLNGU", "CAPWAN", "BR" ]
+        "Priorities": [ "CAPTM", "CAPALLNGU", "CAPWAN", "BR" ]
       },
       {
         "Time": { "h": 24, "m": 30 },
@@ -35,7 +35,7 @@
       },
       {
         "Time": { "h": 48, "m": 30 },
-        "Priorities": [ "CAPWAN:20", "CAPTM:10", "BR:50", "CAPALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "BR", "CAPALLNGU" ]
       }
     ],
     "R3": [

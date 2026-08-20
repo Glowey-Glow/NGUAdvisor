@@ -236,17 +236,29 @@ namespace NGUAdvisor.Tests
         // The exact lane set each repaired breakpoint now seats. Written out in full rather than as "four
         // fewer than before": the whole failure was that nobody could see what a Priorities array actually
         // produces, so the fix is only verified if the expectation is the lane list itself.
+        // ⚠ THE PERCENT SUFFIXES ARE GONE FROM THESE EXPECTATIONS BECAUSE THE CORPUS CHANGED, NOT
+        // BECAUSE THE TEST WAS FAILING. `:percent` now means MANUAL MODE, so the shipped sample
+        // profiles had it stripped from their Energy/Magic timelines (where it was inert under the
+        // constraint allocator) and kept on R3 (where it was always honoured).
+        //
+        // This theory CAUGHT that migration, which is what it is for. Every edit below is a suffix
+        // removal and nothing else - same lanes, same order, same count, same cap flags:
+        //     WandoosBP#0(cap:10) -> (cap)     TimeMachineBP#0(cap:10) -> (cap)
+        //     WandoosBP#0(cap:20) -> (cap)     NGUBP#1(cap:50)         -> (cap)
+        //     BR#0(:50) / BR#0(:10)            -> BR#0()
+        // If a future edit here removes or adds a LANE, that is a different thing and needs its own
+        // justification - the whole point of writing the list out in full is that the diff shows it.
         [Theory]
         [InlineData("Sadistic", "24hrRB-StartSad.json", 1,
-            "WandoosBP#0(cap:10)", "TimeMachineBP#0(cap:10)", "BR#0(:50)",
+            "WandoosBP#0(cap)", "TimeMachineBP#0(cap)", "BR#0()",
             "NGUBP#0(cap)", "NGUBP#1(cap)", "NGUBP#2(cap)", "NGUBP#3(cap)",
             "NGUBP#4(cap)", "NGUBP#5(cap)", "NGUBP#6(cap)")]
         [InlineData("Sadistic", "MuffinRB-StartSad.json", 1,
-            "WandoosBP#0(cap:20)", "TimeMachineBP#0(cap:10)", "BR#0(:50)",
+            "WandoosBP#0(cap)", "TimeMachineBP#0(cap)", "BR#0()",
             "NGUBP#0(cap)", "NGUBP#1(cap)", "NGUBP#2(cap)", "NGUBP#3(cap)",
             "NGUBP#4(cap)", "NGUBP#5(cap)", "NGUBP#6(cap)")]
         [InlineData("Sadistic", "MidSADHackDay.json", 3,
-            "WandoosBP#0(cap:10)", "BR#0(:10)", "NGUBP#1(cap:50)",
+            "WandoosBP#0(cap)", "BR#0()", "NGUBP#1(cap)",
             "NGUBP#0()", "NGUBP#1()", "NGUBP#2()", "NGUBP#3()",
             "NGUBP#4()", "NGUBP#5()", "NGUBP#6()")]
         public void Repaired_magic_breakpoint_seats_exactly_these_lanes(

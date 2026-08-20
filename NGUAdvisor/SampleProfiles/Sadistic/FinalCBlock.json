@@ -6,30 +6,30 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPTM:10", "CAPAUG-8", "CAPAUG-9", "CAPALLNGU" ]		
+        "Priorities": [ "CAPALLBT", "CAPTM", "CAPAUG-8", "CAPAUG-9", "CAPALLNGU" ]		
       },
       {
         "Time": { "m": 8 },
-        "Priorities": [ "CAPALLBT", "CAPTM:10", "CAPWAN:50", "CAPAUG-8", "CAPAUG-9", "CAPALLNGU" ],
-        "Priorities_bak": [ "CAPALLBT", "CAPTM:10", "CAPWAN", "CAPAUG-12", "CAPAUG-13" ]		
+        "Priorities": [ "CAPALLBT", "CAPTM", "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPALLNGU" ],
+        "Priorities_bak": [ "CAPALLBT", "CAPTM", "CAPWAN", "CAPAUG-12", "CAPAUG-13" ]		
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPTM:10", "BR", "CAPALLNGU" ]
+        "Priorities": [ "CAPTM", "BR", "CAPALLNGU" ]
       },
       {
         "Time": { "m": 8 },
-        "Priorities": [ "CAPTM:10", "CAPWAN:50", "BR", "CAPALLNGU" ],
-        "Priorities_bak": [ "CAPTM:10", "CAPWAN", "BR" ]
+        "Priorities": [ "CAPTM", "CAPWAN", "BR", "CAPALLNGU" ],
+        "Priorities_bak": [ "CAPTM", "CAPWAN", "BR" ]
       }
     ],
     "R3": [
       {
         "Time": 0,
         "Priorities": [ "HACK-1" ],
-        "PrioritiesDefault": [ ]
+        "PrioritiesDefault": []
       }
     ],
     "Gear": [

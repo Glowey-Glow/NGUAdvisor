@@ -5,17 +5,17 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPTM:10", "CAPWAN:10", "CAPAUG-12:80", "BESTAUG" ]
+        "Priorities": [ "CAPALLBT", "CAPTM", "CAPWAN", "CAPAUG-12", "BESTAUG" ]
       },
       {
         "Time": { "m": 15 },
-        "Priorities": [ "CAPALLBT", "CAPWAN:10", "CAPAUG-12:80", "AUG-13" ]
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPAUG-12", "AUG-13" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPWAN:10", "BR-300:90", "TM" ]
+        "Priorities": [ "CAPWAN", "BR-300", "TM" ]
       }
     ],
     "Gear": [

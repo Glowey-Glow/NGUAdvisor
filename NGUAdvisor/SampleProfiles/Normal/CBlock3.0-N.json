@@ -5,16 +5,16 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLNGU:1", "CAPALLBT", "CAPALLAT", "CAPWAN:50", "CAPTM:25", "CAPBESTAUG", "WAN", "CAPALLNGU" ],
-        "PrioritiesDefault": [ "CAPALLNGU:1", "CAPALLBT", "CAPALLAT", "CAPWAN:50", "CAPTM:25", "CAPBESTAUG", "WAN", "CAPALLNGU" ]
+        "Priorities": [ "CAPALLNGU", "CAPALLBT", "CAPALLAT", "CAPWAN", "CAPTM", "CAPBESTAUG", "WAN" ],
+        "PrioritiesDefault": [ "CAPALLNGU", "CAPALLBT", "CAPALLAT", "CAPWAN", "CAPTM", "CAPBESTAUG", "WAN" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLNGU:1", "CAPWAN:50", "CAPTM:25", "BR", "WAN", "CAPALLNGU" ],
-        "PrioritiesDefault": [ "CAPALLNGU:1", "CAPWAN:50", "CAPTM:25", "BR", "WAN" ],
-        "PrioritiesForNOTM": [ "CAPALLNGU:1", "CAPWAN:50", "RIT-0:20", "WAN" ]
+        "Priorities": [ "CAPALLNGU", "CAPWAN", "CAPTM", "BR", "WAN" ],
+        "PrioritiesDefault": [ "CAPALLNGU", "CAPWAN", "CAPTM", "BR", "WAN" ],
+        "PrioritiesForNOTM": [ "CAPALLNGU", "CAPWAN", "RIT-0", "WAN" ]
       }
     ],
     "R3": [

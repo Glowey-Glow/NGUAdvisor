@@ -529,9 +529,13 @@ namespace NGUAdvisor.Tests
             // the sink is one of the three. 299,138,615,690 / 299,143,178,917 / 299,183,649,976 out
             // of 897,465,444,583 — a third each, spread 0.015%.
             long claimable = pool - 29_038_864_600L;
-            Assert.Equal(299_138_615_690L, r.Total[0]);
-            Assert.Equal(299_143_178_917L, r.Total[1]);
-            Assert.Equal(299_183_649_976L, r.SinkTotal);
+            // Goldens moved a hair on 2026-08-18 when AppetiteProven rule B gained its
+            // "absorbed essentially all of its offer" tolerance: an offer-limited lane now
+            // survives one more round. The PROPERTY this test is about — a third each, spread
+            // ~0.015% — is unchanged; only the last few digits moved, and upward.
+            Assert.Equal(299_139_914_177L, r.Total[0]);
+            Assert.Equal(299_144_477_402L, r.Total[1]);
+            Assert.Equal(299_181_053_004L, r.SinkTotal);
             foreach (var a in new[] { r.Total[0], r.Total[1], r.SinkTotal })
                 Assert.InRange(a, claimable / 3 - claimable / 1000, claimable / 3 + claimable / 1000);
             Assert.Equal(pool, r.Total.Sum() + r.SinkTotal);

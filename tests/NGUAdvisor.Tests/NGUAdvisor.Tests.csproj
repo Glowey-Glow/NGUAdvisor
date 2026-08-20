@@ -35,6 +35,21 @@
          ordered queue) is exercised against a real named-pipe server rather than asserted in prose. It has no
          WinForms/WebView2 dependency, which is why this one companion host file is linkable and MainForm is not. -->
     <Compile Include="..\..\NGUAdvisorCompanion\PipeClient.cs" Link="Linked\PipeClient.cs" />
+    <!-- BOTH halves of the instance-name rules, linked together on purpose: they are separate files in
+         separate runtimes (net48 Mono in-game vs net8 WinForms host) that must agree on four literals and
+         two derivations, and the ONLY thing that can hold them together is a test that compiles both.
+         AdvisorInstanceTests is that test. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\AdvisorInstance.cs" Link="Linked\AdvisorInstance.cs" />
+    <!-- The gear re-equip decision, extracted out of the two Unity-bound gear passes precisely so it
+         can be tested: the button and the periodic pass had drifted into answering the same request
+         differently, and neither could be covered where it lived. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GearRefreshPolicy.cs" Link="Linked\GearRefreshPolicy.cs" />
+    <!-- What the wish pass took of energy and magic. Linked because the failure it fixes was INVISIBLE:
+         the wish pass runs outside the constraint layer, so the board drew the largest consumer of
+         energy on a mature save as nothing at all, and the residue it hid inside claimed to be
+         "reclaimed next swap" when wish holdings are never reclaimed. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\WishShareView.cs" Link="Linked\WishShareView.cs" />
+    <Compile Include="..\..\NGUAdvisorCompanion\AdvisorInstance.cs" Link="Linked\CompanionAdvisorInstance.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\NumberFormatter.cs" Link="Linked\NumberFormatter.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\TitanTables.cs" Link="Linked\TitanTables.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\CampaignTables.cs" Link="Linked\CampaignTables.cs" />
@@ -75,6 +90,12 @@
          Main.Character and cannot compile here; the decision — which id takes which slot, and what
          gets said about the ones that can't — is Unity-free by construction. -->
     <Compile Include="..\..\NGUAdvisor\Managers\GearLock.cs" Link="Linked\GearLock.cs" />
+    <!-- The community guide's per-chapter "Items to Keep" table + horizon gating. Linked because the
+         table is the product: a wrong id silently protects the wrong item (or lets the right one hit
+         TRASH), and name-matching traps are exactly what the ids were resolved to avoid — so the ids,
+         chapter ranges and gating rules are asserted here. InventoryAdvisor itself reads Main.Character
+         and cannot compile here; GuideGear is pure by construction (the caller supplies the chapter). -->
+    <Compile Include="..\..\NGUAdvisor\Managers\GuideGear.cs" Link="Linked\GuideGear.cs" />
     <!-- THE GEAR SEARCH ITSELF. This is the one that had no tests at all, and the reason is structural:
          it used to be the body of GearOptimizer.Optimize, which reads Main.Character and
          Main.InventoryController and therefore cannot compile here. So ~1979 pure-function tests ran
@@ -162,6 +183,10 @@
          halve a hack's level rate) is pinned against a faithful replay of the game's accumulate loop. -->
     <Compile Include="..\..\NGUAdvisor\Managers\HackMath.cs" Link="Linked\HackMath.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\HackPhase.cs" Link="Linked\HackPhase.cs" />
+
+    <!-- BeardPriority: the operator's beard slot order (ruling 2026-08-18). Unity-free on purpose —
+         the ORDER is the decision, so the order has to be assertable without the game attached. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\BeardPriority.cs" Link="Linked\BeardPriority.cs" />
     <Compile Include="..\..\NGUAdvisor\Managers\BloodRouter.cs" Link="Linked\BloodRouter.cs" />
     <!-- "Is a rebirth coming?", as distinct from "when?". Linked because the two questions were the
          same line of code for as long as every shipped profile answered them the same way, and the
@@ -258,6 +283,16 @@
          constraint layer had no per-lane dump at all, and the renderer that fixes that must be
          testable without the game build (a Release build of NGUAdvisor.csproj auto-deploys). -->
     <Compile Include="..\..\NGUAdvisor\Managers\AllocTelemetry.cs" Link="Linked\AllocTelemetry.cs" />
+    <!-- THE THIRD POOL'S PLAN, composed rather than allocated. R3 is deliberately outside the
+         constraint layer (ConstraintLayerBridge.cs:19-23: routing it would impose the amendment-28
+         denominator on a lane whose own law forbids one, because a fifteen-way split lands every hack
+         under the 2^-25 float stall floor), so there is no LastR3Plan and the companion had nothing
+         to render. R3PoolView builds the identical ConstraintLayer.Plan shape out of what the R3
+         allocator records plus the live holdings, and it is pure for the usual reason: every sentence
+         it produces is the entire product of a lane that received zero, and a wrong one is a SILENT
+         wrong answer — a board that misreports where the pool went is worse than no board. The live
+         readers (R3Breakpoints, WishManager, UiBridge) touch Main.Character and are not linkable. -->
+    <Compile Include="..\..\NGUAdvisor\Managers\R3PoolView.cs" Link="Linked\R3PoolView.cs" />
   </ItemGroup>
 
 </Project>

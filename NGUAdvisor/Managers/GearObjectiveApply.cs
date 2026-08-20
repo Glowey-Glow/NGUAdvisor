@@ -46,6 +46,9 @@ namespace NGUAdvisor.Managers
                 // Gear Lock. Read from the SAME publisher as the objective and the respawn flag, so
                 // the refresh pass can never re-solve an objective without the locks that came with it.
                 i.ProfileLocks = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveLocks;
+                // The manual ID row — same publisher, same reason: the refresh pass must never see
+                // an objective without the row state that came with it.
+                i.ProfileManualIds = AllocationProfiles.Breakpoints.GearBreakpoints.ActiveManualIds;
             }
             catch { }
 

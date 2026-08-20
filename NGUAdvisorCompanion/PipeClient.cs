@@ -45,10 +45,27 @@ public sealed class PipeClient : IDisposable
     /// <summary>Raised only on snapshot-connection transitions (reader thread).</summary>
     public event Action<bool> ConnectionChanged;
 
-    public PipeClient(string pipeName)
+    /// <summary>
+    /// Convenience for the "command pipe is the snapshot pipe + Cmd" convention, which is what the tests
+    /// use to build a GUID-suffixed pair.
+    /// </summary>
+    public PipeClient(string pipeName) : this(pipeName, pipeName + "Cmd") { }
+
+    /// <summary>
+    /// Both names given explicitly, which is what the companion itself uses.
+    /// </summary>
+    /// <remarks>
+    /// Not a redundant overload: once the names carry an instance suffix (AdvisorInstance) the single-name
+    /// convention ALIASES. "NGUAdvisorUI-x" + "Cmd" is "NGUAdvisorUI-xCmd", which is also the snapshot pipe
+    /// of an instance called "xCmd" — and a NamedPipeServerStream is created with maxInstances 1, so the
+    /// second of those two advisors would silently fail to bind and show an empty UI. Decorating the two
+    /// BASES independently ("NGUAdvisorUI-x", "NGUAdvisorUICmd-x") cannot collide for any pair of ids,
+    /// because the two bases differ before the separator.
+    /// </remarks>
+    public PipeClient(string snapshotPipeName, string commandPipeName)
     {
-        _snapPipe = pipeName;
-        _cmdPipe = pipeName + "Cmd";
+        _snapPipe = snapshotPipeName;
+        _cmdPipe = commandPipeName;
 
         // Started here rather than in Start() so a command submitted before the reader loop is running (or
         // without one at all, as in the tests) is still queued and delivered in order. Parked on Take() when

@@ -4,13 +4,13 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPTM:10", "AUG-8:10", "AUG-9:10", "ALLNGU" ]
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPTM", "AUG-8", "AUG-9", "ALLNGU" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPWAN", "CAPTM:10", "BR", "ALLNGU" ]
+        "Priorities": [ "CAPWAN", "CAPTM", "BR", "ALLNGU" ]
       }
     ],
     "R3": [

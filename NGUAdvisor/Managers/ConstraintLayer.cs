@@ -117,6 +117,26 @@ namespace NGUAdvisor.Managers
             public int RateLanesSkipped;          // seated rate lanes that received zero this tick
             public long RateSkipCheapest;         // capacity of the cheapest such lane
             public long RateSkipPool;             // what remained when that cheapest lane was refused
+
+            // THE ROUND STRUCTURE, WHICH WAS THE DOMINANT DETERMINANT OF THE SPLIT AND WAS INVISIBLE.
+            //
+            // `Offered` and `Allocation` on each lane are CUMULATIVE ACROSS ROUNDS (ConstraintLayerBridge
+            // says so at its `offers`/`takes` arrays), so a lane printing `offered = 1.69 x cap` is not a
+            // defect — it is four rounds summed, and no reader could tell. Worse, every allocation
+            // question that arose on 2026-08-18 had to be answered by reading the fill's source, because
+            // the log records the TOTALS of a process whose per-round shape decides the answer:
+            //   * a lane retired in round 1 versus surviving to round 4 is a 1000x difference in take,
+            //     and both print one `offered=`/`took=` pair;
+            //   * `AppetiteProven` compares this round's take to the previous round's, and neither
+            //     number is emitted anywhere;
+            //   * the sink's per-round reserve is clamped silently.
+            // Two allocator defects that day (rule B retiring an offer-limited lane, and the Evil-only
+            // capacity gate) were diagnosed from source and confirmed only by their side effects.
+            //
+            // Capped at the first few rounds on purpose: the tail is where a pathological fill would
+            // show, but the head is where the split is decided, and this rides in a per-tick log line.
+            public int Rounds;                    // waterfill rounds actually executed
+            public string RoundTrace;             // "r1 n=11 offered=… took=… left=…" per round, head-capped
         }
 
         // ---- the composition ---------------------------------------------------------------------
@@ -939,7 +959,39 @@ namespace NGUAdvisor.Managers
             if (take <= offer - take)
                 return false;
             // Rule B — only meaningful once there IS a previous round to improve on.
-            if (!firstRound && take <= previousTake)
+            //
+            // ⚠ AND ONLY WHEN THE LANE LEFT SOMETHING ON THE TABLE. A lane that absorbed its ENTIRE
+            // offer has proven appetite in the only way it can; it has not shown a ceiling, it has
+            // shown it was not offered enough. Retiring it for taking less than last round punishes it
+            // for the offer shrinking, which it does by construction — offers are
+            // `remaining / roster.Count`, so round 2's offer is strictly smaller than round 1's and a
+            // fully-absorbing lane's take MUST fall. Rule B therefore retired exactly the lanes that
+            // most wanted more.
+            //
+            // MEASURED, on a live mid-Evil save 2026-08-18: TimeMachine-0 was offered 1014366448125 and
+            // took 1014356535925 — 99.999% — was retired, and 66.127% of the energy pool then sat idle
+            // every tick with no destination at all (48.273% of magic). It had been latent for as long
+            // as the NGU lanes were self-limiting and soaked up the surplus themselves; making them
+            // rate lanes with real capacities exposed it the same hour.
+            //
+            // TERMINATION IS PRESERVED. The proof below turns on the pool strictly shrinking: a lane
+            // kept alive by this clause took its WHOLE offer, so `remaining` falls by that offer every
+            // round it survives. A lane that takes nothing is already retired by the `take <= 0` guard
+            // above, so no lane can survive on a zero take.
+            // ⚠ THE TEST IS "ABSORBED ESSENTIALLY ALL OF IT", NOT "ABSORBED EXACTLY ALL OF IT". A first
+            // attempt at this fix used `take < offer` and CHANGED NOTHING, because a stair lane can
+            // only take a whole number of ticks and therefore always leaves a sliver. Measured on the
+            // live save that motivated it: TimeMachine-0 offered 1014377423037, took 1014365304478 —
+            // 99.9988%, short by 12,118,559 — so `take < offer` held and Rule B retired it exactly as
+            // before. The lane was never near a ceiling; it was one stair short of its offer.
+            //
+            // One percent is a judgement call and is worth naming as one. It is far above any stair
+            // remainder these lanes produce at any pool size that matters (the miss above is 0.0012%),
+            // and far below the gap a genuinely ceiling-limited lane leaves — that lane's take is a
+            // FIXED number while the offer moves, so once the offer exceeds the ceiling it leaves tens
+            // of percent on the table and Rule B still retires it on schedule.
+            long unabsorbed = offer - take;
+            if (!firstRound && take <= previousTake && unabsorbed > offer / 100)
                 return false;
             return true;
         }
@@ -1063,6 +1115,37 @@ namespace NGUAdvisor.Managers
                 // taken at the END of the round, the session is untouched, so every offer inside the
                 // round is byte-for-byte what it was before this commit.
                 _sinkReserveThisRound = _sinkSeated ? _remaining / roster.Count : 0;
+
+                // ⚠ CLAMP THE BANK TO WHAT THE SINK CAN ACTUALLY ABSORB.
+                //
+                // The reserve above is a SHARE; the sink's appetite is a CEILING, and they are unrelated
+                // numbers. Wandoos buys exactly one level per tick — `capAmountEnergy()` is
+                // `baseEnergyTime()/totalWandoosEnergySpeed() + 1`, with no pool term anywhere — so a
+                // reserve larger than that banks resource the sink will never take, and `EndRound`
+                // removes the whole reserve from `_remaining`. It is not offered to the sink and it is
+                // not re-offerable to anyone else: it simply leaves the tick.
+                //
+                // MEASURED, live save 2026-08-18: the sink was handed 2,341,374,568,069 and absorbed
+                // 150,589,402,454 of it — 6.4%. Over eight rounds the bank accumulated 2.19e12 while
+                // TimeMachine, seated in the same set with ~1.8e16 of headroom, took 99.999% of every
+                // offer it ever received and was never once ceiling-bound in 1,424 logged ticks. That
+                // 2.19e12 is 41.27% of the pool, and it was reported as an idle remainder — so the
+                // "nothing can absorb this" reading of that number was wrong. Nothing was ASKED.
+                //
+                // The clamp only ever makes the bank SMALLER, so it cannot reintroduce the starvation
+                // amendment 36 §7 added the bank to fix (Wandoos 30.9% of pool -> under 0.1%): the sink
+                // still gets its share whenever its share is the binding term, which is exactly when the
+                // pool is small enough for starvation to be possible.
+                //
+                // NO CAPACITY, NO CLAMP. `SelfLimiting` leaves the reserve byte-for-byte as it was, so
+                // every lane set that does not supply a sink capacity behaves exactly as before — which
+                // is every set until ConstraintLayerBridge started supplying one for Wandoos.
+                if (_sinkSeated && _sinkIndex >= 0 && _residual[_sinkIndex] != SelfLimiting)
+                {
+                    long headroom = _residual[_sinkIndex] - _sinkBank;
+                    if (headroom < 0) headroom = 0;
+                    if (_sinkReserveThisRound > headroom) _sinkReserveThisRound = headroom;
+                }
 
                 _round++;
                 _session = new FillSession(_remaining, roster);

@@ -196,7 +196,16 @@ namespace NGUAdvisor.Managers
                 for (int i = 0; i < _entries.Count; i++)
                 {
                     if (_entries[i].WriterId != writerId) continue;
-                    if (_entries[i].Value == value && _entries[i].State != WriteState.Reverted) return;  // unchanged
+                    // ⚠ STALE MUST FALL THROUGH, NOT SHORT-CIRCUIT. MarkStaleOutsideSegment flips a
+                    // row when the segment that justified it ends; the writer then re-asserts the
+                    // SAME value under the new segment, and this early return used to swallow it -
+                    // so the row read Stale for the rest of the run while the write was live and
+                    // current. Beards, diggers and the ITOPOD range all re-record identical values
+                    // every pass, so all three were permanently mislabeled the moment a segment
+                    // changed. Falling through re-stamps the row with the new segment and Active.
+                    if (_entries[i].Value == value
+                        && _entries[i].State != WriteState.Reverted
+                        && _entries[i].State != WriteState.Stale) return;  // unchanged and still current
                     _entries.RemoveAt(i);
                     break;
                 }
@@ -236,6 +245,37 @@ namespace NGUAdvisor.Managers
                         e.State = WriteState.Stale;
                         if (!string.IsNullOrEmpty(why)) e.Why = why;
                     }
+        }
+
+        // THE WIRING MarkStale WAS MISSING (audit/59 §C, decision 5). LedgerEntry.Segment's own
+        // comment names the mechanism — "the run phase it was written in, THE USUAL REASON A WRITE
+        // GOES STALE" — but nothing ever compared it to the live phase, so of the ledger's four
+        // states only Active and Contested were reachable outside gear. A row justified by a segment
+        // that ended two hours ago read "active" forever, which is the precise claim the feature
+        // exists to stop the product making.
+        //
+        // Called from the single segment writer (ChallengeOverlay.SetSegment), so "the segment
+        // ended" is one event with one consequence.
+        //
+        // ONLY Active TRANSITIONS. Contested is a statement about arbitration between two writers and
+        // outranks a statement about timing — a contested row whose segment passed is still, first,
+        // contested, and flattening it to Stale would hide the more serious fact. Reverted is
+        // terminal: the field is already back in the operator's hands.
+        public static int MarkStaleOutsideSegment(string liveSegment)
+        {
+            liveSegment = liveSegment ?? "";
+            int n = 0;
+            lock (_gate)
+                foreach (var e in _entries)
+                {
+                    if (e.State != WriteState.Active) continue;
+                    if (string.IsNullOrEmpty(e.Segment)) continue;   // never justified by a segment
+                    if (e.Segment == liveSegment) continue;          // its reason still holds
+                    e.State = WriteState.Stale;
+                    e.Why = e.Why + " — the " + e.Segment + " segment that justified this has ended";
+                    n++;
+                }
+            return n;
         }
 
         public static List<LedgerEntry> Snapshot()

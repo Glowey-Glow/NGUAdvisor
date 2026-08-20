@@ -294,7 +294,9 @@ namespace NGUAdvisor.Tests
             var after = Drive(AugEnergyPool, EnergyBlock(anchor: true, sink: true), EnergyTakes(anchor: true));
 
             Assert.Equal(1_723_065_677_713L, before.Total[0]);
-            Assert.Equal(854_524_124_048L, after.Total[0]);
+            // 854,524,124,048 -> 854,524,789,415 on 2026-08-18 (rule B tolerance; +0.00008%).
+            // The 2.02x fall this test exists to reproduce is unchanged.
+            Assert.Equal(854_524_789_415L, after.Total[0]);
 
             // A 2.02x fall in the lane this segment exists to fund, and it is the DIVISOR plus the
             // per-round bank that did it — the sink is offered nothing until the loop is over.
@@ -306,7 +308,7 @@ namespace NGUAdvisor.Tests
             // And it makes the block IDLE where it idled nothing: Wandoos cannot absorb the whole
             // 868 B it is handed (WandoosEnergyCapacity, measured), so the excess is left for the
             // wish share pass exactly as ConstraintLayerBridge documents.
-            Assert.Equal(868_541_553_665L, after.SinkOffer);
+            Assert.Equal(868_540_888_298L, after.SinkOffer);
             Assert.Equal(0, before.Idle);
             Assert.True(after.SinkOffer - WandoosEnergyCapacity > 70_000_000_000L,
                 "the unconditional sink strands resource this block did not strand before");

@@ -5,17 +5,17 @@
     "Energy": [
       {
         "Time": 0,
-        "Priorities": [ "CAPALLBT", "CAPWAN:50", "CAPAUG-8", "CAPAUG-9", "CAPTM" ],
-        "PrioritiesLSC": [ "CAPALLBT", "CAPWAN:50", "CAPTM", "CAPAUG-12", "CAPAUG-13", "AUG-8", "AUG-9" ],
-        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN:50", "CAPTM", "CAPAUG-8", "CAPAUG-9", "WAN" ]
+        "Priorities": [ "CAPALLBT", "CAPWAN", "CAPAUG-8", "CAPAUG-9", "CAPTM" ],
+        "PrioritiesLSC": [ "CAPALLBT", "CAPWAN", "CAPTM", "CAPAUG-12", "CAPAUG-13", "AUG-8", "AUG-9" ],
+        "PrioritiesDefault": [ "CAPALLBT", "CAPWAN", "CAPTM", "CAPAUG-8", "CAPAUG-9", "WAN" ]
       }
     ],
     "Magic": [
       {
         "Time": 0,
-        "Priorities": [ "CAPWAN:50", "BR", "CAPTM", "CAPWAN" ],
-        "PrioritiesDefault": [ "CAPWAN:50", "CAPTM", "BR", "WAN" ],
-        "PrioritiesForNoTM": [ "CAPWAN:50", "RIT-7:20", "WAN" ]
+        "Priorities": [ "CAPWAN", "BR", "CAPTM" ],
+        "PrioritiesDefault": [ "CAPWAN", "CAPTM", "BR", "WAN" ],
+        "PrioritiesForNoTM": [ "CAPWAN", "RIT-7", "WAN" ]
       }
     ],
     "R3": [

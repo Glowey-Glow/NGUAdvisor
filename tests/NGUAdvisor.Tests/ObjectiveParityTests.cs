@@ -51,11 +51,15 @@ namespace NGUAdvisor.Tests
                 Lane("WandoosBP", "WAN", 0),
             };
 
+        // The default here is Profile because that is what the shared fixture means — a membership the
+        // caller has declared to be the operator's own. The UNDECLARED case is a distinct hazard and is
+        // tested on its own below rather than smuggled in as this helper's default.
         private static ObjectiveParity.Report Run(int chapter = 3,
             TargetPass.Track track = TargetPass.Track.Normal,
-            List<ObjectiveParity.ProfileLane> lanes = null, bool energy = true) =>
+            List<ObjectiveParity.ProfileLane> lanes = null, bool energy = true,
+            ObjectiveParity.MembershipSource source = ObjectiveParity.MembershipSource.Profile) =>
             ObjectiveParity.Compare(chapter, true, track, track, energy,
-                lanes ?? LiveShapedMembership());
+                lanes ?? LiveShapedMembership(), source);
 
         private static IEnumerable<ObjectiveParity.Row> Of(ObjectiveParity.Report r,
             ObjectiveParity.Verdict v) => r.Rows.Where(x => x.Verdict == v);
@@ -630,7 +634,103 @@ namespace NGUAdvisor.Tests
             var ranks = r.Rows.Where(x => x.ProfileRank >= 0).Select(x => x.ProfileRank).ToList();
             Assert.Equal(ranks.OrderBy(x => x).ToList(), ranks);
 
+            // "#1" means the first token in the list that was compared — and "profile" is a claim
+            // about WHOSE list, which only holds because Run() declares it. See the source tests below.
             Assert.Contains("(profile #1)", ObjectiveParity.Format("Energy", r));
+        }
+
+        // ---- whose list is this? (audit/59 §A) -----------------------------------------------------
+
+        // THE MEASURED DEFECT, both halves of it. On a live save the block asserted "THE PROFILE IS
+        // STILL THE ONE ALLOCATING" while auto profile had substituted the token list, and numbered the
+        // generated lanes "(profile #10)" through "(profile #13)" on a profile whose Energy row holds
+        // THREE tokens. Neither sentence may be producible from an auto-profile report again.
+        [Fact]
+        public void An_auto_profile_membership_is_never_rendered_as_the_operators_own_list()
+        {
+            var block = ObjectiveParity.Format("Energy",
+                Run(source: ObjectiveParity.MembershipSource.AutoProfile));
+
+            Assert.DoesNotContain("THE PROFILE IS STILL THE ONE ALLOCATING", block);
+            Assert.DoesNotContain("(profile #", block);
+            Assert.Contains("(auto-profile #", block);
+            Assert.Contains("Auto Profile generated this segment's list", block);
+            Assert.Contains("your own tokens were not consulted", block);
+        }
+
+        // The structural claim is the one that survives: this file is handed value copies and returns
+        // a report, so "nothing here was applied" is true whoever supplied the list. Losing it while
+        // fixing the origin claim would trade one misreading for a worse one.
+        [Theory]
+        [InlineData(ObjectiveParity.MembershipSource.Unstated)]
+        [InlineData(ObjectiveParity.MembershipSource.Profile)]
+        [InlineData(ObjectiveParity.MembershipSource.AutoProfile)]
+        [InlineData(ObjectiveParity.MembershipSource.ChallengeTemplate)]
+        [InlineData(ObjectiveParity.MembershipSource.ChallengeFallback)]
+        [InlineData(ObjectiveParity.MembershipSource.ChallengeOverlay)]
+        public void Every_source_still_says_nothing_was_applied_and_that_a_silence_is_not_a_drop(
+            ObjectiveParity.MembershipSource source)
+        {
+            var block = ObjectiveParity.Format("Energy", Run(source: source));
+            Assert.Contains("NOTHING HERE WAS APPLIED", block);
+            Assert.Contains("NO OPINION is not a drop", block);
+        }
+
+        // Fail-closed: a caller that has not been taught to say where its membership came from must
+        // produce a report that admits it, not one that inherits the old claim. The default parameter
+        // is the whole mechanism, so it is asserted on the API rather than on a helper.
+        [Fact]
+        public void An_undeclared_membership_says_so_instead_of_claiming_the_profile()
+        {
+            var r = ObjectiveParity.Compare(3, true, TargetPass.Track.Normal, TargetPass.Track.Normal,
+                true, LiveShapedMembership());
+
+            Assert.Equal(ObjectiveParity.MembershipSource.Unstated, r.Source);
+
+            var block = ObjectiveParity.Format("Energy", r);
+            Assert.Contains("did not record where this membership came from", block);
+            Assert.DoesNotContain("(profile #", block);
+            Assert.Contains("(membership #", block);
+        }
+
+        // Each source gets its own word and its own sentence — a shared one would put us back where a
+        // single confident sentence covered four different origins.
+        [Fact]
+        public void Each_source_renders_a_distinct_word_and_a_distinct_sentence()
+        {
+            var sources = (ObjectiveParity.MembershipSource[])
+                Enum.GetValues(typeof(ObjectiveParity.MembershipSource));
+
+            var words = sources.Select(ObjectiveParity.RankWord).ToList();
+            Assert.Equal(words.Count, words.Distinct().Count());
+
+            var sentences = sources.Select(ObjectiveParity.SourceSentence).ToList();
+            Assert.Equal(sentences.Count, sentences.Distinct().Count());
+            Assert.All(sentences, s => Assert.False(string.IsNullOrWhiteSpace(s)));
+
+            // Only the profile's own list may be described without a warning mark; every substitution
+            // is something the operator did not author and has to be flagged as such.
+            foreach (var s in sources)
+            {
+                var sentence = ObjectiveParity.SourceSentence(s);
+                if (s == ObjectiveParity.MembershipSource.Profile)
+                    Assert.DoesNotContain("⚠", sentence);
+                else
+                    Assert.Contains("⚠", sentence);
+            }
+        }
+
+        // A substitution that changes nothing else about the lane set still changes what the block
+        // SAYS, so the throttle must let it through.
+        [Fact]
+        public void The_signature_moves_when_the_membership_source_changes()
+        {
+            var asProfile = ObjectiveParity.Signature(
+                Run(source: ObjectiveParity.MembershipSource.Profile));
+            var asGenerated = ObjectiveParity.Signature(
+                Run(source: ObjectiveParity.MembershipSource.AutoProfile));
+
+            Assert.NotEqual(asProfile, asGenerated);
         }
 
         // The terminality of every rendered level travels WITH it: 23 §0.4's failure is a

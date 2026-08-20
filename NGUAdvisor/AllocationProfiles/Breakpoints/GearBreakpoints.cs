@@ -45,6 +45,15 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
             ActiveObjective = null;
             ActiveForceRespawn = false;
             ActiveLocks = null;
+            // ⚠ ADDING A PUBLISHED FIELD MEANS ADDING IT HERE. ActiveManualIds now OUTRANKS the
+            // standing pin, and its Result carries Name = null, so a stale value does not merely
+            // mis-report: Resolve returns ProfileManual, the pin is suppressed, and
+            // AdvisorApply's `if (string.IsNullOrEmpty(objName)) return;` makes the refresh pass do
+            // nothing. Left uncleared, one manual row in run 1 leaves gear UNMANAGED for the opening
+            // stretch of every later run - with the companion cheerfully reporting manual mode.
+            // That is the exact defect this reset exists to prevent, which is why it is called from
+            // both Reset() (rebirth) and OnNoBreakpoint().
+            ActiveManualIds = null;
         }
 
         private static GearSpec ParseSpec(JSONNode bp)
@@ -67,6 +76,19 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
         // The item IDs the active gear breakpoint pins. Null / empty when it pins nothing, which is
         // every profile written before Gear Lock existed.
         public static int[] ActiveLocks { get; private set; }
+
+        // THE MANUAL GEAR ROW — a profile row that lists item IDs instead of naming an objective.
+        //
+        // audit/59 §A P0: this had no publisher at all, so GearObjectiveResolver could not see it.
+        // Resolve tested ProfileObjective (null for an ID row), fell through to the standing pin, and
+        // the pin re-equipped inside the same second; BaseBreakpoints then latched `swapped` so the
+        // row never re-asserted. The operator authored a loadout and the product silently wore
+        // something else, permanently.
+        //
+        // Under the ownership model (operator ruling 2026-08-18) an authored ID row is the gear
+        // equivalent of an authored `:percent`: it is the operator saying "not this system, I'll
+        // drive it". So it OUTRANKS the pin, and it is announced as manual mode.
+        public static int[] ActiveManualIds { get; private set; }
 
         // Rebirth (CustomAllocation calls Reset on every lane) and "the timeline has nothing to say
         // yet". Both used to leave the previous value standing: at t=0 of a new run GetCurrentBreakpoint
@@ -130,6 +152,7 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 ActiveObjective = objectiveName;
                 ActiveForceRespawn = forceRespawn;
                 ActiveLocks = locks == null ? null : locks.Ids.ToArray();
+                ActiveManualIds = null;          // an objective row is advisor-driven, not manual
             }
             else
             {
@@ -137,6 +160,9 @@ namespace NGUAdvisor.AllocationProfiles.Breakpoints
                 ActiveObjective = null;
                 ActiveForceRespawn = false;
                 ActiveLocks = null;
+                // Published so Resolve can rank it above the pin. Empty stays NULL: a row with no
+                // objective AND no ids is not a manual declaration, it is an empty row.
+                ActiveManualIds = ids.Length > 0 ? ids : null;
             }
 
             current = bp;

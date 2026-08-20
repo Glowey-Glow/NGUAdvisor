@@ -173,6 +173,22 @@ namespace NGUAdvisor.AllocationProfiles
                 // silently stopped while the HUD still read "active". Now a failing step is logged
                 // (throttled per step) and the rest still run; the input-restore is itself a step, so
                 // it happens even when an earlier step faulted.
+                // WISHES AS A SINK: hand their holdings back BEFORE anything allocates, so the lanes
+                // below see that resource and can cap out on it. The wish pass at the end of this tick
+                // then takes only what is left.
+                //
+                // Gated on the SAME conditions as the wish step itself, deliberately: releasing here and
+                // then skipping the allocation (preventMagicAllocation, or the toggle going off between
+                // the two) would strand every wish at zero for the tick. The two must agree or the
+                // release is a leak.
+                //
+                // In priority mode this does nothing here — WishManager.Allocate still releases at the
+                // end, which is what makes that mode compound. See SavedSettings.WishSinkMode.
+                RunStep("Wishes (release holdings to the lanes)", () =>
+                {
+                    if (Settings.ManageWishes && !preventMagicAllocation && Settings.WishSinkMode)
+                        WishManager.ReleaseHoldings();
+                });
                 RunStep("NGU difficulty", () =>
                 {
                     if (Settings.ManageNGUDiff && Main.Character.buttons.ngu.interactable)
@@ -515,6 +531,19 @@ namespace NGUAdvisor.AllocationProfiles
         public NGUDiffBreakpoints ngus = new NGUDiffBreakpoints();
         public ConsumablesBreakpoints consumables = new ConsumablesBreakpoints();
 
+        // The Challenges array has no breakpoint class and therefore no Length — which is exactly why it
+        // had no line on this banner and no key in ProfileSections until audit/59 §A went looking for
+        // one. A profile carried twenty entries and no surface in the product acknowledged them.
+        public int challengesAuthored;
+        public int challengesRecognised;
+
+        // `:percent` tokens as AUTHORED, per pool, deduplicated. Deliberately not a count: the notice
+        // has to quote the operator's own text back or it is just another claim they cannot check.
+        public readonly List<string> percentEnergy = new List<string>();
+        public readonly List<string> percentMagic = new List<string>();
+        public readonly List<string> percentR3 = new List<string>();
+        public readonly List<string> percentDropped = new List<string>();
+
         public BreakpointWrapper(JSONNode parsed)
         {
             var rb = parsed["Rebirth"];
@@ -553,7 +582,24 @@ namespace NGUAdvisor.AllocationProfiles
                 rebirth = rbs.ToArray();
             }
 
-            BaseRebirth.ParseChallenges(parsed["Challenges"].AsArray.Children.Select(bp => bp.Value.ToUpper()).ToArray());
+            // ⚠ BOTH counts are kept, because they are different facts. ParseChallenges silently drops a
+            // token with no '-' and a token whose ordinal will not parse, and logs (once) for a token
+            // naming no known challenge — so "20 authored" is what the operator wrote and
+            // BaseRebirth.ChallengeCount is what the rotation can engage. Reporting only the first would
+            // repeat the class of lie this whole pass exists to remove; reporting only the second hides
+            // that entries were discarded.
+            var challengeTokens = parsed["Challenges"].AsArray.Children.Select(bp => bp.Value.ToUpper()).ToArray();
+            BaseRebirth.ParseChallenges(challengeTokens);
+            challengesAuthored = challengeTokens.Length;
+            challengesRecognised = BaseRebirth.ChallengeCount;
+
+            // The `:percent` census, taken from the RAW timeline text before parsing folds it away.
+            // CapPercent is private and the parsed lane cannot say what token produced it, so a
+            // load-time notice that names the operator's own tokens has to read the JSON.
+            ScanPercentTokens(parsed["Energy"], percentEnergy);
+            ScanPercentTokens(parsed["Magic"], percentMagic);
+            ScanPercentTokens(parsed["R3"], percentR3);
+
             energy = new EnergyBreakpoints(parsed["Energy"]);
             magic = new MagicBreakpoints(parsed["Magic"]);
             r3 = new R3Breakpoints(parsed["R3"]);
@@ -570,25 +616,187 @@ namespace NGUAdvisor.AllocationProfiles
             beards = new BeardBreakpoints(diggers);
         }
 
+        // THE LOAD BANNER — and what it used to leave out.
+        //
+        // Operators are documented as reading these counts to confirm a profile actually loaded, so the
+        // numbers carry more weight than a count of parsed array entries deserves. Measured on two live
+        // saves 2026-08-18 (audit/59 §A): this banner printed "1 Consumable Breakpoints" on a game with
+        // ManageConsumables:false and "1 Rebirth Breakpoints" on one with AutoRebirth:false. Both counts
+        // were correct and both read as a statement that the section was running. Neither was.
+        //
+        // The annotation comes from ProfileSections.Evaluate rather than a second set of guards written
+        // here, ON PURPOSE: the rules live scattered across CustomAllocation's own per-step gates,
+        // ChallengeOverlay's substitution and three independent Advisor* toggles, and the companion's
+        // Profiles page already draws that verdict. A private copy in this method would be free to drift
+        // from the page — and a banner that disagrees with the panel is worse than one that says nothing.
+        //
+        // If this is ever reduced back to bare counts, the banner resumes telling an operator that a
+        // structurally dead section is live, which is the failure the whole line exists to prevent.
         public string BuildAllocationString(string profileName)
         {
             var builder = new StringBuilder();
             builder.AppendLine($"Loaded Custom Allocation from profile '{profileName}'");
-            builder.AppendLine($"{energy.Length} Energy Breakpoints");
-            builder.AppendLine($"{magic.Length} Magic Breakpoints");
-            builder.AppendLine($"{r3.Length} R3 Breakpoints");
-            builder.AppendLine($"{gear.Length} Gear Breakpoints");
-            builder.AppendLine($"{beards.Length} Beard Breakpoints");
-            builder.AppendLine($"{diggers.Length} Digger Breakpoints");
-            builder.AppendLine($"{wandoos.Length} Wandoos Breakpoints");
-            builder.AppendLine($"{ngus.Length} NGU Difficulty Breakpoints");
-            builder.AppendLine($"{consumables.Length} Consumable Breakpoints");
+
+            var notes = SectionNotes();
+            builder.AppendLine($"{energy.Length} Energy Breakpoints{Note(notes, "energy")}");
+            builder.AppendLine($"{magic.Length} Magic Breakpoints{Note(notes, "magic")}");
+            builder.AppendLine($"{r3.Length} R3 Breakpoints{Note(notes, "r3")}");
+            builder.AppendLine($"{gear.Length} Gear Breakpoints{Note(notes, "gear")}");
+            builder.AppendLine($"{beards.Length} Beard Breakpoints{Note(notes, "beards")}");
+            builder.AppendLine($"{diggers.Length} Digger Breakpoints{Note(notes, "diggers")}");
+            builder.AppendLine($"{wandoos.Length} Wandoos Breakpoints{Note(notes, "wandoos")}");
+            builder.AppendLine($"{ngus.Length} NGU Difficulty Breakpoints{Note(notes, "ngudiff")}");
+            builder.AppendLine($"{consumables.Length} Consumable Breakpoints{Note(notes, "consumables")}");
+            builder.AppendLine($"{ChallengeCountText()}{Note(notes, "challenges")}");
             if (rebirth?.Length > 0)
-                builder.AppendLine($"{rebirth.Length} Rebirth Breakpoints");
+                builder.AppendLine($"{rebirth.Length} Rebirth Breakpoints{Note(notes, "rebirth")}");
             else
                 builder.AppendLine($"Rebirth Disabled.");
 
+            // The master switch annotates every section identically, so it is said ONCE instead of
+            // eleven times — SectionNotes returns null in that case for exactly this reason.
+            if (notes == null && Main.Settings != null && !Main.Settings.GlobalEnabled)
+                builder.AppendLine("⚠ Automation is off — none of the above is running.");
+
+            AppendPercentNotice(builder);
+
             return builder.ToString();
+        }
+
+        // "20 Challenges (18 in the rotation)". The gap is never cosmetic: a token ParseChallenges
+        // dropped cannot be engaged, and the operator's only other clue is one "Incorrect challenge
+        // name" line buried in the log.
+        private string ChallengeCountText()
+        {
+            if (challengesAuthored == challengesRecognised)
+                return $"{challengesAuthored} Challenges";
+            return $"{challengesAuthored} Challenges ({challengesRecognised} in the rotation — the rest " +
+                   "name no known challenge, carry no '-', or have an ordinal that will not parse)";
+        }
+
+        // Per-section verdicts keyed by ProfileSections' stable ids, or NULL when there is nothing
+        // useful to say per line — no settings yet (first load can precede them), or the master switch
+        // is off, in which case every section would carry the same sentence.
+        private Dictionary<string, SectionVerdict> SectionNotes()
+        {
+            try
+            {
+                var st = Main.Settings;
+                if (st == null || !st.GlobalEnabled) return null;
+
+                bool armed = false;
+                if (rebirth != null)
+                    foreach (var rb in rebirth)
+                        if (rb != null && RebirthSchedule.EntryArmed(rb.RebirthTime)) { armed = true; break; }
+
+                var inputs = new SectionInputs
+                {
+                    GlobalEnabled = st.GlobalEnabled,
+                    AutoProfile = st.AutoProfile,
+                    ManageEnergy = st.ManageEnergy, ManageMagic = st.ManageMagic, ManageR3 = st.ManageR3,
+                    ManageGear = st.ManageGear, AdvisorGearRefresh = st.AdvisorGearRefresh,
+                    ManageWandoos = st.ManageWandoos, AdvisorWandoosOS = st.AdvisorWandoosOS,
+                    ManageDiggers = st.ManageDiggers, AdvisorDiggers = st.AdvisorDiggers,
+                    ManageBeards = st.ManageBeards, AdvisorBeards = st.AdvisorBeards,
+                    ManageNGUDiff = st.ManageNGUDiff, ManageConsumables = st.ManageConsumables,
+                    AutoRebirth = st.AutoRebirth,
+                    // Read from THIS wrapper's own rebirth array rather than Main.Profile: the banner is
+                    // built inside ReloadAllocation, and going back out through Main.Profile would report
+                    // on whichever wrapper is currently published, which may not be this one yet.
+                    RebirthArmed = armed,
+                    ProfileHasChallenges = challengesRecognised > 0,
+                    AdvisorChallenges = st.AdvisorChallenges,
+                    // Load time, not tick time — the Evil ch.5 window is a running-state fact and the
+                    // banner must not claim it is open. False reads as "your timeline owns the track",
+                    // which is the state a profile load establishes.
+                    NguTrackOverrideActive = false
+                };
+
+                var map = new Dictionary<string, SectionVerdict>();
+                foreach (var v in ProfileSections.Evaluate(inputs))
+                    map[v.Key] = v;
+                return map;
+            }
+            catch (Exception e)
+            {
+                // A banner is not worth a failed load. Bare counts are what shipped for two years.
+                LogDebug($"Profile banner: section verdicts unavailable ({e.Message})");
+                return null;
+            }
+        }
+
+        // Silence when the section runs as authored — an annotation on every line is an annotation
+        // nobody reads, and the whole point is that the exceptions stand out.
+        private static string Note(Dictionary<string, SectionVerdict> notes, string key)
+        {
+            SectionVerdict v;
+            if (notes == null || !notes.TryGetValue(key, out v)) return "";
+            switch (v.Driver)
+            {
+                case SectionDriver.Profile: return "";
+                // Not "NOT YOUR LIST": one advisor-driven section (diggers with Auto Profile off) is
+                // still confined to the operator's own list, and a blanket denial would contradict the
+                // sentence it introduces. The reason says which it is.
+                case SectionDriver.Advisor: return "  ← THE ADVISOR IS DRIVING THIS: " + v.Reason;
+                default:                    return "  ← NOT RUNNING: " + v.Reason;
+            }
+        }
+
+        // `:percent` — WHERE IT IS READ AND WHERE IT IS NOT.
+        //
+        // Once per load, because that is when the operator is looking at the profile. The WORDING is
+        // the product here — the one thing this notice must not do is claim `:percent` is dead
+        // everywhere, because it is live on R3 and live on the legacy kill-switch path — so the
+        // sentences live in ProfileSections.PercentNotice, which is Unity-free and linked into the
+        // test project. This method only supplies the two facts it cannot know: the live state of the
+        // constraint allocator, and the operator's own tokens.
+        private void AppendPercentNotice(StringBuilder builder)
+        {
+            // Energy and Magic share a verdict because they share a path — both go through
+            // ConstraintLayerBridge when the allocator is on and through the identical prioCount share
+            // loop when it is off. Splitting them would imply a difference that does not exist.
+            var em = new List<string>(percentEnergy);
+            foreach (var t in percentMagic) if (!em.Contains(t)) em.Add(t);
+
+            foreach (var line in ProfileSections.PercentNotice(
+                         Managers.ConstraintLayerBridge.NewPathEnabled, em, percentR3, percentDropped))
+                builder.AppendLine(line);
+        }
+
+        // Mirrors ResourceBreakpoint.ParseBreakpointArray's own reading of a token rather than
+        // approximating it (:142-158): split on ':', and if the right half will not int.TryParse the
+        // parser skips the entire token. That is why `dropped` is a separate list — same punctuation,
+        // completely different outcome, and the second one costs the operator a lane.
+        private void ScanPercentTokens(JSONNode timeline, List<string> withPercent)
+        {
+            try
+            {
+                if (timeline == null) return;
+                foreach (var bp in timeline.AsArray.Children)
+                {
+                    var prios = bp["Priorities"];
+                    if (prios == null) continue;
+                    foreach (var t in prios.AsArray.Children)
+                    {
+                        var tok = t.Value;
+                        if (string.IsNullOrEmpty(tok) || tok.IndexOf(':') < 0) continue;
+                        var split = tok.Split(':');
+                        int pct;
+                        if (split.Length < 2 || !int.TryParse(split[1], out pct))
+                        {
+                            AddOnce(percentDropped, tok);
+                            continue;
+                        }
+                        AddOnce(withPercent, tok);
+                    }
+                }
+            }
+            catch { }   // a census is never worth failing a load over
+        }
+
+        private static void AddOnce(List<string> list, string token)
+        {
+            if (!list.Contains(token)) list.Add(token);
         }
     }
 }
